@@ -5,10 +5,11 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv('.env.local')
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables
+load_dotenv(BASE_DIR / '.env.local')
 
 # ============================================================================
 # DJANGO CORE SETTINGS
@@ -50,6 +51,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',           # ← FIXED: After auth
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'users.middleware.TenantMiddleware',                              # ← NEW: Multi-tenant
+    'core.middleware.ExceptionHandlingMiddleware',
 ]
 
 # ============================================================================
@@ -58,6 +60,11 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'config.urls'
 
+
+
+# Redis Configuration
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+
 # ============================================================================
 # TEMPLATES
 # ============================================================================
@@ -65,7 +72,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -204,4 +211,34 @@ LOGGING = {
         'handlers': ['console'],
         'level': 'INFO',
     },
-}
+}   
+
+
+
+
+# Email Configuration (AWS SES)
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'email-smtp.us-east-1.amazonaws.com')  # ← Change region if needed
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
+EMAIL_USE_TLS = os.getenv( 'EMAIL_USE_TLS', 'True' ) == 'True'
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')  # ← AWS SES SMTP username
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')  # ← AWS SES SMTP password
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@neuralops.com')
+
+# Frontend URL (for email links)
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
+
+
+# OAuth Configuration
+GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID')
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET')
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv('GOOGLE_OAUTH_REDIRECT_URI', 'http://localhost:3000/auth/google/callback')
+
+GITHUB_OAUTH_CLIENT_ID = os.getenv('GITHUB_OAUTH_CLIENT_ID')
+GITHUB_OAUTH_CLIENT_SECRET = os.getenv('GITHUB_OAUTH_CLIENT_SECRET')
+GITHUB_OAUTH_REDIRECT_URI = os.getenv('GITHUB_OAUTH_REDIRECT_URI', 'http://localhost:3000/auth/github/callback')
+
+# Frontend OAuth callback URLs
+FRONTEND_OAUTH_SUCCESS_URL = os.getenv('FRONTEND_OAUTH_SUCCESS_URL', 'http://localhost:3000/dashboard')
+FRONTEND_OAUTH_ERROR_URL = os.getenv('FRONTEND_OAUTH_ERROR_URL', 'http://localhost:3000/login')

@@ -34,3 +34,12 @@ ENV/
 *.sqlite3
 *.db
 EOF
+
+
+staticfiles/
+media/
+__pycache__/
+*.pyc
+venv/
+.env
+db.sqlite3

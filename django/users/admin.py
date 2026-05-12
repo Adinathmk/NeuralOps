@@ -2,18 +2,42 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import User, UserInvitation, AuditLog, APIKey
 from tenants.models import TenantConfiguration
+from .models import User, UserInvitation, AuditLog, APIKey, UserSession
+from tenants.models import TenantConfiguration
+
+
+from .models import OAuthAccount
+
+@admin.register(OAuthAccount)
+class OAuthAccountAdmin(admin.ModelAdmin):
+    list_display = ('user', 'provider', 'provider_name', 'created_at', 'last_used_at')
+    list_filter = ('provider', 'created_at', 'last_used_at')
+    search_fields = ('user__email', 'provider_email', 'provider_name')
+    readonly_fields = ('provider_user_id', 'created_at', 'last_used_at')
+
+
+@admin.register(UserSession)
+class UserSessionAdmin(admin.ModelAdmin):
+    list_display = ('user', 'device_name', 'ip_address', 'is_active', 'created_at', 'expires_at')
+    list_filter = ('is_active', 'is_revoked', 'created_at')
+    search_fields = ('user__email', 'ip_address', 'device_name')
+    readonly_fields = ('session_id', 'created_at', 'revoked_at')
+    
+    def has_add_permission(self, request):
+        return False 
+
 
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     ordering = ('email',)
 
-    list_display = ('email', 'tenant', 'role', 'is_active', 'created_at')
+    list_display = ('email', 'tenant', 'role', 'is_active', 'created_at','email_verified')
     list_filter = ('role', 'is_active', 'tenant')
     search_fields = ('email', 'tenant__name')
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
-        ('Info', {'fields': ('first_name', 'last_name', 'tenant', 'role')}),
+        ('Info', {'fields': ('first_name', 'last_name', 'tenant', 'role','email_verified')}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'is_superadmin')}),
     )
 

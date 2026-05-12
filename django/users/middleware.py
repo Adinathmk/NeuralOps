@@ -1,4 +1,3 @@
-# NEW FILE: users/middleware.py
 from django.utils.deprecation import MiddlewareMixin
 from django.conf import settings
 import jwt
@@ -9,47 +8,76 @@ logger = logging.getLogger(__name__)
 
 class TenantMiddleware(MiddlewareMixin):
     """
-    Multi-Tenant Middleware
+    Extract tenant_id from JWT token and attach to request.
     
-    Extracts tenant_id from JWT token or session user.
-    Attaches to request object for use in views.
+    Ensures every request has tenant context for multi-tenant isolation.
+    
+    Workflow:
+    1. Check Authorization header for Bearer token
+    2. Verify JWT signature (no DB call)
+    3. Extract tenant_id from JWT claims
+    4. Attach to request.tenant_id
+    
+    If token is invalid/missing, request.tenant_id = None (public endpoints)
     """
     
     def process_request(self, request):
-        """Attach tenant context to request."""
+        """Attach tenant context to request before view processing."""
         
+        # Initialize tenant context (default to None for public endpoints)
         request.tenant_id = None
         request.user_id = None
+        request.user_email = None
+        request.user_role = None
         request.is_superadmin = False
-        request.tenant = None
         
-        # Option 1: JWT Authentication (API requests)
+        # Extract Authorization header
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
         
-        if auth_header.startswith('Bearer '):
-            try:
-                token = auth_header.split(' ')[1]
-                payload = self._verify_jwt_token(token)
-                
-                request.tenant_id = payload.get('tenant_id')
-                request.user_id = payload.get('user_id')
-                request.is_superadmin = payload.get('is_superadmin', False)
-                
-            except Exception as e:
-                logger.debug(f"JWT token verification failed: {str(e)}")
+        if not auth_header.startswith('Bearer '):
+            # No token provided - public endpoint (health, register, login)
+            return None
         
-        # Option 2: Session Authentication (Admin/Web requests)
-        elif request.user and request.user.is_authenticated:
-            if hasattr(request.user, 'tenant'):
-                request.tenant_id = str(request.user.tenant.id)
-                request.user_id = str(request.user.id)
-                request.tenant = request.user.tenant
+        try:
+            # Extract token
+            token = auth_header.split(' ')[1]
+            
+            # Verify token signature (no database call)
+            payload = self._verify_jwt_token(token)
+            
+            # Attach claims to request
+            request.tenant_id = payload.get('tenant_id')
+            request.user_id = payload.get('user_id')
+            request.user_email = payload.get('email')
+            request.user_role = payload.get('role')
+            request.is_superadmin = payload.get('is_superadmin', False)
+            
+            logger.debug(
+                f"Tenant context attached: user={request.user_email}, tenant={request.tenant_id}"
+            )
+            
+        except Exception as e:
+            # JWT verification failed - will be handled by JWTAuthentication in view
+            logger.debug(f"JWT verification failed in middleware: {str(e)}")
+            request.tenant_id = None
         
         return None
     
     @staticmethod
     def _verify_jwt_token(token):
-        """Verify JWT token signature."""
+        """
+        Verify JWT token signature without database call.
+        
+        Args:
+            token: JWT token string
+            
+        Returns:
+            dict: JWT claims/payload
+            
+        Raises:
+            jwt.ExpiredSignatureError: Token has expired
+            jwt.InvalidTokenError: Token signature invalid
+        """
         secret = settings.JWT_SECRET_KEY
         algorithm = settings.JWT_ALGORITHM
         

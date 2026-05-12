@@ -94,6 +94,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_superadmin = models.BooleanField(default=False, help_text="Platform operator flag")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    email_verified = models.BooleanField(
+        default=False,
+        help_text="Email has been verified"
+    )
     
     objects = UserManager()
     
@@ -137,26 +142,129 @@ class User(AbstractBaseUser, PermissionsMixin):
 # ============================================================================
 
 class UserInvitation(models.Model):
-    STATUS_CHOICES = [('pending', 'Pending'), ('accepted', 'Accepted'), ('expired', 'Expired')]
+    """
+    Invite engineers to join tenant.
+    
+    Flow:
+    1. Admin creates invitation → sends email
+    2. Engineer opens email link → visits /join?token=xyz
+    3. Engineer signs up (email/password or OAuth) → joins tenant
+    4. Invitation marked accepted
+    """
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('accepted', 'Accepted'),
+        ('expired', 'Expired'),
+        ('cancelled', 'Cancelled'),
+    ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Invitation details
     email = models.EmailField()
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='invitations')
-    invited_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    invited_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='invitations_sent')
     role = models.CharField(max_length=20, choices=User.ROLE_CHOICES, default='engineer')
-    token = models.CharField(max_length=255, unique=True, default=generate_token)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    
+    # Token
+    token = models.CharField(
+        max_length=255,
+        unique=True,
+        default=generate_token,
+
+        db_index=True
+    )
+    
+    # Status
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    
+    # When accepted
+    accepted_by = models.OneToOneField(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='invitation_accepted'
+    )
+    
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField(default=get_expiry_time)
-    accepted_by = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='invitation_accepted')
+    expires_at = models.DateTimeField(
+        default=get_expiry_time
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    
+    # Optional: Track if email was sent
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+    email_resent_count = models.IntegerField(default=0)
     
     class Meta:
         db_table = 'user_invitations'
-        unique_together = ('tenant', 'email')
+        unique_together = ('tenant', 'email', 'status')
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['tenant', 'status']),
+            models.Index(fields=['expires_at']),
+            models.Index(fields=['email', 'status']),
+        ]
+    
+    def __str__(self):
+        return f"{self.email} → {self.tenant.name} ({self.status})"
     
     def is_valid(self):
-        return self.status == 'pending' and timezone.now() <= self.expires_at
-
+        """Check if invitation is still valid."""
+        return (
+            self.status == 'pending' and
+            timezone.now() <= self.expires_at
+        )
+    
+    def accept(self, user):
+        """Mark invitation as accepted."""
+        if self.status != 'pending':
+            raise ValueError(f'Cannot accept invitation with status: {self.status}')
+        
+        self.status = 'accepted'
+        self.accepted_by = user
+        self.accepted_at = timezone.now()
+        self.save()
+        
+        # Log to audit
+        AuditLog.objects.create(
+            user_email=user.email,
+            tenant=self.tenant,
+            action='USER_INVITED_ACCEPTED',
+            resource_type='UserInvitation',
+            resource_id=str(self.id),
+            description=f'User accepted invitation to join as {user.role}',
+            success=True
+        )
+    
+    def cancel(self):
+        """Cancel invitation."""
+        self.status = 'cancelled'
+        self.cancelled_at = timezone.now()
+        self.save()
+    
+    def expire(self):
+        """Expire invitation."""
+        self.status = 'expired'
+        self.save()
+    
+    def mark_email_sent(self):
+        """Mark email as sent."""
+        self.email_sent_at = timezone.now()
+        self.save()
+    
+    def increment_resend_count(self):
+        """Track email resends."""
+        self.email_resent_count += 1
+        self.save()
 
 # ============================================================================
 # AUDIT LOG
@@ -207,3 +315,290 @@ class APIKey(models.Model):
     
     def is_valid(self):
         return self.is_active
+    
+
+
+# ============================================================================
+# USER SESSION (ADD TO EXISTING FILE)
+# ============================================================================
+
+class UserSession(models.Model):
+    """
+    Track user login sessions for security and compliance.
+    
+    When user logs in, a session record is created with:
+    - Session ID (jti from JWT)
+    - Device info (browser, OS)
+    - IP address
+    - Login time
+    - Expiry time (matches JWT expiry)
+    
+    Enables:
+    - See all active sessions
+    - Force logout from a device
+    - Detect suspicious login patterns
+    """
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Link to user and tenant
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sessions')
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='sessions',
+        null=True,
+        blank=True
+    )
+    
+    # Session identifier (JWT jti claim)
+    session_id = models.CharField(max_length=255, unique=True, db_index=True)
+    
+    # Device and location info
+    device_name = models.CharField(max_length=255, blank=True)
+    ip_address = models.GenericIPAddressField()
+    user_agent = models.TextField(blank=True)
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    is_revoked = models.BooleanField(default=False)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    
+    # Activity tracking
+    last_activity_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    
+    class Meta:
+        db_table = 'user_sessions'
+        indexes = [
+            models.Index(fields=['user', 'is_active']),
+            models.Index(fields=['session_id']),
+            models.Index(fields=['expires_at']),
+        ]
+    
+    def __str__(self):
+        status = "Active" if self.is_active and not self.is_revoked else "Revoked"
+        return f"{self.user.email} | {self.device_name} | {self.ip_address} | {status}"
+    
+    def is_valid(self):
+        """Check if session is still valid."""
+        return self.is_active and not self.is_revoked and timezone.now() <= self.expires_at
+    
+    def revoke(self):
+        """Revoke this session (force logout from device)."""
+        self.is_revoked = True
+        self.revoked_at = timezone.now()
+        self.save()
+
+
+# ============================================================================
+# EMAIL VERIFICATION (ADD TO EXISTING FILE)
+# ============================================================================
+
+class EmailVerification(models.Model):
+    """
+    Track email verification tokens.
+    
+    When user registers, email verification token is created.
+    User clicks link in email to verify.
+    After verification, email_verified flag is set on User.
+    """
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('verified', 'Verified'),
+        ('expired', 'Expired'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Link to user
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='email_verification'
+    )
+    
+    # Token
+    token = models.CharField(
+        max_length=255,
+        unique=True,
+        default=generate_token
+    )
+    
+    # Status
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(
+        default=get_expiry_time
+    )
+    verified_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        db_table = 'email_verifications'
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['expires_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.status}"
+    
+    def is_valid(self):
+        """Check if token is still valid."""
+        return (
+            self.status == 'pending' and
+            timezone.now() <= self.expires_at
+        )
+    
+    def verify(self):
+        """Mark email as verified."""
+        self.status = 'verified'
+        self.verified_at = timezone.now()
+        self.save()
+        
+        # Update user
+        self.user.email_verified = True
+        self.user.save()
+
+
+# ============================================================================
+# PASSWORD RESET (ADD TO EXISTING FILE)
+# ============================================================================
+
+class PasswordReset(models.Model):
+    """
+    Track password reset tokens.
+    
+    When user requests password reset, token is created.
+    User clicks link in email to reset password.
+    Token expires after 24 hours.
+    """
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('used', 'Used'),
+        ('expired', 'Expired'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Link to user
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='password_resets'
+    )
+    
+    # Token
+    token = models.CharField(
+        max_length=255,
+        unique=True,
+        default=generate_token
+    )
+    
+    # Status
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(
+        default=get_expiry_time
+    )
+    used_at = models.DateTimeField(null=True, blank=True)
+    
+    # IP address for security audit
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    
+    class Meta:
+        db_table = 'password_resets'
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['expires_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.status}"
+    
+    def is_valid(self):
+        """Check if token is still valid."""
+        return (
+            self.status == 'pending' and
+            timezone.now() <= self.expires_at
+        )
+    
+    def use(self):
+        """Mark token as used."""
+        self.status = 'used'
+        self.used_at = timezone.now()
+        self.save()
+
+
+
+# ============================================================================
+# OAUTH ACCOUNT 
+# ============================================================================
+
+class OAuthAccount(models.Model):
+    """
+    Link OAuth provider accounts to users.
+    
+    Allows users to:
+    - Sign up via Google/GitHub
+    - Link existing account to OAuth provider
+    - Sign in via OAuth even if registered with email/password
+    """
+    
+    PROVIDER_CHOICES = [
+        ('google', 'Google'),
+        ('github', 'GitHub'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Link to user
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='oauth_accounts'
+    )
+    
+    # Provider info
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES)
+    provider_user_id = models.CharField(max_length=255)  # OAuth provider's user ID
+    provider_email = models.EmailField()
+    provider_name = models.CharField(max_length=255, blank=True)
+    provider_picture_url = models.URLField(blank=True)
+    
+    # Tokens (for future use)
+    access_token = models.TextField(blank=True, help_text="Encrypted OAuth access token")
+    refresh_token = models.TextField(blank=True, help_text="Encrypted OAuth refresh token")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'oauth_accounts'
+        unique_together = ('provider', 'provider_user_id')
+        indexes = [
+            models.Index(fields=['user', 'provider']),
+            models.Index(fields=['provider', 'provider_user_id']),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.provider}"
+

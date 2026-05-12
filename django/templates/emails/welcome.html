@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+        
+        body { 
+            margin: 0; padding: 0; background-color: #050505; 
+            font-family: 'Plus Jakarta Sans', sans-serif; 
+            color: #ffffff;
+        }
+        .wrapper { width: 100%; padding: 60px 0; background-color: #050505; }
+        
+        .container { 
+            max-width: 460px; margin: 0 auto; 
+            background: #0f0f11;
+            border-radius: 28px; padding: 48px;
+            border: 1px solid rgba(16, 185, 129, 0.15);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .status-pill {
+            background: rgba(16, 185, 129, 0.1); 
+            border-radius: 100px;
+            padding: 6px 14px; display: table; margin: 0 auto 24px;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+        .status-pill span { 
+            font-size: 11px; font-weight: 700; color: #10b981; 
+            text-transform: uppercase; letter-spacing: 0.1em;
+            display: flex; align-items: center;
+        }
+
+        h1 { 
+            font-size: 32px; font-weight: 700; text-align: center; 
+            margin-bottom: 16px; color: #ffffff; letter-spacing: -0.04em;
+            line-height: 1.1;
+        }
+        h1 span { color: #10b981; }
+
+        p { font-size: 15px; line-height: 1.6; color: #94a3b8; text-align: center; margin-bottom: 32px; }
+
+        .cta-btn { 
+            display: block; text-align: center; 
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: #ffffff !important; padding: 18px 30px; border-radius: 14px; 
+            text-decoration: none; font-weight: 600; font-size: 16px;
+            box-shadow: 0 10px 20px rgba(16, 185, 129, 0.2);
+        }
+
+        /* Next Steps Box */
+        .checklist-box {
+            margin-top: 32px; padding: 24px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .checklist-title { 
+            display: block; font-size: 13px; font-weight: 700; 
+            color: #ffffff; text-transform: uppercase; 
+            letter-spacing: 0.05em; margin-bottom: 16px;
+        }
+        .check-item {
+            display: flex; align-items: center;
+            font-size: 14px; color: #cbd5e1; margin-bottom: 12px;
+        }
+        .check-icon { color: #10b981; margin-right: 12px; font-weight: bold; }
+
+        .footer { text-align: center; margin-top: 40px; }
+        .footer p { font-size: 12px; color: #475569; margin-bottom: 8px; }
+        .footer a { color: #64748b; text-decoration: none; margin: 0 8px; }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="container">
+            <div class="status-pill">
+                <span><span style="margin-right: 6px;">●</span> Account Active</span>
+            </div>
+            
+            <h1>Welcome to <br><span>{{ tenant_name }}</span></h1>
+            
+            <p>Hi <strong>{{ user_name }}</strong>,<br>Your email is verified. You now have full access to NeuralOps for AI-powered incident debugging and monitoring.</p>
+            
+            <a href="http://localhost:3000/login" class="cta-btn">Open Dashboard</a>
+            
+            <div class="checklist-box">
+                <span class="checklist-title">Quick Start Guide</span>
+                <div class="check-item"><span class="check-icon">✓</span> Configure your alert rules</div>
+                <div class="check-item"><span class="check-icon">✓</span> Set up infrastructure integrations</div>
+                <div class="check-item"><span class="check-icon">✓</span> Invite your engineering team</div>
+            </div>
+
+            <p style="font-size: 13px; margin-top: 30px; color: #475569;">
+                Need help getting started? Visit our <a href="#" style="color: #10b981; text-decoration: none;">Documentation</a>.
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; 2026 NeuralOps Systems. Built for the future of SRE.</p>
+            <p>
+                <a href="#">Privacy</a> • <a href="#">Support</a> • <a href="#">Terms</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+        
+        body { 
+            margin: 0; padding: 0; background-color: #050505; 
+            font-family: 'Plus Jakarta Sans', sans-serif; 
+            color: #ffffff;
+        }
+        .wrapper { width: 100%; padding: 60px 0; background-color: #050505; }
+        
+        .container { 
+            max-width: 460px; margin: 0 auto; 
+            background: #0f0f11;
+            border-radius: 28px; padding: 48px;
+            border: 1px solid rgba(16, 185, 129, 0.15);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Branding/Icon */
+        .status-pill {
+            background: rgba(16, 185, 129, 0.1); 
+            border-radius: 100px;
+            padding: 6px 14px; display: table; margin: 0 auto 24px;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+        .status-pill span { 
+            font-size: 11px; font-weight: 700; color: #10b981; 
+            text-transform: uppercase; letter-spacing: 0.1em;
+            display: flex; align-items: center;
+        }
+
+        h1 { 
+            font-size: 32px; font-weight: 700; text-align: center; 
+            margin-bottom: 16px; color: #ffffff; letter-spacing: -0.04em;
+            line-height: 1.1;
+        }
+        h1 span { color: #10b981; }
+
+        p { font-size: 15px; line-height: 1.6; color: #94a3b8; text-align: center; margin-bottom: 32px; }
+
+        /* The Emerald Gradient Button */
+        .cta-btn { 
+            display: block; text-align: center; 
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: #ffffff !important; padding: 18px 30px; border-radius: 14px; 
+            text-decoration: none; font-weight: 600; font-size: 16px;
+            box-shadow: 0 10px 20px rgba(16, 185, 129, 0.2);
+        }
+
+        /* Notice Box */
+        .notice-box {
+            margin-top: 32px; padding: 20px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            text-align: center;
+        }
+        .notice-text { font-size: 13px; color: #cbd5e1; line-height: 1.5; margin: 0; }
+        .expiry-label { color: #facc15; font-weight: 600; } /* Subtle Amber for time warning */
+
+        /* Manual Link Copy */
+        .link-copy {
+            margin-top: 25px;
+            font-family: ui-monospace, monospace;
+            font-size: 11px; color: #475569;
+            word-break: break-all; text-align: center;
+        }
+
+        .footer { text-align: center; margin-top: 40px; }
+        .footer p { font-size: 12px; color: #475569; margin-bottom: 8px; }
+        .footer a { color: #64748b; text-decoration: none; margin: 0 8px; }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="container">
+            <div class="status-pill">
+                <span><span style="margin-right: 6px;">●</span> Welcome to NeuralOps</span>
+            </div>
+            
+            <h1>Verify Your <br><span>Email Address</span></h1>
+            
+            <p>Hi <strong>{{ user_name }}</strong>,<br>You’re almost there. Please confirm your email to activate your account and access the dashboard.</p>
+            
+            <a href="{{ verification_link }}" class="cta-btn">Verify Account</a>
+            
+            <div class="notice-box">
+                <p class="notice-text">
+                    <span class="expiry-label">Note:</span> This activation link expires in <strong>{{ expiry_hours }} hours</strong>.
+                </p>
+            </div>
+
+            <div class="link-copy">
+                {{ verification_link }}
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; 2026 NeuralOps Systems. All rights reserved.</p>
+            <p>
+                <a href="#">Privacy Policy</a> • <a href="#">Security</a> • <a href="#">Support</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>
