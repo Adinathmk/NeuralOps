@@ -207,7 +207,7 @@ class LogoutView(APIView):
             # Add token to revocation blocklist
             exp_time = request.auth.get('exp')
             if exp_time:
-                remaining_seconds = int(exp_time - datetime.utcnow().timestamp())
+                remaining_seconds = int(exp_time - timezone.now().timestamp())
                 if remaining_seconds > 0:
                     cache_manager.blocklist_token(jti, remaining_seconds)
             
@@ -350,108 +350,152 @@ class VerifyEmailView(APIView):
 class ResendVerificationEmailView(APIView):
     """
     Resend verification email.
+
     POST /api/auth/resend-verification
+
     {
         "email": "user@example.com"
     }
     """
+
     permission_classes = [AllowAny]
-    
+
     def post(self, request):
         serializer = ResendVerificationEmailSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            email = serializer.validated_data['email']
+
+        if not serializer.is_valid():
+            return APIResponse.error(
+                message='Failed to resend verification',
+                status_code=400,
+                code='validation_error',
+                errors=serializer.errors
+            )
+
+        email = serializer.validated_data['email']
+
+        try:
             user = User.objects.get(email=email)
-            frontend_url = request.data.get('frontend_url', settings.FRONTEND_URL)
-            
-            # Delete old verification token
+
+            # User exists but already verified
+            if user.email_verified:
+                return APIResponse.error(
+                    message='Email already verified.',
+                    status_code=400,
+                    code='already_verified'
+                )
+
+            # Always use backend-configured frontend URL
+            frontend_url = settings.FRONTEND_URL
+
+            # Delete old tokens
             EmailVerification.objects.filter(user=user).delete()
-            
-            # Create new verification token
+
+            # Create new token
             verification = EmailVerification.objects.create(user=user)
-            
-            # Send email
+
+            # Send verification email
             try:
                 email_service.send_verification_email(
                     user=user,
                     verification_token=verification.token,
                     frontend_url=frontend_url
                 )
-            except Exception as e:
-                logger.error(f"Failed to send verification email: {str(e)}")
-            
-            logger.info(f"Verification email resent to {email}")
-            
-            return APIResponse.success(
-                message='Verification email sent. Please check your email.'
-            )
-        
-        return APIResponse.error(
-            message='Failed to resend verification',
-            status_code=400,
-            code='validation_error',
-            errors=serializer.errors
-        )
 
+            except Exception as e:
+                logger.error(
+                    f"Failed to send verification email to {email}: {str(e)}"
+                )
+
+            logger.info(f"Verification email resent to {email}")
+
+        except User.DoesNotExist:
+            # IMPORTANT:
+            # Do NOT reveal whether user exists
+            logger.warning(
+                f"Verification resend requested for non-existent email: {email}"
+            )
+
+        return APIResponse.success(
+            message=(
+                'If an account with this email exists, '
+                'a verification email has been sent.'
+            )
+        )
+        
 
 
 class ForgotPasswordView(APIView):
     """
     Request password reset.
+
     POST /api/auth/forgot-password
+
     {
         "email": "user@example.com"
     }
     """
+
     permission_classes = [AllowAny]
-    
+
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            email = serializer.validated_data['email']
-            frontend_url = request.data.get('frontend_url', settings.FRONTEND_URL)
-            
-            try:
-                user = User.objects.get(email=email)
-                
-                # Delete old reset tokens
-                PasswordReset.objects.filter(user=user).delete()
-                
-                # Create new reset token
-                ip_address = JWTAuthentication._get_client_ip(request)
-                reset = PasswordReset.objects.create(
-                    user=user,
-                    ip_address=ip_address
-                )
-                
-                # Send reset email
-                try:
-                    email_service.send_password_reset_email(
-                        user=user,
-                        reset_token=reset.token,
-                        frontend_url=frontend_url
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send password reset email: {str(e)}")
-                
-                logger.info(f"Password reset requested for {email}")
-                
-            except User.DoesNotExist:
-                # Don't reveal if email exists
-                pass
-            
-            # Always return success (for security)
-            return APIResponse.success(
-                message='If this email exists, you will receive a password reset link.'
+
+        if not serializer.is_valid():
+            return APIResponse.error(
+                message='Invalid email',
+                status_code=400,
+                code='validation_error',
+                errors=serializer.errors
             )
-        
-        return APIResponse.error(
-            message='Invalid email',
-            status_code=400,
-            code='validation_error',
-            errors=serializer.errors
+
+        email = serializer.validated_data['email']
+
+        try:
+            user = User.objects.get(email=email)
+
+            # Always use backend-configured frontend URL
+            frontend_url = settings.FRONTEND_URL
+
+            # Delete old reset tokens
+            PasswordReset.objects.filter(user=user).delete()
+
+            # Get client IP
+            ip_address = JWTAuthentication._get_client_ip(request)
+
+            # Create new reset token
+            reset = PasswordReset.objects.create(
+                user=user,
+                ip_address=ip_address
+            )
+
+            # Send password reset email
+            try:
+                email_service.send_password_reset_email(
+                    user=user,
+                    reset_token=reset.token,
+                    frontend_url=frontend_url
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to send password reset email to {email}: {str(e)}"
+                )
+
+            logger.info(f"Password reset requested for {email}")
+
+        except User.DoesNotExist:
+            # IMPORTANT:
+            # Do NOT reveal whether email exists
+            logger.warning(
+                f"Password reset requested for non-existent email: {email}"
+            )
+
+        # ALWAYS return success
+        return APIResponse.success(
+            message=(
+                'If this email exists, '
+                'you will receive a password reset link.'
+            )
         )
 
 

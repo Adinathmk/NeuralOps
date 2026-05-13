@@ -187,38 +187,30 @@ class VerifyEmailSerializer(serializers.Serializer):
 
 
 class ResendVerificationEmailSerializer(serializers.Serializer):
-    """Resend verification email."""
+    """Resend verification email serializer."""
+
     email = serializers.EmailField()
-    
+
     def validate_email(self, value):
-        """Check user exists and email not already verified."""
-        from .models import User
-        
-        try:
-            user = User.objects.get(email=value)
-        except User.DoesNotExist:
-            raise serializers.ValidationError('User not found.')
-        
-        if user.email_verified:
-            raise serializers.ValidationError('Email already verified.')
-        
-        return value
+        """
+        Normalize email only.
+
+        IMPORTANT:
+        Do NOT validate user existence here.
+        Otherwise it enables email enumeration attacks.
+        """
+        return value.lower().strip()
     
 
 
 class ForgotPasswordSerializer(serializers.Serializer):
-    """Request password reset."""
+    """Request password reset serializer."""
+
     email = serializers.EmailField()
-    
+
     def validate_email(self, value):
-        """Check user exists."""
-        try:
-            User.objects.get(email=value)
-        except User.DoesNotExist:
-            # Don't reveal if email exists (security)
-            raise serializers.ValidationError('If this email exists, you will receive a password reset link.')
         
-        return value
+        return value.lower().strip()
 
 
 class ResetPasswordSerializer(serializers.Serializer):

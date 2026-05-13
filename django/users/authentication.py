@@ -1,6 +1,7 @@
 import jwt
 import os
-from datetime import datetime, timedelta
+from datetime import  timedelta
+from django.utils import timezone
 from django.conf import settings
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.exceptions import AuthenticationFailed
@@ -46,10 +47,10 @@ class JWTAuthentication(TokenAuthentication):
         secret = settings.JWT_SECRET_KEY
         algorithm = settings.JWT_ALGORITHM
         
-        access_expire = datetime.utcnow() + timedelta(
+        access_expire = timezone.now() + timedelta(
             minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
         )
-        refresh_expire = datetime.utcnow() + timedelta(
+        refresh_expire = timezone.now() + timedelta(
             days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
         )
         
@@ -65,7 +66,7 @@ class JWTAuthentication(TokenAuthentication):
             'role': user.role,
             'is_superadmin': user.is_superadmin,
             'exp': access_expire,
-            'iat': datetime.utcnow(),
+            'iat': timezone.now(),
             'type': 'access'
         }
         
@@ -74,7 +75,7 @@ class JWTAuthentication(TokenAuthentication):
             'user_id': str(user.id),
             'tenant_id': str(user.tenant.id) if user.tenant else None,
             'exp': refresh_expire,
-            'iat': datetime.utcnow(),
+            'iat': timezone.now(),
             'type': 'refresh'
         }
         
