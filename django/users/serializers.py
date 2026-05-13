@@ -101,45 +101,41 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    """Login with email, password, and tenant slug"""
+    """Login with email and password only."""
+    
     email = serializers.EmailField()
+    
     password = serializers.CharField(
         write_only=True,
         style={'input_type': 'password'}
     )
-    tenant_slug = serializers.CharField()
     
     def validate(self, data):
-        """Validate credentials"""
+        """Validate credentials."""
         
-        # Get tenant by slug
+        email = data['email'].lower().strip()
+
+        # Get user by email
         try:
-            tenant = Tenant.objects.get(slug=data['tenant_slug'])
-        except Tenant.DoesNotExist:
-            raise serializers.ValidationError(
-                {'tenant_slug': 'Organization not found.'}
-            )
-        
-        # Get user by email and tenant
-        try:
-            user = User.objects.get(email=data['email'], tenant=tenant)
+            user = User.objects.get(email=email)
+
         except User.DoesNotExist:
             raise serializers.ValidationError(
                 {'email': 'Invalid email or password.'}
             )
-        
+
         # Check password
         if not user.check_password(data['password']):
             raise serializers.ValidationError(
                 {'password': 'Invalid email or password.'}
             )
-        
-        # Check user is active
+
+        # Check user active
         if not user.is_active:
             raise serializers.ValidationError(
                 {'email': 'User account is inactive.'}
             )
-        
+
         # Check email verification
         if not user.email_verified:
             raise serializers.ValidationError(
@@ -147,10 +143,9 @@ class LoginSerializer(serializers.Serializer):
                     'email': 'Please verify your email before logging in.'
                 }
             )
-        
+
         data['user'] = user
         return data
-
 
 class TokenRefreshSerializer(serializers.Serializer):
     """Refresh access token using refresh token"""
