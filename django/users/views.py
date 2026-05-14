@@ -1,5 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer
+from rest_framework import serializers
 from .serializers import (
     RegisterSerializer, LoginSerializer, TokenRefreshSerializer, UserSerializer,VerifyEmailSerializer,ResendVerificationEmailSerializer,
     ResetPasswordSerializer,ChangePasswordSerializer,ForgotPasswordSerializer,GitHubOAuthCallbackSerializer,GoogleOAuthCallbackSerializer
@@ -37,6 +39,13 @@ class HealthCheckView(APIView):
     """Health check endpoint - no auth required"""
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="API Health Check",
+        responses={200: inline_serializer(
+            name='HealthCheckResponse',
+            fields={'status': serializers.CharField()}
+        )}
+    )
     def get(self, request):
         return APIResponse.success(
             data={'status': 'healthy'},
@@ -52,6 +61,11 @@ class RegisterView(APIView):
     """
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="Register Owner & Tenant",
+        request=RegisterSerializer,
+        responses={201: UserSerializer}
+    )
     def post(self, request):
         frontend_url = request.data.get('frontend_url', settings.FRONTEND_URL)
         
@@ -92,6 +106,11 @@ class LoginView(APIView):
     """Login user with session tracking."""
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="Login User",
+        request=LoginSerializer,
+        responses={200: UserSerializer}
+    )
     def post(self, request):
         email = request.data.get('email', '').lower()
         
@@ -142,6 +161,14 @@ class TokenRefreshView(APIView):
     """
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="Refresh Access Token",
+        request=TokenRefreshSerializer,
+        responses={200: inline_serializer(
+            name='TokenRefreshResponse',
+            fields={'access_token': serializers.CharField(), 'refresh_token': serializers.CharField()}
+        )}
+    )
     def post(self, request):
         serializer = TokenRefreshSerializer(data=request.data)
         
@@ -179,6 +206,10 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
     
+    @extend_schema(
+        summary="Get Current User Profile",
+        responses={200: UserSerializer}
+    )
     def get(self, request):
         user_id = request.user_id
         try:
@@ -196,6 +227,11 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
     
+    @extend_schema(
+        summary="Logout User",
+        request=None,
+        responses={200: OpenApiResponse(description="Logged out successfully")}
+    )
     def post(self, request):
         try:
             user_id = request.user_id
@@ -239,6 +275,21 @@ class SessionListView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
     
+    @extend_schema(
+        summary="List User Sessions",
+        responses={200: inline_serializer(
+            name='SessionListResponse',
+            fields={
+                'id': serializers.CharField(),
+                'device_name': serializers.CharField(),
+                'ip_address': serializers.CharField(),
+                'last_activity': serializers.DateTimeField(),
+                'created_at': serializers.DateTimeField(),
+                'expires_at': serializers.DateTimeField(),
+            },
+            many=True
+        )}
+    )
     def get(self, request):
         user_id = request.user_id
         sessions = UserSession.objects.filter(
@@ -276,6 +327,11 @@ class RevokeSessionView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
     
+    @extend_schema(
+        summary="Revoke User Session",
+        request=None,
+        responses={200: OpenApiResponse(description="Session revoked successfully")}
+    )
     def post(self, request, session_id):
         try:
             session = UserSession.objects.get(
@@ -311,6 +367,11 @@ class VerifyEmailView(APIView):
     """
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="Verify Email",
+        request=VerifyEmailSerializer,
+        responses={200: UserSerializer}
+    )
     def post(self, request):
         serializer = VerifyEmailSerializer(data=request.data)
         
@@ -360,6 +421,11 @@ class ResendVerificationEmailView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        summary="Resend Verification Email",
+        request=ResendVerificationEmailSerializer,
+        responses={200: OpenApiResponse(description="Verification email sent")}
+    )
     def post(self, request):
         serializer = ResendVerificationEmailSerializer(data=request.data)
 
@@ -437,6 +503,11 @@ class ForgotPasswordView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        summary="Forgot Password",
+        request=ForgotPasswordSerializer,
+        responses={200: OpenApiResponse(description="If email exists, reset link sent")}
+    )
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
 
@@ -513,6 +584,11 @@ class ResetPasswordView(APIView):
     """
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="Reset Password",
+        request=ResetPasswordSerializer,
+        responses={200: OpenApiResponse(description="Password reset successfully")}
+    )
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
         
@@ -569,6 +645,11 @@ class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
     
+    @extend_schema(
+        summary="Change Password",
+        request=ChangePasswordSerializer,
+        responses={200: OpenApiResponse(description="Password changed successfully")}
+    )
     def post(self, request):
         user_id = request.user_id
         user = User.objects.get(id=user_id)
@@ -614,26 +695,36 @@ class ChangePasswordView(APIView):
             errors=serializer.errors
         )
     
-
 class GoogleOAuthCallbackView(APIView):
     """
-    Google OAuth callback - handles both owner signup and engineer invitations.
+    Google OAuth callback.
     
     POST /api/auth/google/callback
     {
         "code": "authorization_code",
-        "invite_token": "invitation_token"  // optional
+        "invite_token": "engineer_invitation_token"  // optional
     }
     
     Flows:
-    1. Owner signup (no invite_token):
-       → Create tenant + owner account
+    1. Owner signup (no invite_token): BLOCKED ❌
+       → Returns error: "Please sign up with email/password"
        
-    2. Engineer join (with invite_token):
-       → Add to invited tenant as engineer
+    2. Owner login (no invite_token, existing account): ALLOWED ✅
+       → Sign in to existing owner account
+       
+    3. Engineer signup (with invite_token): ALLOWED ✅
+       → Create engineer account in invited tenant
+       
+    4. Engineer login (no invite_token, existing account): ALLOWED ✅
+       → Sign in to existing engineer account
     """
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="Google OAuth Callback",
+        request=GoogleOAuthCallbackSerializer,
+        responses={200: UserSerializer}
+    )
     def post(self, request):
         serializer = GoogleOAuthCallbackSerializer(data=request.data)
         
@@ -656,28 +747,20 @@ class GoogleOAuthCallbackView(APIView):
             # Route to appropriate handler
             if invitation:
                 # Engineer joining via invitation
-                user, created_user, created_oauth = (
-                    EngineerOAuthHandler.process_oauth_invitation(
-                        user_info,
-                        invitation
-                    )
+                logger.info(f"Engineer OAuth signup via invitation - {user_info['email']}")
+                user = EngineerOAuthHandler.process_oauth_invitation(
+                    user_info,
+                    invitation
                 )
                 log_message = (
                     f"Engineer {user.email} joined {invitation.tenant.name} "
                     f"via Google OAuth"
                 )
             else:
-                # Owner signup/signin
-                user, created_user, created_oauth = (
-                    OwnerOAuthHandler.process_oauth_signup(user_info)
-                )
-                if created_user:
-                    log_message = (
-                        f"New owner {user.email} created tenant '{user.tenant.name}' "
-                        f"via Google OAuth"
-                    )
-                else:
-                    log_message = f"Owner {user.email} signed in via Google OAuth"
+                # No invitation → Try owner login (signup is BLOCKED)
+                logger.info(f"Owner OAuth login attempt - {user_info['email']}")
+                user = OwnerOAuthHandler.process_oauth_login(user_info)
+                log_message = f"Owner {user.email} signed in via Google OAuth"
             
             # Generate tokens
             access_token, refresh_token = JWTAuthentication.generate_tokens(
@@ -695,10 +778,12 @@ class GoogleOAuthCallbackView(APIView):
             )
         
         except ValidationError as e:
+            error_msg = str(e.detail) if hasattr(e, 'detail') else str(e)
+            logger.warning(f"Google OAuth error: {error_msg}")
             return APIResponse.error(
-                message=str(e.detail) if hasattr(e, 'detail') else str(e),
+                message=error_msg,
                 status_code=400,
-                code='validation_error'
+                code='auth_error'
             )
         except Exception as e:
             logger.error(f"Google OAuth error: {str(e)}", exc_info=True)
@@ -707,27 +792,38 @@ class GoogleOAuthCallbackView(APIView):
                 status_code=400,
                 code='oauth_error'
             )
-
-
+ 
+ 
 class GitHubOAuthCallbackView(APIView):
     """
-    GitHub OAuth callback - handles both owner signup and engineer invitations.
+    GitHub OAuth callback.
     
     POST /api/auth/github/callback
     {
         "code": "authorization_code",
-        "invite_token": "invitation_token"  // optional
+        "invite_token": "engineer_invitation_token"  // optional
     }
     
     Flows:
-    1. Owner signup (no invite_token):
-       → Create tenant + owner account
+    1. Owner signup (no invite_token): BLOCKED ❌
+       → Returns error: "Please sign up with email/password"
        
-    2. Engineer join (with invite_token):
-       → Add to invited tenant as engineer
+    2. Owner login (no invite_token, existing account): ALLOWED ✅
+       → Sign in to existing owner account
+       
+    3. Engineer signup (with invite_token): ALLOWED ✅
+       → Create engineer account in invited tenant
+       
+    4. Engineer login (no invite_token, existing account): ALLOWED ✅
+       → Sign in to existing engineer account
     """
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="GitHub OAuth Callback",
+        request=GitHubOAuthCallbackSerializer,
+        responses={200: UserSerializer}
+    )
     def post(self, request):
         serializer = GitHubOAuthCallbackSerializer(data=request.data)
         
@@ -750,28 +846,20 @@ class GitHubOAuthCallbackView(APIView):
             # Route to appropriate handler
             if invitation:
                 # Engineer joining via invitation
-                user, created_user, created_oauth = (
-                    EngineerOAuthHandler.process_oauth_invitation(
-                        user_info,
-                        invitation
-                    )
+                logger.info(f"Engineer OAuth signup via invitation - {user_info['email']}")
+                user = EngineerOAuthHandler.process_oauth_invitation(
+                    user_info,
+                    invitation
                 )
                 log_message = (
                     f"Engineer {user.email} joined {invitation.tenant.name} "
                     f"via GitHub OAuth"
                 )
             else:
-                # Owner signup/signin
-                user, created_user, created_oauth = (
-                    OwnerOAuthHandler.process_oauth_signup(user_info)
-                )
-                if created_user:
-                    log_message = (
-                        f"New owner {user.email} created tenant '{user.tenant.name}' "
-                        f"via GitHub OAuth"
-                    )
-                else:
-                    log_message = f"Owner {user.email} signed in via GitHub OAuth"
+                # No invitation → Try owner login (signup is BLOCKED)
+                logger.info(f"Owner OAuth login attempt - {user_info['email']}")
+                user = OwnerOAuthHandler.process_oauth_login(user_info)
+                log_message = f"Owner {user.email} signed in via GitHub OAuth"
             
             # Generate tokens
             access_token, refresh_token = JWTAuthentication.generate_tokens(
@@ -789,10 +877,12 @@ class GitHubOAuthCallbackView(APIView):
             )
         
         except ValidationError as e:
+            error_msg = str(e.detail) if hasattr(e, 'detail') else str(e)
+            logger.warning(f"GitHub OAuth error: {error_msg}")
             return APIResponse.error(
-                message=str(e.detail) if hasattr(e, 'detail') else str(e),
+                message=error_msg,
                 status_code=400,
-                code='validation_error'
+                code='auth_error'
             )
         except Exception as e:
             logger.error(f"GitHub OAuth error: {str(e)}", exc_info=True)
@@ -801,7 +891,6 @@ class GitHubOAuthCallbackView(APIView):
                 status_code=400,
                 code='oauth_error'
             )
-
 
 
 # ADD InviteEngineerView (admin action):
@@ -819,6 +908,21 @@ class InviteEngineerView(APIView):
     permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
     
+    @extend_schema(
+        summary="Invite Engineer to Tenant",
+        request=InviteEngineerSerializer,
+        responses={201: inline_serializer(
+            name='InviteResponse',
+            fields={
+                'id': serializers.CharField(),
+                'email': serializers.EmailField(),
+                'role': serializers.CharField(),
+                'tenant': serializers.CharField(),
+                'created_at': serializers.CharField(),
+                'expires_at': serializers.CharField()
+            }
+        )}
+    )
     def post(self, request):
         """Invite engineer to tenant."""
         tenant_id = request.tenant_id
@@ -911,6 +1015,19 @@ class ValidateInvitationView(APIView):
     """
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="Validate Invitation Token",
+        responses={200: inline_serializer(
+            name='ValidateInvitationResponse',
+            fields={
+                'token': serializers.CharField(),
+                'email': serializers.EmailField(),
+                'role': serializers.CharField(),
+                'tenant': serializers.DictField(),
+                'expires_at': serializers.CharField()
+            }
+        )}
+    )
     def get(self, request):
         """Validate invitation and return details."""
         token = request.query_params.get('token')
@@ -970,6 +1087,11 @@ class JoinWithEmailPasswordView(APIView):
     """
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="Join via Invitation",
+        request=JoinWithInvitationSerializer,
+        responses={201: UserSerializer}
+    )
     def post(self, request):
         """Join tenant via invitation with password."""
         serializer = JoinWithInvitationSerializer(data=request.data)
@@ -1048,6 +1170,23 @@ class ListInvitationsView(APIView):
     permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
     
+    @extend_schema(
+        summary="List Pending Invitations",
+        responses={200: inline_serializer(
+            name='ListInvitationsResponse',
+            fields={
+                'id': serializers.CharField(),
+                'email': serializers.EmailField(),
+                'role': serializers.CharField(),
+                'status': serializers.CharField(),
+                'invited_by': serializers.EmailField(allow_null=True),
+                'created_at': serializers.CharField(),
+                'expires_at': serializers.CharField(),
+                'accepted_at': serializers.CharField(allow_null=True)
+            },
+            many=True
+        )}
+    )
     def get(self, request):
         """List invitations for tenant."""
         tenant_id = request.tenant_id
@@ -1089,6 +1228,11 @@ class CancelInvitationView(APIView):
     permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
     
+    @extend_schema(
+        summary="Cancel Invitation",
+        request=None,
+        responses={200: OpenApiResponse(description="Invitation cancelled")}
+    )
     def post(self, request, invitation_id):
         """Cancel invitation."""
         tenant_id = request.tenant_id
@@ -1128,6 +1272,11 @@ class ResendInvitationView(APIView):
     permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
     
+    @extend_schema(
+        summary="Resend Invitation Email",
+        request=None,
+        responses={200: OpenApiResponse(description="Invitation resent")}
+    )
     def post(self, request, invitation_id):
         """Resend invitation email."""
         tenant_id = request.tenant_id

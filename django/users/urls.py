@@ -34,8 +34,4 @@ urlpatterns = [
     path('invitations/', ListInvitationsView.as_view(), name='list_invitations'),
     path('invitations/<uuid:invitation_id>/cancel', CancelInvitationView.as_view(), name='cancel_invitation'),
     path('invitations/<uuid:invitation_id>/resend', ResendInvitationView.as_view(), name='resend_invitation'),
-
-
-
-
 ]

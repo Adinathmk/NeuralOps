@@ -1,5 +1,11 @@
 """
-OAuth onboarding handlers for owner signup and engineer invitation flows.
+FIXED OAuth onboarding handlers:
+- Owner OAuth signup: BLOCKED (no tenant creation)
+- Owner OAuth login: ALLOWED (existing account only)
+- Owner OAuth linking: ALLOWED
+- Engineer OAuth signup: ALLOWED (via invitation only)
+- Engineer OAuth login: ALLOWED
+- Engineer OAuth linking: ALLOWED
 """
 import logging
 from django.db import transaction
@@ -8,7 +14,6 @@ from rest_framework.exceptions import ValidationError
 
 from .models import User, OAuthAccount, UserInvitation
 from tenants.models import Tenant
-from .slug_generator import generate_unique_slug
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +22,22 @@ class OwnerOAuthHandler:
     """
     Handle OAuth flow for tenant owners.
     
-    Creates new tenant + owner account or signs in existing owner.
+    IMPORTANT: Owners CANNOT sign up via OAuth.
+    - New owner signup: BLOCKED → return error
+    - Existing owner login: ALLOWED
+    - Existing owner OAuth linking: ALLOWED
     """
     
     @staticmethod
     @transaction.atomic
-    def process_oauth_signup(user_info):
+    def process_oauth_login(user_info):
         """
-        Handle owner OAuth signup/signin.
+        Handle owner OAuth login/linking.
+        
+        Does NOT create new tenants or users.
+        Only allows:
+        1. Signing in with existing OAuth account
+        2. Linking OAuth to existing email account
         
         Args:
             user_info: Dict {
@@ -36,7 +49,10 @@ class OwnerOAuthHandler:
             }
             
         Returns:
-            tuple: (user, created_user, created_oauth)
+            user: User instance (or raises ValidationError if no account)
+            
+        Raises:
+            ValidationError: If no account exists with this email
         """
         email = user_info['email']
         provider = user_info['provider']
@@ -50,12 +66,19 @@ class OwnerOAuthHandler:
             )
             user = oauth_account.user
             
+            # Verify this is a tenant owner
+            if not user.is_tenant_owner():
+                raise ValidationError(
+                    'This OAuth account is not linked to a tenant owner. '
+                    'Please use email/password or invitation link to sign in.'
+                )
+            
             # Update last used
             oauth_account.last_used_at = timezone.now()
             oauth_account.save()
             
-            logger.info(f"OAuth signin for existing user {email} via {provider}")
-            return user, False, False
+            logger.info(f"OAuth signin for existing owner {email} via {provider}")
+            return user
         
         except OAuthAccount.DoesNotExist:
             pass
@@ -64,7 +87,14 @@ class OwnerOAuthHandler:
         try:
             user = User.objects.get(email=email)
             
-            # Link OAuth account to existing user
+            # Verify this is a tenant owner
+            if not user.is_tenant_owner():
+                raise ValidationError(
+                    'No owner account exists with this email. '
+                    'Please sign up with email/password or use your invitation link.'
+                )
+            
+            # Link OAuth account to existing owner
             oauth_account = OAuthAccount.objects.create(
                 user=user,
                 provider=provider,
@@ -74,66 +104,31 @@ class OwnerOAuthHandler:
                 provider_picture_url=user_info['picture']
             )
             
-            logger.info(f"Linked {provider} OAuth to existing user {email}")
-            return user, False, True
+            logger.info(f"Linked {provider} OAuth to existing owner {email}")
+            return user
         
         except User.DoesNotExist:
             pass
         
-        # 3. Create new owner and tenant
-        logger.info(f"Creating new owner and tenant for {email} via {provider}")
-        
-        # Create tenant with unique slug
-        tenant_name = user_info['name'] + "'s Organization"
-        slug = generate_unique_slug(tenant_name)
-        
-        tenant = Tenant.objects.create(
-            name=tenant_name,
-            slug=slug,
-            plan_tier='free',
-            status='active'
+        # 3. No account exists → BLOCK signup
+        logger.warning(
+            f"OAuth signup attempt for new owner {email} via {provider} - BLOCKED"
         )
         
-        # Extract first and last name
-        name_parts = user_info['name'].split()
-        first_name = name_parts[0] if name_parts else ''
-        last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
-        
-        # Create owner user
-        user = User.objects.create_user(
-            email=email,
-            password=None,  # No password for OAuth users
-            tenant=tenant,
-            first_name=first_name,
-            last_name=last_name,
-            role='owner',
-            is_staff=False,
-            email_verified=True  # OAuth emails are verified
+        raise ValidationError(
+            f'No account found for {email}. '
+            f'Please sign up with email and password to create your account and organization.'
         )
-        
-        # Create OAuth account
-        oauth_account = OAuthAccount.objects.create(
-            user=user,
-            provider=provider,
-            provider_user_id=provider_user_id,
-            provider_email=email,
-            provider_name=user_info['name'],
-            provider_picture_url=user_info['picture']
-        )
-        
-        logger.info(
-            f"Created new owner {email} with tenant '{tenant_name}' "
-            f"(slug: {slug}) via {provider} OAuth"
-        )
-        
-        return user, True, True
 
 
 class EngineerOAuthHandler:
     """
     Handle OAuth flow for engineer invitations.
     
-    Adds engineer to invited tenant with specified role.
+    Engineers CAN sign up via OAuth (through invitation).
+    - New engineer signup: ALLOWED (with valid invitation)
+    - Existing engineer login: ALLOWED
+    - Existing engineer OAuth linking: ALLOWED
     """
     
     @staticmethod
@@ -153,18 +148,24 @@ class EngineerOAuthHandler:
             invitation: UserInvitation instance
             
         Returns:
-            tuple: (user, created_user, created_oauth)
+            user: User instance
+            
+        Raises:
+            ValidationError: If email doesn't match or other issues
         """
         email = user_info['email']
         provider = user_info['provider']
         provider_user_id = user_info['provider_user_id']
         tenant = invitation.tenant
-
+        
+        # CRITICAL: Email must match invitation
         if email.lower() != invitation.email.lower():
             raise ValidationError(
-                "This invitation was sent to a different email address."
+                f'This invitation was sent to {invitation.email}, '
+                f'but you signed in with {email}. '
+                f'Please use the email this invitation was sent to.'
             )
-                
+        
         # 1. Check if OAuth account already exists
         try:
             oauth_account = OAuthAccount.objects.get(
@@ -176,7 +177,8 @@ class EngineerOAuthHandler:
             # Verify user is in correct tenant
             if user.tenant_id != tenant.id:
                 raise ValidationError(
-                    'This OAuth account is linked to a different organization.'
+                    'This OAuth account is linked to a different organization. '
+                    'Please contact support.'
                 )
             
             # Update last used
@@ -184,7 +186,7 @@ class EngineerOAuthHandler:
             oauth_account.save()
             
             logger.info(f"OAuth signin for existing engineer {email} in {tenant.name}")
-            return user, False, False
+            return user
         
         except OAuthAccount.DoesNotExist:
             pass
@@ -204,12 +206,12 @@ class EngineerOAuthHandler:
             )
             
             logger.info(f"Linked {provider} OAuth to existing engineer {email}")
-            return user, False, True
+            return user
         
         except User.DoesNotExist:
             pass
         
-        # 3. Create engineer account in invited tenant
+        # 3. Create NEW engineer account in invited tenant
         logger.info(
             f"Creating new engineer {email} in tenant '{tenant.name}' via {provider}"
         )
@@ -251,4 +253,4 @@ class EngineerOAuthHandler:
             f"as {invitation.role} via {provider} OAuth"
         )
         
-        return user, True, True
+        return user
