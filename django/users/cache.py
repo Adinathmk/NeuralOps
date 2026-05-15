@@ -169,6 +169,28 @@ class CacheManager:
             bool: True if rate limited, False otherwise
         """
         return self.get_failed_login_count(email) >= max_attempts
+    
+    def get_mfa_attempts(self, email):
+        """Get MFA verification attempts count."""
+        key = f'mfa_attempts:{email}'
+        count = self.redis_client.get(key)
+        return int(count) if count else 0
+
+    def increment_mfa_attempts(self, email):
+        """Increment MFA verification attempts."""
+        key = f'mfa_attempts:{email}'
+        self.redis_client.incr(key)
+        self.redis_client.expire(key, 900)  # 15 minutes
+
+    def reset_mfa_attempts(self, email):
+        """Reset MFA verification attempts after success."""
+        key = f'mfa_attempts:{email}'
+        self.redis_client.delete(key)
+
+    def lock_mfa_verification(self, email, minutes):
+        """Lock MFA verification for N minutes."""
+        key = f'mfa_locked:{email}'
+        self.redis_client.setex(key, minutes * 60, '1')
 
 
 # Singleton instance

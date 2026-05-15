@@ -9,7 +9,7 @@ from .views import (
     JoinWithEmailPasswordView,
     ListInvitationsView,
     CancelInvitationView,
-    ResendInvitationView,
+    ResendInvitationView,SetupMFAView,ConfirmMFAView,VerifyMFATokenView,DisableMFAView
 )
 
 urlpatterns = [
@@ -34,4 +34,8 @@ urlpatterns = [
     path('invitations/', ListInvitationsView.as_view(), name='list_invitations'),
     path('invitations/<uuid:invitation_id>/cancel', CancelInvitationView.as_view(), name='cancel_invitation'),
     path('invitations/<uuid:invitation_id>/resend', ResendInvitationView.as_view(), name='resend_invitation'),
+    path('auth/mfa/setup', SetupMFAView.as_view(), name='mfa_setup'),
+    path('auth/mfa/confirm', ConfirmMFAView.as_view(), name='mfa_confirm'),
+    path('auth/mfa/verify', VerifyMFATokenView.as_view(), name='mfa_verify'),
+    path('auth/mfa/disable', DisableMFAView.as_view(), name='mfa_disable'),
 ]

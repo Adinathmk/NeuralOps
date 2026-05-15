@@ -461,3 +461,63 @@ class ValidateInvitationTokenSerializer(serializers.Serializer):
             raise serializers.ValidationError('Invitation has expired.')
         
         return invitation
+
+
+
+
+
+
+
+
+
+class SetupMFASerializer(serializers.Serializer):
+    """Start MFA setup - generate secret & QR code."""
+    # No input needed - just POST /api/auth/mfa/setup
+    pass
+
+
+class ConfirmMFASerializer(serializers.Serializer):
+    """Verify TOTP code to confirm MFA is working."""
+    code = serializers.CharField(max_length=6, min_length=6)
+    
+    def validate_code(self, value):
+        """Validate code is numeric."""
+        if not value.isdigit():
+            raise serializers.ValidationError('Code must be 6 digits.')
+        return value
+
+
+class VerifyMFATokenSerializer(serializers.Serializer):
+    """
+    Exchange MFA verification token + TOTP code for access tokens.
+    
+    Called after user enters 6-digit code from authenticator.
+    """
+    mfa_token = serializers.CharField()
+    code = serializers.CharField(max_length=6, min_length=6)
+    
+    def validate_code(self, value):
+        """Validate code format."""
+        if not value.isdigit():
+            raise serializers.ValidationError('Code must be 6 digits.')
+        return value
+
+
+class DisableMFASerializer(serializers.Serializer):
+    """Disable MFA - requires password verification."""
+    password = serializers.CharField(
+        write_only=True,
+        style={'input_type': 'password'}
+    )
+    code = serializers.CharField(
+        max_length=6,
+        min_length=6,
+        required=False,
+        help_text="6-digit TOTP code OR backup code"
+    )
+    
+    def validate_code(self, value):
+        """Validate code if provided."""
+        if value and not value.replace('-', '').isalnum():
+            raise serializers.ValidationError('Invalid code format.')
+        return value

@@ -9,6 +9,8 @@ from django.utils.text import slugify
 import secrets
 from datetime import timedelta
 from django.utils import timezone
+import pyotp
+
 
 
 def generate_token():
@@ -16,6 +18,13 @@ def generate_token():
 
 def get_expiry_time():
     return timezone.now() + timedelta(days=2)
+
+def generate_mfa_token():
+    return secrets.token_urlsafe(32)
+
+
+def mfa_token_expiry():
+    return timezone.now() + timedelta(minutes=5)
 
 
 
@@ -601,4 +610,171 @@ class OAuthAccount(models.Model):
     
     def __str__(self):
         return f"{self.user.email} - {self.provider}"
+    
+
+
+class TOTPDevice(models.Model):
+    """
+    Store TOTP (Two-Factor Authentication) settings for user.
+    
+    When user enables MFA:
+    1. Generate secret key
+    2. User scans QR code with Google Authenticator/Authy
+    3. User verifies with 6-digit code
+    4. Confirmed = True, MFA active
+    """
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='totp_device'
+    )
+    
+    # TOTP Secret Key (encrypted in real production)
+    secret_key = models.CharField(max_length=255)
+    
+    # Status
+    is_confirmed = models.BooleanField(
+        default=False,
+        help_text="True = MFA is active, user must use TOTP on login"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        db_table = 'totp_devices'
+    
+    def __str__(self):
+        return f"{self.user.email} - {'Confirmed' if self.is_confirmed else 'Pending'}"
+    
+    @staticmethod
+    def generate_secret():
+        """Generate a new TOTP secret key."""
+        return pyotp.random_base32()
+    
+    def get_totp(self):
+        """Get TOTP object for this device."""
+        return pyotp.TOTP(self.secret_key)
+    
+    def get_qr_code(self, user_email):
+        """
+        Generate QR code URL for user to scan.
+        User scans with Google Authenticator, Authy, Microsoft Authenticator, etc.
+        """
+        totp = self.get_totp()
+        return totp.provisioning_uri(
+            name=user_email,
+            issuer_name='NeuralOps'
+        )
+    
+    def verify_token(self, token):
+        """
+        Verify 6-digit TOTP code.
+        Allows 1 backward & 1 forward time window (30-second windows).
+        """
+        totp = self.get_totp()
+        return totp.verify(token, valid_window=1)
+    
+    def confirm(self):
+        """Mark MFA as confirmed & active."""
+        self.is_confirmed = True
+        self.confirmed_at = timezone.now()
+        self.save()
+
+
+class BackupCode(models.Model):
+    """
+    One-time backup codes for account recovery.
+    
+    Generated when user sets up MFA.
+    User can use instead of TOTP if they lose authenticator app.
+    Each code can only be used ONCE.
+    """
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='backup_codes'
+    )
+    
+    # Code is hashed (never store plaintext)
+    code_hash = models.CharField(max_length=255)
+    
+    # Status
+    is_used = models.BooleanField(default=False)
+    used_at = models.DateTimeField(null=True, blank=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'backup_codes'
+        unique_together = ('user', 'code_hash')
+    
+    def __str__(self):
+        status = "Used" if self.is_used else "Available"
+        return f"{self.user.email} - {status}"
+    
+    @staticmethod
+    def generate_codes(count=10):
+        """Generate list of backup codes."""
+        return [secrets.token_hex(4) for _ in range(count)]
+    
+    @staticmethod
+    def hash_code(code):
+        """Hash backup code (use Django's make_password)."""
+        from django.contrib.auth.hashers import make_password
+        return make_password(code)
+    
+    def use(self):
+        """Mark code as used."""
+        self.is_used = True
+        self.used_at = timezone.now()
+        self.save()
+
+
+class MFAVerificationToken(models.Model):
+    """
+    Temporary token issued after password verification.
+    
+    Flow:
+    1. User logs in with email/password
+    2. If MFA enabled, return MFA_VERIFICATION_TOKEN (not access token)
+    3. User verifies TOTP code
+    4. Exchange MFA_VERIFICATION_TOKEN + TOTP code for access/refresh tokens
+    
+    Token expires in 5 minutes.
+    """
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='mfa_tokens'
+    )
+    
+    token = models.CharField(
+        max_length=255,
+        unique=True,
+        default=generate_mfa_token,
+        db_index=True
+    )
+    
+    # Expires in 5 minutes
+    expires_at = models.DateTimeField(
+        default=mfa_token_expiry
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'mfa_verification_tokens'
+    
+    def is_valid(self):
+        """Check if token is still valid."""
+        return timezone.now() <= self.expires_at
 

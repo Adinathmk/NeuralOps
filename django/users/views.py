@@ -4,16 +4,17 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_seriali
 from rest_framework import serializers
 from .serializers import (
     RegisterSerializer, LoginSerializer, TokenRefreshSerializer, UserSerializer,VerifyEmailSerializer,ResendVerificationEmailSerializer,
-    ResetPasswordSerializer,ChangePasswordSerializer,ForgotPasswordSerializer,GitHubOAuthCallbackSerializer,GoogleOAuthCallbackSerializer
+    ResetPasswordSerializer,ChangePasswordSerializer,ForgotPasswordSerializer,GitHubOAuthCallbackSerializer,GoogleOAuthCallbackSerializer,
+    ConfirmMFASerializer,VerifyMFATokenSerializer,DisableMFASerializer
 )
 from .authentication import JWTAuthentication
-from .models import User,UserSession
+from .models import User,UserSession,MFAVerificationToken
 from .cache import cache_manager
 import logging
 from datetime import datetime
 from core.responses import APIResponse
 from core.exceptions import RateLimitException,ValidationException,NotFoundException
-from .models import EmailVerification
+from .models import EmailVerification,BackupCode,TOTPDevice
 from .email import email_service
 from django.conf import settings
 from .models import PasswordReset
@@ -30,6 +31,12 @@ from datetime import timedelta
 from django.db import transaction
 from .models import UserInvitation
 from core.permissions import IsTenantAdmin
+from pyotp import TOTP
+import qrcode
+from io import BytesIO
+import base64
+from django.db import transaction
+from django.contrib.auth.hashers import check_password
 
 
 
@@ -124,18 +131,37 @@ class LoginView(APIView):
             user = serializer.validated_data['user']
             
             cache_manager.reset_failed_login(email)
+
+            # Check if MFA is enabled
+            try:
+                device = TOTPDevice.objects.get(user=user, is_confirmed=True)
+                
+                # MFA is enabled - return temporary MFA token
+                mfa_token_obj = MFAVerificationToken.objects.create(user=user)
+                
+                logger.info(f"MFA verification required for {user.email}")
+                
+                return APIResponse.success(
+                    message='MFA required. Please verify with authenticator app.',
+                    mfa_token=mfa_token_obj.token,  # Send this back
+                    requires_mfa=True
+                )
+            except TOTPDevice.DoesNotExist:
+                # MFA not enabled - return access tokens directly
+                access_token, refresh_token = JWTAuthentication.generate_tokens(
+                    user,
+                    request
+                )
+
+                logger.info(f"User {email} logged in from {JWTAuthentication._get_client_ip(request)}")
+
+                return APIResponse.success(
+                    data=UserSerializer(user).data,
+                    message='Login successful.',
+                    access_token=access_token,
+                    refresh_token=refresh_token
+                )
             
-            # IMPORTANT: Pass request to create session record
-            access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
-            
-            logger.info(f"User {email} logged in from {JWTAuthentication._get_client_ip(request)}")
-            
-            return APIResponse.success(
-                data=UserSerializer(user).data,
-                message='Login successful.',
-                access_token=access_token,
-                refresh_token=refresh_token
-            )
         
         failed_count = cache_manager.increment_failed_login(email)
         
@@ -1318,3 +1344,375 @@ class ResendInvitationView(APIView):
         return APIResponse.success(
             message=f'Invitation resent to {invitation.email}'
         )
+    
+
+
+class SetupMFAView(APIView):
+    """
+    Start MFA setup - generate secret & QR code.
+    
+    GET /api/auth/mfa/setup
+    Headers: Authorization: Bearer <access_token>
+    
+    Response:
+    {
+        "secret": "JBSWY3DPEBLW64TMMQ======",
+        "qr_code": "data:image/png;base64,iVBORw0KGgoAAAANS...",
+        "setup_url": "otpauth://totp/..."
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    
+    def get(self, request):
+        """Generate TOTP secret and QR code."""
+        user_id = request.user_id
+        user = User.objects.get(id=user_id)
+        
+        # Delete existing unconfirmed device
+        TOTPDevice.objects.filter(user=user, is_confirmed=False).delete()
+        
+        # Generate new secret
+        secret = TOTPDevice.generate_secret()
+        
+        # Create device (not confirmed yet)
+        device = TOTPDevice.objects.create(
+            user=user,
+            secret_key=secret,
+            is_confirmed=False
+        )
+        
+        # Get QR code URL
+        qr_url = device.get_qr_code(user.email)
+        
+        # Generate QR code image
+        qr = qrcode.QRCode()
+        qr.add_data(qr_url)
+        qr.make()
+        
+        img = qr.make_image(fill_color="black", back_color="white")
+        img_bytes = BytesIO()
+        img.save(img_bytes, format='PNG')
+        img_base64 = base64.b64encode(img_bytes.getvalue()).decode()
+        
+        logger.info(f"MFA setup started for {user.email}")
+        
+        return APIResponse.success(
+            data={
+                'secret': secret,
+                'qr_code': f'data:image/png;base64,{img_base64}',
+                'setup_url': qr_url,
+                'message': 'Scan QR code with Google Authenticator, Authy, or Microsoft Authenticator'
+            }
+        )
+
+
+class ConfirmMFAView(APIView):
+    """
+    Verify TOTP code to confirm MFA setup.
+    
+    POST /api/auth/mfa/confirm
+    Headers: Authorization: Bearer <access_token>
+    {
+        "code": "123456"
+    }
+    
+    Response: MFA now active, 10 backup codes generated
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    
+    def post(self, request):
+        """Confirm MFA by verifying TOTP code."""
+        user_id = request.user_id
+        user = User.objects.get(id=user_id)
+        
+        serializer = ConfirmMFASerializer(data=request.data)
+        if not serializer.is_valid():
+            return APIResponse.error(
+                message='Invalid code',
+                status_code=400,
+                code='validation_error',
+                errors=serializer.errors
+            )
+        
+        code = serializer.validated_data['code']
+        
+        try:
+            # Get unconfirmed device
+            device = TOTPDevice.objects.get(
+                user=user,
+                is_confirmed=False
+            )
+        except TOTPDevice.DoesNotExist:
+            return APIResponse.error(
+                message='MFA setup not started. Please go to /api/auth/mfa/setup first.',
+                status_code=400,
+                code='setup_required'
+            )
+        
+        # Verify code
+        if not device.verify_token(code):
+            logger.warning(f"Invalid MFA code for {user.email}")
+            return APIResponse.error(
+                message='Invalid code. Please check your authenticator app.',
+                status_code=400,
+                code='invalid_code'
+            )
+        
+        try:
+            with transaction.atomic():
+                # Confirm device
+                device.confirm()
+                
+                # Delete old backup codes
+                BackupCode.objects.filter(user=user).delete()
+                
+                # Generate new backup codes
+                codes = BackupCode.generate_codes(count=10)
+                backup_codes = []
+                
+                for code in codes:
+                    code_hash = BackupCode.hash_code(code)
+                    BackupCode.objects.create(
+                        user=user,
+                        code_hash=code_hash
+                    )
+                    backup_codes.append(code)
+                
+                logger.info(f"MFA confirmed for {user.email}")
+                
+                return APIResponse.success(
+                    data={
+                        'message': 'MFA enabled successfully',
+                        'backup_codes': backup_codes,
+                        'warning': 'Save these backup codes in a safe place. Each can be used once if you lose your authenticator.'
+                    }
+                )
+        
+        except Exception as e:
+            logger.error(f"MFA confirmation error: {str(e)}")
+            return APIResponse.error(
+                message='Failed to confirm MFA',
+                status_code=500,
+                code='mfa_error'
+            )
+
+
+class VerifyMFATokenView(APIView):
+    """
+    Verify TOTP code and exchange MFA token for access tokens.
+    
+    POST /api/auth/mfa/verify
+    {
+        "mfa_token": "temporary-mfa-token",
+        "code": "123456"
+    }
+    
+    Response: access_token, refresh_token
+    """
+    permission_classes = [AllowAny]
+    
+    @extend_schema(
+        summary="Verify MFA Code",
+        request=VerifyMFATokenSerializer,
+        responses={200: inline_serializer(
+            name='MFAVerifyResponse',
+            fields={
+                'access_token': serializers.CharField(),
+                'refresh_token': serializers.CharField()
+            }
+        )}
+    )
+    def post(self, request):
+        """Verify TOTP code and return access tokens."""
+        serializer = VerifyMFATokenSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return APIResponse.error(
+                message='Verification failed',
+                status_code=400,
+                code='validation_error',
+                errors=serializer.errors
+            )
+        
+        mfa_token = serializer.validated_data['mfa_token']
+        code = serializer.validated_data['code']
+        
+        # Verify MFA token exists and is valid
+        try:
+            mfa_token_obj = MFAVerificationToken.objects.get(token=mfa_token)
+        except MFAVerificationToken.DoesNotExist:
+            logger.warning(f"Invalid MFA token used")
+            return APIResponse.error(
+                message='Invalid MFA token. Please log in again.',
+                status_code=400,
+                code='invalid_token'
+            )
+        
+        if not mfa_token_obj.is_valid():
+            mfa_token_obj.delete()
+            return APIResponse.error(
+                message='MFA token expired. Please log in again.',
+                status_code=400,
+                code='token_expired'
+            )
+        
+        user = mfa_token_obj.user
+        
+        # Check rate limiting on MFA attempts
+        mfa_attempts = cache_manager.get_mfa_attempts(user.email)
+        if mfa_attempts >= 5:
+            # Lock MFA verification for 15 minutes
+            cache_manager.lock_mfa_verification(user.email, 15)
+            logger.warning(f"MFA verification rate limited for {user.email}")
+            return APIResponse.error(
+                message='Too many failed attempts. Try again in 15 minutes.',
+                status_code=429,
+                code='rate_limited'
+            )
+        
+        # Try TOTP code first
+        device = TOTPDevice.objects.get(user=user)
+        
+        if device.verify_token(code):
+            # Valid TOTP code
+            cache_manager.reset_mfa_attempts(user.email)
+            mfa_token_obj.delete()
+            
+            # Generate access/refresh tokens
+            access_token, refresh_token = JWTAuthentication.generate_tokens(
+                user,
+                request
+            )
+            
+            logger.info(f"MFA verification success for {user.email}")
+            
+            return APIResponse.success(
+                message='MFA verified. Welcome!',
+                access_token=access_token,
+                refresh_token=refresh_token
+            )
+        
+        # Try backup code
+        backup = BackupCode.objects.filter(
+            user=user,
+            is_used=False
+        ).first()
+        
+        if backup:
+            from django.contrib.auth.hashers import check_password
+            if check_password(code, backup.code_hash):
+                # Valid backup code
+                backup.use()
+                cache_manager.reset_mfa_attempts(user.email)
+                mfa_token_obj.delete()
+                
+                access_token, refresh_token = JWTAuthentication.generate_tokens(
+                    user,
+                    request
+                )
+                
+                logger.warning(f"Backup code used by {user.email}")
+                
+                return APIResponse.success(
+                    message='Backup code verified. Generate new backup codes from settings.',
+                    access_token=access_token,
+                    refresh_token=refresh_token
+                )
+        
+        # Invalid code
+        cache_manager.increment_mfa_attempts(user.email)
+        logger.warning(f"Invalid MFA code for {user.email}")
+        
+        return APIResponse.error(
+            message='Invalid code. Check your authenticator app.',
+            status_code=400,
+            code='invalid_code'
+        )
+
+
+class DisableMFAView(APIView):
+    """
+    Disable MFA - requires password + TOTP verification.
+    
+    POST /api/auth/mfa/disable
+    Headers: Authorization: Bearer <access_token>
+    {
+        "password": "user_password",
+        "code": "123456"  // TOTP code
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    
+    def post(self, request):
+        """Disable MFA for user."""
+        user_id = request.user_id
+        user = User.objects.get(id=user_id)
+        
+        serializer = DisableMFASerializer(data=request.data)
+        if not serializer.is_valid():
+            return APIResponse.error(
+                message='Disable MFA failed',
+                status_code=400,
+                code='validation_error',
+                errors=serializer.errors
+            )
+        
+        password = serializer.validated_data['password']
+        code = serializer.validated_data.get('code')
+        
+        # Verify password
+        if not user.check_password(password):
+            logger.warning(f"Password verification failed for MFA disable - {user.email}")
+            return APIResponse.error(
+                message='Incorrect password',
+                status_code=400,
+                code='auth_error'
+            )
+        
+        # Verify MFA code if MFA is active
+        try:
+            device = TOTPDevice.objects.get(user=user, is_confirmed=True)
+        except TOTPDevice.DoesNotExist:
+            return APIResponse.error(
+                message='MFA not enabled',
+                status_code=400,
+                code='mfa_not_enabled'
+            )
+        
+        if not code:
+            return APIResponse.error(
+                message='MFA code required to disable MFA',
+                status_code=400,
+                code='mfa_code_required'
+            )
+        
+        # Verify code
+        if not device.verify_token(code):
+            logger.warning(f"Invalid MFA code during disable - {user.email}")
+            return APIResponse.error(
+                message='Invalid MFA code',
+                status_code=400,
+                code='invalid_code'
+            )
+        
+        # Disable MFA
+        try:
+            with transaction.atomic():
+                device.delete()
+                BackupCode.objects.filter(user=user).delete()
+                
+                logger.info(f"MFA disabled for {user.email}")
+                
+                return APIResponse.success(
+                    message='MFA disabled successfully'
+                )
+        except Exception as e:
+            logger.error(f"MFA disable error: {str(e)}")
+            return APIResponse.error(
+                message='Failed to disable MFA',
+                status_code=500,
+                code='mfa_error'
+            )
