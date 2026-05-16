@@ -37,6 +37,7 @@ from io import BytesIO
 import base64
 from django.db import transaction
 from django.contrib.auth.hashers import check_password
+from core.utils.errors import extract_error_message
 
 
 
@@ -161,6 +162,7 @@ class LoginView(APIView):
                     access_token=access_token,
                     refresh_token=refresh_token
                 )
+                
             
         
         failed_count = cache_manager.increment_failed_login(email)
@@ -169,7 +171,6 @@ class LoginView(APIView):
             logger.warning(f"Multiple failed login attempts for {email}: {failed_count}")
 
         first_error = next(iter(serializer.errors.values()))[0]
-        
         return APIResponse.error(
             message=first_error,
             status_code=401,
@@ -769,7 +770,8 @@ class GoogleOAuthCallbackView(APIView):
             # Get user info from Google
             user_info = GoogleOAuthService.get_user_info(access_token)
             user_info['provider'] = 'google'
-            
+            email = user_info['email']
+           
             # Route to appropriate handler
             if invitation:
                 # Engineer joining via invitation
@@ -782,19 +784,69 @@ class GoogleOAuthCallbackView(APIView):
                     f"Engineer {user.email} joined {invitation.tenant.name} "
                     f"via Google OAuth"
                 )
+               
             else:
-                # No invitation → Try owner login (signup is BLOCKED)
-                logger.info(f"Owner OAuth login attempt - {user_info['email']}")
-                user = OwnerOAuthHandler.process_oauth_login(user_info)
-                log_message = f"Owner {user.email} signed in via Google OAuth"
+                try:
+                    
+                    existing_user = User.objects.get(email=email)
+                   
+
+                except User.DoesNotExist:
+                    raise ValidationError(
+                        "No account found with this email. "
+                        "Please contact your administrator."
+                    )
+                
+                if existing_user.role == 'owner':
+                  
+                    logger.info(
+                        f"Owner OAuth login attempt - {email}"
+                    )
+                    user = OwnerOAuthHandler.process_oauth_login(user_info)
+                    log_message = f"Owner {user.email} signed in via Google OAuth"
+                   
+                
+                else:
+                    logger.info(
+                        f"Engineer OAuth login attempt - {email}"
+                    )
+                   
+                    user = EngineerOAuthHandler.process_oauth_login(
+                        user_info
+                    )
+                   
+
+                    log_message = (
+                        f"Engineer {user.email} signed in "
+                        f"via Google OAuth"
+                    )
+
+                   
             
-            # Generate tokens
-            access_token, refresh_token = JWTAuthentication.generate_tokens(
-                user,
-                request
-            )
+           
+            try:
+                device = TOTPDevice.objects.get(user=user, is_confirmed=True)
+                
+                # MFA is enabled - return temporary MFA token
+                mfa_token_obj = MFAVerificationToken.objects.create(user=user)
+                
+                logger.info(f"MFA verification required for {user.email}")
+                
+                return APIResponse.success(
+                    message='MFA required. Please verify with authenticator app.',
+                    mfa_token=mfa_token_obj.token,  # Send this back
+                    requires_mfa=True
+                )
+                
+            except TOTPDevice.DoesNotExist:
+                # MFA not enabled - return access tokens directly
+                access_token, refresh_token = JWTAuthentication.generate_tokens(
+                    user,
+                    request
+                )
             
             logger.info(log_message)
+            
             
             return APIResponse.success(
                 data=UserSerializer(user).data,
@@ -804,7 +856,7 @@ class GoogleOAuthCallbackView(APIView):
             )
         
         except ValidationError as e:
-            error_msg = str(e.detail) if hasattr(e, 'detail') else str(e)
+            error_msg = extract_error_message(e)
             logger.warning(f"Google OAuth error: {error_msg}")
             return APIResponse.error(
                 message=error_msg,
@@ -887,11 +939,26 @@ class GitHubOAuthCallbackView(APIView):
                 user = OwnerOAuthHandler.process_oauth_login(user_info)
                 log_message = f"Owner {user.email} signed in via GitHub OAuth"
             
-            # Generate tokens
-            access_token, refresh_token = JWTAuthentication.generate_tokens(
-                user,
-                request
-            )
+            try:
+                device = TOTPDevice.objects.get(user=user, is_confirmed=True)
+                
+                # MFA is enabled - return temporary MFA token
+                mfa_token_obj = MFAVerificationToken.objects.create(user=user)
+                
+                logger.info(f"MFA verification required for {user.email}")
+                
+                return APIResponse.success(
+                    message='MFA required. Please verify with authenticator app.',
+                    mfa_token=mfa_token_obj.token,  # Send this back
+                    requires_mfa=True
+                )
+            except TOTPDevice.DoesNotExist:
+                # MFA not enabled - return access tokens directly
+                access_token, refresh_token = JWTAuthentication.generate_tokens(
+                    user,
+                    request
+                )
+            
             
             logger.info(log_message)
             
@@ -903,7 +970,7 @@ class GitHubOAuthCallbackView(APIView):
             )
         
         except ValidationError as e:
-            error_msg = str(e.detail) if hasattr(e, 'detail') else str(e)
+            error_msg = extract_error_message(e)
             logger.warning(f"GitHub OAuth error: {error_msg}")
             return APIResponse.error(
                 message=error_msg,
@@ -1366,43 +1433,70 @@ class SetupMFAView(APIView):
     
     def get(self, request):
         """Generate TOTP secret and QR code."""
+
         user_id = request.user_id
         user = User.objects.get(id=user_id)
-        
+
+        # Check if MFA already enabled
+        existing_device = TOTPDevice.objects.filter(
+            user=user,
+            is_confirmed=True
+        ).exists()
+
+        if existing_device:
+            return APIResponse.error(
+                message='MFA is already enabled for this account.',
+                status_code=400,
+                code='mfa_already_enabled'
+            )
+
         # Delete existing unconfirmed device
-        TOTPDevice.objects.filter(user=user, is_confirmed=False).delete()
-        
+        TOTPDevice.objects.filter(
+            user=user,
+            is_confirmed=False
+        ).delete()
+
         # Generate new secret
         secret = TOTPDevice.generate_secret()
-        
-        # Create device (not confirmed yet)
+
+        # Create device
         device = TOTPDevice.objects.create(
             user=user,
             secret_key=secret,
             is_confirmed=False
         )
-        
-        # Get QR code URL
+
+        # Generate QR setup URL
         qr_url = device.get_qr_code(user.email)
-        
-        # Generate QR code image
+
+        # Generate QR image
         qr = qrcode.QRCode()
         qr.add_data(qr_url)
         qr.make()
-        
-        img = qr.make_image(fill_color="black", back_color="white")
+
+        img = qr.make_image(
+            fill_color="black",
+            back_color="white"
+        )
+
         img_bytes = BytesIO()
-        img.save(img_bytes, format='PNG')
-        img_base64 = base64.b64encode(img_bytes.getvalue()).decode()
-        
+        img.save(img_bytes)
+
+        img_base64 = base64.b64encode(
+            img_bytes.getvalue()
+        ).decode()
+
         logger.info(f"MFA setup started for {user.email}")
-        
+
         return APIResponse.success(
             data={
                 'secret': secret,
                 'qr_code': f'data:image/png;base64,{img_base64}',
                 'setup_url': qr_url,
-                'message': 'Scan QR code with Google Authenticator, Authy, or Microsoft Authenticator'
+                'message': (
+                    'Scan QR code with Google Authenticator, '
+                    'Authy, or Microsoft Authenticator'
+                )
             }
         )
 
@@ -1589,6 +1683,7 @@ class VerifyMFATokenView(APIView):
             logger.info(f"MFA verification success for {user.email}")
             
             return APIResponse.success(
+                data=UserSerializer(user).data,
                 message='MFA verified. Welcome!',
                 access_token=access_token,
                 refresh_token=refresh_token

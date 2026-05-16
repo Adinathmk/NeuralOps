@@ -14,6 +14,7 @@ from users.models import (
     EmailVerification, PasswordReset
 )
 from users.authentication import JWTAuthentication
+from django.core.cache import cache
 
 User = get_user_model()
 fake = Faker()

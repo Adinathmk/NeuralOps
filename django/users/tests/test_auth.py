@@ -101,7 +101,6 @@ class TestLoginView:
         data = {
             'email': owner_user.email,
             'password': 'TestPass123!',
-            'tenant_slug': owner_user.tenant.slug,
         }
         
         response = api_client.post('/api/auth/login', data, format='json')
@@ -117,7 +116,6 @@ class TestLoginView:
         data = {
             'email': owner_user.email,
             'password': 'WrongPassword123!',
-            'tenant_slug': owner_user.tenant.slug,
         }
         
         response = api_client.post('/api/auth/login', data, format='json')
@@ -129,31 +127,18 @@ class TestLoginView:
         data = {
             'email': 'nonexistent@example.com',
             'password': 'TestPass123!',
-            'tenant_slug': tenant.slug,
         }
         
         response = api_client.post('/api/auth/login', data, format='json')
         
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
     
-    def test_login_invalid_tenant(self, api_client, owner_user):
-        """Test login fails with invalid tenant."""
-        data = {
-            'email': owner_user.email,
-            'password': 'TestPass123!',
-            'tenant_slug': 'invalid-tenant',
-        }
-        
-        response = api_client.post('/api/auth/login', data, format='json')
-        
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
     
     def test_login_creates_session(self, api_client, owner_user):
         """Test that login creates a session."""
         data = {
             'email': owner_user.email,
             'password': 'TestPass123!',
-            'tenant_slug': owner_user.tenant.slug,
         }
         
         response = api_client.post('/api/auth/login', data, format='json')

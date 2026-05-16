@@ -54,9 +54,6 @@ class GoogleOAuthService:
             str: Access token
         """
         try:
-            print("CLIENT_ID =", settings.GOOGLE_OAUTH_CLIENT_ID) 
-            print("CLIENT_SECRET =", settings.GOOGLE_OAUTH_CLIENT_SECRET) 
-            print("REDIRECT_URI =", settings.GOOGLE_OAUTH_REDIRECT_URI)
             response = requests.post(
                 GoogleOAuthService.GOOGLE_OAUTH_URL,
                 data={

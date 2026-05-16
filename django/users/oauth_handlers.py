@@ -121,120 +121,249 @@ class OwnerOAuthHandler:
         )
 
 
+
 class EngineerOAuthHandler:
     """
-    Handle OAuth flow for engineer invitations.
-    
-    Engineers CAN sign up via OAuth (through invitation).
-    - New engineer signup: ALLOWED (with valid invitation)
-    - Existing engineer login: ALLOWED
-    - Existing engineer OAuth linking: ALLOWED
+    Handle OAuth flow for engineers.
+
+    Engineers CAN:
+    - Sign up via invitation
+    - Login without invitation
+    - Link OAuth to existing account
     """
-    
+
+    # =========================================================
+    # ENGINEER LOGIN (NO INVITATION)
+    # =========================================================
+    @staticmethod
+    @transaction.atomic
+    def process_oauth_login(user_info):
+        
+
+        email = user_info['email']
+        provider = user_info['provider']
+        provider_user_id = user_info['provider_user_id']
+
+        # -----------------------------------------------------
+        # 1. Existing OAuth account
+        # -----------------------------------------------------
+        try:
+            oauth_account = OAuthAccount.objects.get(
+                provider=provider,
+                provider_user_id=provider_user_id
+            )
+
+            user = oauth_account.user
+
+            # Prevent owner login here
+            if user.role == 'owner':
+                raise ValidationError(
+                    'This account belongs to an owner account.'
+                )
+
+            oauth_account.last_used_at = timezone.now()
+            oauth_account.save()
+
+            logger.info(
+                f"OAuth signin for existing engineer "
+                f"{email} via {provider}"
+            )
+
+            return user
+
+        except OAuthAccount.DoesNotExist:
+            pass
+
+        # -----------------------------------------------------
+        # 2. Existing engineer account by email
+        # -----------------------------------------------------
+        try:
+            user = User.objects.get(email=email)
+
+            # Prevent owner login here
+            if user.role == 'owner':
+                raise ValidationError(
+                    'This account belongs to an owner account.'
+                )
+
+            # Check if provider already linked
+            existing_link = OAuthAccount.objects.filter(
+                user=user,
+                provider=provider
+            ).first()
+
+            if not existing_link:
+
+                OAuthAccount.objects.create(
+                    user=user,
+                    provider=provider,
+                    provider_user_id=provider_user_id,
+                    provider_email=email,
+                    provider_name=user_info['name'],
+                    provider_picture_url=user_info['picture']
+                )
+
+                logger.info(
+                    f"Linked {provider} OAuth "
+                    f"to existing engineer {email}"
+                )
+
+            return user
+
+        except User.DoesNotExist:
+            raise ValidationError(
+                'No engineer account found. '
+                'Please accept your invitation first.'
+            )
+
+    # =========================================================
+    # ENGINEER SIGNUP VIA INVITATION
+    # =========================================================
     @staticmethod
     @transaction.atomic
     def process_oauth_invitation(user_info, invitation):
+        print('1')
         """
         Handle engineer OAuth join via invitation.
-        
+
         Args:
             user_info: Dict {
                 provider_user_id,
                 email,
                 name,
                 picture,
-                provider  # 'google' or 'github'
+                provider
             }
+
             invitation: UserInvitation instance
-            
+
         Returns:
             user: User instance
-            
-        Raises:
-            ValidationError: If email doesn't match or other issues
         """
+
         email = user_info['email']
         provider = user_info['provider']
         provider_user_id = user_info['provider_user_id']
         tenant = invitation.tenant
-        
-        # CRITICAL: Email must match invitation
+
+        # -----------------------------------------------------
+        # Email MUST match invitation
+        # -----------------------------------------------------
         if email.lower() != invitation.email.lower():
+
             raise ValidationError(
-                f'This invitation was sent to {invitation.email}, '
-                f'but you signed in with {email}. '
-                f'Please use the email this invitation was sent to.'
+                f'This invitation was sent to '
+                f'{invitation.email}, but you signed in '
+                f'with {email}.'
             )
-        
-        # 1. Check if OAuth account already exists
-        try:
-            oauth_account = OAuthAccount.objects.get(
-                provider=provider,
-                provider_user_id=provider_user_id
-            )
-            user = oauth_account.user
-            
-            # Verify user is in correct tenant
-            if user.tenant_id != tenant.id:
-                raise ValidationError(
-                    'This OAuth account is linked to a different organization. '
-                    'Please contact support.'
-                )
-            
-            # Update last used
-            oauth_account.last_used_at = timezone.now()
-            oauth_account.save()
-            
-            logger.info(f"OAuth signin for existing engineer {email} in {tenant.name}")
-            return user
-        
-        except OAuthAccount.DoesNotExist:
-            pass
-        
-        # 2. Check if user already exists in this tenant
-        try:
-            user = User.objects.get(email=email, tenant=tenant)
-            
-            # Link OAuth account
-            oauth_account = OAuthAccount.objects.create(
-                user=user,
-                provider=provider,
-                provider_user_id=provider_user_id,
-                provider_email=email,
-                provider_name=user_info['name'],
-                provider_picture_url=user_info['picture']
-            )
-            
-            logger.info(f"Linked {provider} OAuth to existing engineer {email}")
-            return user
-        
-        except User.DoesNotExist:
-            pass
-        
-        # 3. Create NEW engineer account in invited tenant
+        print('2')
+
+        # # -----------------------------------------------------
+        # # 1. Existing OAuth account
+        # # -----------------------------------------------------
+        # try:
+
+        #     oauth_account = OAuthAccount.objects.get(
+        #         provider=provider,
+        #         provider_user_id=provider_user_id
+        #     )
+
+        #     user = oauth_account.user
+
+        #     # Verify tenant
+        #     if user.tenant_id != tenant.id:
+
+        #         raise ValidationError(
+        #             'This OAuth account is linked '
+        #             'to a different organization.'
+        #         )
+
+        #     oauth_account.last_used_at = timezone.now()
+        #     oauth_account.save()
+
+        #     logger.info(
+        #         f"OAuth signin for existing engineer "
+        #         f"{email} in {tenant.name}"
+        #     )
+
+        #     return user
+
+        # except OAuthAccount.DoesNotExist:
+        #     pass
+
+        # # -----------------------------------------------------
+        # # 2. Existing user in tenant
+        # # -----------------------------------------------------
+        # try:
+
+        #     user = User.objects.get(
+        #         email=email,
+        #         tenant=tenant
+        #     )
+
+        #     # Check if provider already linked
+        #     existing_link = OAuthAccount.objects.filter(
+        #         user=user,
+        #         provider=provider
+        #     ).first()
+
+        #     if not existing_link:
+
+        #         OAuthAccount.objects.create(
+        #             user=user,
+        #             provider=provider,
+        #             provider_user_id=provider_user_id,
+        #             provider_email=email,
+        #             provider_name=user_info['name'],
+        #             provider_picture_url=user_info['picture']
+        #         )
+
+        #     logger.info(
+        #         f"Linked {provider} OAuth "
+        #         f"to existing engineer {email}"
+        #     )
+
+        #     return user
+
+        # except User.DoesNotExist:
+        #     pass
+
+        # -----------------------------------------------------
+        # 3. Create NEW engineer account
+        # -----------------------------------------------------
         logger.info(
-            f"Creating new engineer {email} in tenant '{tenant.name}' via {provider}"
+            f"Creating new engineer {email} "
+            f"in tenant '{tenant.name}' via {provider}"
         )
-        
+
         # Extract name
         name_parts = user_info['name'].split()
-        first_name = name_parts[0] if name_parts else ''
-        last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
-        
-        # Create user with invited tenant and role
+
+        first_name = (
+            name_parts[0]
+            if name_parts else ''
+        )
+        print('3')
+        last_name = (
+            ' '.join(name_parts[1:])
+            if len(name_parts) > 1 else ''
+        )
+
+        print('3.5')
+        # Create user
         user = User.objects.create_user(
             email=email,
-            password=None,  # No password for OAuth users
+            password=None,
             tenant=tenant,
             first_name=first_name,
             last_name=last_name,
             role=invitation.role,
             is_staff=False,
-            email_verified=True  # OAuth emails are verified
+            email_verified=True
         )
-        
+        print('4')
         # Create OAuth account
-        oauth_account = OAuthAccount.objects.create(
+        OAuthAccount.objects.create(
             user=user,
             provider=provider,
             provider_user_id=provider_user_id,
@@ -242,15 +371,22 @@ class EngineerOAuthHandler:
             provider_name=user_info['name'],
             provider_picture_url=user_info['picture']
         )
-        
-        # Mark invitation as accepted
+        print('4.5')
+        # Mark invitation accepted
         invitation.accepted_by = user
+
+        print('4.6')
         invitation.status = 'accepted'
+        print('4.6')
         invitation.save()
-        
+        print('5')
+
         logger.info(
-            f"Engineer {email} joined {tenant.name} "
-            f"as {invitation.role} via {provider} OAuth"
+            f"Engineer {email} joined "
+            f"{tenant.name} as {invitation.role} "
+            f"via {provider} OAuth"
         )
-        
+        print('6')
+       
+
         return user

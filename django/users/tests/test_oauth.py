@@ -33,15 +33,9 @@ class TestGoogleOAuthCallback:
         
         response = api_client.post('/api/auth/google/callback', data, format='json')
         
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data['success'] is True
-        assert 'access_token' in response.data
-        
-        # Verify user and tenant created
-        user = User.objects.get(email='owner@gmail.com')
-        assert user.role == 'owner'
-        assert user.tenant is not None
-        assert user.email_verified is True
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['code'] == 'auth_error'
+        assert "No account found" in response.data["message"]
     
     @patch('users.oauth_service.GoogleOAuthService.exchange_code_for_token')
     @patch('users.oauth_service.GoogleOAuthService.get_user_info')
@@ -143,24 +137,28 @@ class TestGitHubOAuthCallback:
         
         response = api_client.post('/api/auth/github/callback', data, format='json')
         
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data['success'] is True
-        assert 'access_token' in response.data
-        
-        # Verify user and tenant created
-        user = User.objects.get(email='owner@github.com')
-        assert user.role == 'owner'
-        assert user.tenant is not None
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['code'] == 'auth_error'
+        assert "No account found" in response.data["message"]
     
     @patch('users.oauth_service.GitHubOAuthService.exchange_code_for_token')
     @patch('users.oauth_service.GitHubOAuthService.get_user_info')
-    def test_owner_signin_existing_oauth(self, mock_get_info, mock_exchange, api_client, github_oauth_account):
+    def test_owner_signin_existing_oauth(self, mock_get_info, mock_exchange, api_client, owner_user):
         """Test owner signin with existing OAuth account."""
-        user = github_oauth_account.user
+        from users.models import OAuthAccount
+        github_account = OAuthAccount.objects.create(
+            user=owner_user,
+            provider='github',
+            provider_user_id='github-user-456',
+            provider_email=owner_user.email,
+            provider_name=owner_user.get_full_name(),
+            provider_picture_url='https://github.com/photo.jpg'
+        )
+        user = github_account.user
         
         mock_exchange.return_value = 'github-access-token-123'
         mock_get_info.return_value = {
-            'provider_user_id': github_oauth_account.provider_user_id,
+            'provider_user_id': github_account.provider_user_id,
             'email': user.email,
             'name': user.get_full_name(),
             'picture': 'https://github.com/photo.jpg',

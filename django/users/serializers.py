@@ -15,14 +15,34 @@ class UserSerializer(serializers.ModelSerializer):
     """Serialize user with tenant info"""
     tenant = TenantSerializer(read_only=True)
     full_name = serializers.SerializerMethodField(read_only=True)
-    
+    is_email_verified = serializers.SerializerMethodField(read_only=True)
+    mfa_enabled = serializers.SerializerMethodField(read_only=True)
+    avatar_url = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = User
-        fields = ('id', 'email', 'first_name', 'last_name', 'full_name', 'role', 'tenant', 'created_at')
+        fields = (
+            'id', 'email', 'first_name', 'last_name', 'full_name',
+            'role', 'email_verified', 'is_email_verified',
+            'mfa_enabled', 'avatar_url', 'tenant', 'created_at'
+        )
         read_only_fields = ('id', 'created_at')
-    
+
     def get_full_name(self, obj):
         return obj.get_full_name()
+
+    def get_is_email_verified(self, obj):
+        """Alias for email_verified for frontend compatibility."""
+        return obj.email_verified
+
+    def get_mfa_enabled(self, obj):
+        """Check if user has a confirmed TOTP device."""
+        from .models import TOTPDevice
+        return TOTPDevice.objects.filter(user=obj, is_confirmed=True).exists()
+
+    def get_avatar_url(self, obj):
+        """Placeholder - no avatar field on model yet."""
+        return None
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -123,6 +143,7 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {'email': 'Invalid email or password.'}
             )
+
 
         # Check password
         if not user.check_password(data['password']):
@@ -494,12 +515,12 @@ class VerifyMFATokenSerializer(serializers.Serializer):
     Called after user enters 6-digit code from authenticator.
     """
     mfa_token = serializers.CharField()
-    code = serializers.CharField(max_length=6, min_length=6)
+    code = serializers.CharField(max_length=16, min_length=6)
     
     def validate_code(self, value):
         """Validate code format."""
-        if not value.isdigit():
-            raise serializers.ValidationError('Code must be 6 digits.')
+        if not value.replace('-', '').isalnum():
+            raise serializers.ValidationError('Invalid code format.')
         return value
 
 
@@ -510,7 +531,7 @@ class DisableMFASerializer(serializers.Serializer):
         style={'input_type': 'password'}
     )
     code = serializers.CharField(
-        max_length=6,
+        max_length=16,
         min_length=6,
         required=False,
         help_text="6-digit TOTP code OR backup code"
