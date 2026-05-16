@@ -10,6 +10,7 @@ import secrets
 from datetime import timedelta
 from django.utils import timezone
 import pyotp
+import datetime
 
 
 
@@ -676,7 +677,8 @@ class TOTPDevice(models.Model):
         Allows 1 backward & 1 forward time window (30-second windows).
         """
         totp = self.get_totp()
-        return totp.verify(token, valid_window=1)
+        current_utc_time = datetime.datetime.now(datetime.timezone.utc)
+        return totp.verify(token, valid_window=1, for_time=current_utc_time)
     
     def confirm(self):
         """Mark MFA as confirmed & active."""

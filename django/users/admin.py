@@ -2,11 +2,10 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import User, UserInvitation, AuditLog, APIKey
 from tenants.models import TenantConfiguration
-from .models import User, UserInvitation, AuditLog, APIKey, UserSession
-from tenants.models import TenantConfiguration
-
-
-from .models import OAuthAccount
+from .models import (
+    User, UserInvitation, AuditLog, APIKey, UserSession, OAuthAccount,
+    EmailVerification, PasswordReset, TOTPDevice, BackupCode, MFAVerificationToken
+)
 
 @admin.register(OAuthAccount)
 class OAuthAccountAdmin(admin.ModelAdmin):
@@ -76,3 +75,32 @@ class APIKeyAdmin(admin.ModelAdmin):
 class TenantConfigurationAdmin(admin.ModelAdmin):
     list_display = ('tenant', 'alert_confidence_threshold', 'log_retention_days')
     search_fields = ('tenant__name',)
+
+@admin.register(EmailVerification)
+class EmailVerificationAdmin(admin.ModelAdmin):
+    list_display = ('user', 'status', 'created_at', 'expires_at')
+    list_filter = ('status',)
+    search_fields = ('user__email',)
+
+@admin.register(PasswordReset)
+class PasswordResetAdmin(admin.ModelAdmin):
+    list_display = ('user', 'status', 'created_at', 'expires_at')
+    list_filter = ('status',)
+    search_fields = ('user__email',)
+
+@admin.register(TOTPDevice)
+class TOTPDeviceAdmin(admin.ModelAdmin):
+    list_display = ('user', 'is_confirmed', 'created_at', 'confirmed_at')
+    list_filter = ('is_confirmed',)
+    search_fields = ('user__email',)
+
+@admin.register(BackupCode)
+class BackupCodeAdmin(admin.ModelAdmin):
+    list_display = ('user', 'is_used', 'created_at', 'used_at')
+    list_filter = ('is_used',)
+    search_fields = ('user__email',)
+
+@admin.register(MFAVerificationToken)
+class MFAVerificationTokenAdmin(admin.ModelAdmin):
+    list_display = ('user', 'created_at', 'expires_at')
+    search_fields = ('user__email',)
