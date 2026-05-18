@@ -10,6 +10,8 @@ import sys
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load environment variables
+# In Docker, env vars come from docker-compose env_file — .env.local is only for local dev.
+# load_dotenv does NOT override already-set env vars, so Docker env takes priority.
 load_dotenv(BASE_DIR / '.env.local')
 
 # ============================================================================
@@ -214,8 +216,18 @@ LOGGING = {
             'format': '[{levelname}] {asctime} {name} {message}',
             'style': '{',
         },
+        'simple': {
+            'format': '[{levelname}] {name} {message}',
+            'style': '{',
+        },
     },
     'handlers': {
+        # stdout handler — used by Docker (docker compose logs)
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        # Rotating file handler — used for local dev
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': BASE_DIR / 'django.log',
@@ -225,8 +237,21 @@ LOGGING = {
         },
     },
     'root': {
-        'handlers': ['file'],
+        # Both handlers active: Docker captures stdout, local dev uses file
+        'handlers': ['console', 'file'],
         'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console', 'file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
     },
 }   
 

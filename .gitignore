@@ -43,3 +43,5 @@ __pycache__/
 venv/
 .env
 db.sqlite3
+# Docker env (never commit real secrets)
+.env.docker

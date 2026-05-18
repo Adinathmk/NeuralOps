@@ -1,0 +1,37 @@
+# ============================================================
+# NeuralOps — Development Override
+# Overrides production settings for local development:
+#   - Mounts source code for hot-reload (no rebuild needed)
+#   - Exposes Django port 8000 directly
+#   - Sets DEBUG=True
+#   - Uses console email backend (no real emails sent)
+# ============================================================
+# Usage:
+#   docker compose up                 ← applies both files (prod+dev)
+#   docker compose -f docker-compose.yml up  ← prod only
+# ============================================================
+
+services:
+
+  web:
+    build:
+      target: production          # still build the same image
+    volumes:
+      - ./django:/app             # ← hot-reload: changes reflect immediately
+      - static_files:/app/staticfiles
+      - media_files:/app/mediafiles
+    ports:
+      - "8000:8000"               # expose Django directly for debugging
+    environment:
+      DEBUG: "True"
+      EMAIL_BACKEND: "django.core.mail.backends.console.EmailBackend"
+      GUNICORN_WORKERS: "1"
+      GUNICORN_LOG_LEVEL: "debug"
+
+  db:
+    ports:
+      - "5432:5432"               # expose Postgres for local tools (DBeaver, pgAdmin)
+
+  redis:
+    ports:
+      - "6379:6379"               # expose Redis for local tools (RedisInsight)

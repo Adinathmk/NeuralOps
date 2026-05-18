@@ -1,0 +1,118 @@
+# ============================================================
+# NeuralOps — Production Docker Compose
+# Services: PostgreSQL, Redis, Django/Gunicorn, Nginx
+# ============================================================
+
+services:
+
+  # ── PostgreSQL Database ──────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: neuralops_db
+    restart: unless-stopped
+    env_file: .env.docker
+    environment:
+      POSTGRES_DB: ${DB_NAME:-neuralops_db}
+      POSTGRES_USER: ${DB_USER:-neuralops}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-neuralops_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - neuralops_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-neuralops} -d ${DB_NAME:-neuralops_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Redis Cache ──────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: neuralops_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1
+      --loglevel notice
+    volumes:
+      - redis_data:/data
+    networks:
+      - neuralops_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Django / Gunicorn ────────────────────────────────────────────────────────
+  web:
+    build:
+      context: ./django
+      dockerfile: Dockerfile
+      target: production
+    container_name: neuralops_web
+    restart: unless-stopped
+    env_file: .env.docker
+    volumes:
+      - static_files:/app/staticfiles
+      - media_files:/app/mediafiles
+      - app_logs:/app/logs
+    networks:
+      - neuralops_network
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ── Nginx Reverse Proxy ──────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: neuralops_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - static_files:/app/staticfiles:ro
+      - media_files:/app/mediafiles:ro
+    networks:
+      - neuralops_network
+    depends_on:
+      - web
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+# ── Named Volumes ────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  static_files:
+    driver: local
+  media_files:
+    driver: local
+  app_logs:
+    driver: local
+
+# ── Internal Network ─────────────────────────────────────────────────────────
+networks:
+  neuralops_network:
+    driver: bridge
+    name: neuralops_network
