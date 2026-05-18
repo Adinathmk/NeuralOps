@@ -230,7 +230,7 @@ LOGGING = {
         # Rotating file handler — used for local dev
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': BASE_DIR / 'django.log',
+            'filename': BASE_DIR / 'logs/django.log',
             'maxBytes': 1024 * 1024 * 5,  # 5 MB
             'backupCount': 5,
             'formatter': 'verbose',

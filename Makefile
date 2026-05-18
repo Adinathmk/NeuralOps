@@ -24,7 +24,7 @@ help:
 	@echo "  make down           Stop and remove containers"
 	@echo "  make restart        Restart all services"
 	@echo "  make logs           Tail logs (all services)"
-	@echo "  make logs s=web     Tail logs for a specific service"
+	@echo "  make logs s=web     Tail logs for a specific service"	
 	@echo "  make shell          Open Django container bash shell"
 	@echo "  make migrate        Run Django migrations"
 	@echo "  make collectstatic  Collect static files"

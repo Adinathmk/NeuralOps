@@ -46,6 +46,7 @@ python manage.py collectstatic --noinput --clear
 echo "==> [5/5] Starting Gunicorn (workers=${GUNICORN_WORKERS:-3})..."
 exec gunicorn config.wsgi:application \
     --bind 0.0.0.0:8000 \
+    --reload \
     --workers "${GUNICORN_WORKERS:-3}" \
     --threads "${GUNICORN_THREADS:-2}" \
     --timeout "${GUNICORN_TIMEOUT:-120}" \

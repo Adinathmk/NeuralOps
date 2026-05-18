@@ -16,10 +16,19 @@ services:
   web:
     build:
       target: production          # still build the same image
+
+    # Development-only:
+    # Run as root so container can write to Windows bind-mounted folders
+    # user: root
+
     volumes:
       - ./django:/app             # ← hot-reload: changes reflect immediately
       - static_files:/app/staticfiles
       - media_files:/app/mediafiles
+
+       # Local log persistence
+      # - ./django/logs:/app/logs
+      
     ports:
       - "8000:8000"               # expose Django directly for debugging
     environment:
