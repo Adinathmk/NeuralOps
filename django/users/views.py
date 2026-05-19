@@ -162,7 +162,30 @@ class LoginView(APIView):
                     access_token=access_token,
                     refresh_token=refresh_token
                 )
+            
+        email_error = serializer.errors.get('email', [None])[0]
+        if email_error == 'Please verify your email before logging in.':
+            try:
+                user = User.objects.get(email=email)
                 
+                if not user.email_verified:
+                    frontend_url = request.data.get('frontend_url', settings.FRONTEND_URL)
+                    
+                    # Delete old tokens and create fresh one
+                    EmailVerification.objects.filter(user=user).delete()
+                    verification = EmailVerification.objects.create(user=user)
+                    
+                    try:
+                        email_service.send_verification_email(
+                            user=user,
+                            verification_token=verification.token,
+                            frontend_url=frontend_url
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to resend verification email: {str(e)}")
+
+            except User.DoesNotExist:
+                pass            
             
         
         failed_count = cache_manager.increment_failed_login(email)
@@ -199,11 +222,14 @@ class TokenRefreshView(APIView):
     def post(self, request):
         serializer = TokenRefreshSerializer(data=request.data)
         
+
+
         if serializer.is_valid():
             payload = JWTAuthentication.verify_token(
                 serializer.validated_data['refresh_token']
             )
             
+
             # Get user from token
             user = User.objects.get(id=payload['user_id'])
             

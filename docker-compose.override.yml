@@ -19,7 +19,7 @@ services:
 
     # Development-only:
     # Run as root so container can write to Windows bind-mounted folders
-    # user: root
+    user: root
 
     volumes:
       - ./django:/app             # ← hot-reload: changes reflect immediately
@@ -27,7 +27,7 @@ services:
       - media_files:/app/mediafiles
 
        # Local log persistence
-      # - ./django/logs:/app/logs
+      - ./django/logs:/app/logs
       
     ports:
       - "8000:8000"               # expose Django directly for debugging

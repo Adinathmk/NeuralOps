@@ -103,7 +103,12 @@ class OwnerOAuthHandler:
                 provider_name=user_info['name'],
                 provider_picture_url=user_info['picture']
             )
-            
+
+            if not user.email_verified:
+                user.email_verified = True
+                user.save(update_fields=['email_verified'])
+
+
             logger.info(f"Linked {provider} OAuth to existing owner {email}")
             return user
         
@@ -207,6 +212,10 @@ class EngineerOAuthHandler:
                     f"Linked {provider} OAuth "
                     f"to existing engineer {email}"
                 )
+            
+            if not user.email_verified:
+                user.email_verified = True
+                user.save(update_fields=['email_verified'])
 
             return user
 
