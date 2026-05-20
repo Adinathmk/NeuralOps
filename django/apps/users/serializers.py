@@ -342,7 +342,7 @@ class GoogleOAuthCallbackSerializer(serializers.Serializer):
     
     def validate_code(self, value):
         """Validate and exchange code for token."""
-        from .oauth_service import GoogleOAuthService
+        from .services.oauth_providers import GoogleOAuthService
         try:
             access_token = GoogleOAuthService.exchange_code_for_token(value)
             return access_token
@@ -380,7 +380,7 @@ class GitHubOAuthCallbackSerializer(serializers.Serializer):
     
     def validate_code(self, value):
         """Validate and exchange code for token."""
-        from .oauth_service import GitHubOAuthService
+        from .services.oauth_providers import GitHubOAuthService
         try:
             access_token = GitHubOAuthService.exchange_code_for_token(value)
             return access_token

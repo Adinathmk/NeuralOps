@@ -14,8 +14,8 @@ User = get_user_model()
 class TestGoogleOAuthCallback:
     """Test Google OAuth callback."""
     
-    @patch('users.oauth_service.GoogleOAuthService.exchange_code_for_token')
-    @patch('users.oauth_service.GoogleOAuthService.get_user_info')
+    @patch('users.services.oauth_providers.GoogleOAuthService.exchange_code_for_token')
+    @patch('users.services.oauth_providers.GoogleOAuthService.get_user_info')
     def test_owner_signup_new_google_account(self, mock_get_info, mock_exchange, api_client):
         """Test owner signup with new Google account."""
         # Mock OAuth service responses
@@ -37,8 +37,8 @@ class TestGoogleOAuthCallback:
         assert response.data['code'] == 'auth_error'
         assert "No account found" in response.data["message"]
     
-    @patch('users.oauth_service.GoogleOAuthService.exchange_code_for_token')
-    @patch('users.oauth_service.GoogleOAuthService.get_user_info')
+    @patch('users.services.oauth_providers.GoogleOAuthService.exchange_code_for_token')
+    @patch('users.services.oauth_providers.GoogleOAuthService.get_user_info')
     def test_owner_signin_existing_oauth(self, mock_get_info, mock_exchange, api_client, google_oauth_account):
         """Test owner signin with existing OAuth account."""
         user = google_oauth_account.user
@@ -60,8 +60,8 @@ class TestGoogleOAuthCallback:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['data']['email'] == user.email
     
-    @patch('users.oauth_service.GoogleOAuthService.exchange_code_for_token')
-    @patch('users.oauth_service.GoogleOAuthService.get_user_info')
+    @patch('users.services.oauth_providers.GoogleOAuthService.exchange_code_for_token')
+    @patch('users.services.oauth_providers.GoogleOAuthService.get_user_info')
     def test_engineer_join_via_google_invitation(self, mock_get_info, mock_exchange, api_client, invitation):
         """Test engineer joining via Google OAuth with invitation."""
         mock_exchange.return_value = 'google-access-token-123'
@@ -90,7 +90,7 @@ class TestGoogleOAuthCallback:
         invitation.refresh_from_db()
         assert invitation.status == 'accepted'
     
-    @patch('users.oauth_service.GoogleOAuthService.exchange_code_for_token')
+    @patch('users.services.oauth_providers.GoogleOAuthService.exchange_code_for_token')
     def test_google_oauth_invalid_code(self, mock_exchange, api_client):
         """Test Google OAuth fails with invalid code."""
         mock_exchange.side_effect = Exception('Invalid code')
@@ -119,8 +119,8 @@ class TestGoogleOAuthCallback:
 class TestGitHubOAuthCallback:
     """Test GitHub OAuth callback."""
     
-    @patch('users.oauth_service.GitHubOAuthService.exchange_code_for_token')
-    @patch('users.oauth_service.GitHubOAuthService.get_user_info')
+    @patch('users.services.oauth_providers.GitHubOAuthService.exchange_code_for_token')
+    @patch('users.services.oauth_providers.GitHubOAuthService.get_user_info')
     def test_owner_signup_new_github_account(self, mock_get_info, mock_exchange, api_client):
         """Test owner signup with new GitHub account."""
         mock_exchange.return_value = 'github-access-token-123'
@@ -141,8 +141,8 @@ class TestGitHubOAuthCallback:
         assert response.data['code'] == 'auth_error'
         assert "No account found" in response.data["message"]
     
-    @patch('users.oauth_service.GitHubOAuthService.exchange_code_for_token')
-    @patch('users.oauth_service.GitHubOAuthService.get_user_info')
+    @patch('users.services.oauth_providers.GitHubOAuthService.exchange_code_for_token')
+    @patch('users.services.oauth_providers.GitHubOAuthService.get_user_info')
     def test_owner_signin_existing_oauth(self, mock_get_info, mock_exchange, api_client, owner_user):
         """Test owner signin with existing OAuth account."""
         from users.models import OAuthAccount
@@ -173,8 +173,8 @@ class TestGitHubOAuthCallback:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['data']['email'] == user.email
     
-    @patch('users.oauth_service.GitHubOAuthService.exchange_code_for_token')
-    @patch('users.oauth_service.GitHubOAuthService.get_user_info')
+    @patch('users.services.oauth_providers.GitHubOAuthService.exchange_code_for_token')
+    @patch('users.services.oauth_providers.GitHubOAuthService.get_user_info')
     def test_engineer_join_via_github_invitation(self, mock_get_info, mock_exchange, api_client, invitation):
         """Test engineer joining via GitHub OAuth with invitation."""
         mock_exchange.return_value = 'github-access-token-123'
@@ -199,7 +199,7 @@ class TestGitHubOAuthCallback:
         assert user.tenant == invitation.tenant
         assert user.role == invitation.role
     
-    @patch('users.oauth_service.GitHubOAuthService.exchange_code_for_token')
+    @patch('users.services.oauth_providers.GitHubOAuthService.exchange_code_for_token')
     def test_github_oauth_invalid_code(self, mock_exchange, api_client):
         """Test GitHub OAuth fails with invalid code."""
         mock_exchange.side_effect = Exception('Invalid code')

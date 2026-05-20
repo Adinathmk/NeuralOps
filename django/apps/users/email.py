@@ -46,33 +46,7 @@ class EmailService:
             logger.error(f"Failed to send verification email to {user.email}: {str(e)}")
             raise
     
-    # @staticmethod
-    # def send_password_reset_email(user, reset_token, frontend_url):
-    #     """Send password reset link."""
-    #     reset_link = f"{frontend_url}/reset-password?token={reset_token}"
-        
-    #     context = {
-    #         'user_name': user.get_full_name(),
-    #         'reset_link': reset_link,
-    #         'expiry_hours': 24,
-    #     }
-        
-    #     html_message = render_to_string('emails/reset_password.html', context)
-    #     plain_message = strip_tags(html_message)
-        
-    #     try:
-    #         send_mail(
-    #             subject='Reset your password - NeuralOps',
-    #             message=plain_message,
-    #             from_email=settings.DEFAULT_FROM_EMAIL,
-    #             recipient_list=[user.email],
-    #             html_message=html_message,
-    #             fail_silently=False,
-    #         )
-    #         logger.info(f"Password reset email sent to {user.email}")
-    #     except Exception as e:
-    #         logger.error(f"Failed to send password reset email to {user.email}: {str(e)}")
-    #         raise
+    
     
     @staticmethod
     def send_welcome_email(user):

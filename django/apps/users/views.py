@@ -1,53 +1,48 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.exceptions import ValidationError
 from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer
 from rest_framework import serializers
-from .serializers import (
-    RegisterSerializer, LoginSerializer, TokenRefreshSerializer, UserSerializer,VerifyEmailSerializer,ResendVerificationEmailSerializer,
-    ResetPasswordSerializer,ChangePasswordSerializer,ForgotPasswordSerializer,GitHubOAuthCallbackSerializer,GoogleOAuthCallbackSerializer,
-    ConfirmMFASerializer,VerifyMFATokenSerializer,DisableMFASerializer
-)
-from .authentication import JWTAuthentication
-from .models import User,UserSession,MFAVerificationToken, AuditLog
-from core.quotas import QuotaService
-from .cache import cache_manager
 import logging
-from datetime import datetime
+
+from .authentication import JWTAuthentication
+from .serializers import (
+    RegisterSerializer, LoginSerializer, TokenRefreshSerializer, UserSerializer,
+    VerifyEmailSerializer, ResendVerificationEmailSerializer,
+    ResetPasswordSerializer, ChangePasswordSerializer, ForgotPasswordSerializer,
+    GitHubOAuthCallbackSerializer, GoogleOAuthCallbackSerializer,
+    ConfirmMFASerializer, VerifyMFATokenSerializer, DisableMFASerializer,
+    InviteEngineerSerializer, JoinWithInvitationSerializer,
+    ValidateInvitationTokenSerializer,
+)
+from .models import User
+from .cache import cache_manager
 from core.responses import APIResponse
-from core.exceptions import RateLimitException,ValidationException,NotFoundException
-from .models import EmailVerification,BackupCode,TOTPDevice
-from .email import email_service
-from django.conf import settings
-from .models import PasswordReset
-from .oauth_service import GoogleOAuthService, GitHubOAuthService
-from .models import OAuthAccount
-from rest_framework.exceptions import ValidationError
-from .oauth_handlers import EngineerOAuthHandler, OwnerOAuthHandler
-from .models import UserInvitation
+from core.exceptions import RateLimitException
 from core.permissions import IsTenantAdmin
-from .models import Tenant
-from .serializers import InviteEngineerSerializer, JoinWithInvitationSerializer
-from django.utils import timezone
-from datetime import timedelta
-from django.db import transaction
-from .models import UserInvitation
-from core.permissions import IsTenantAdmin
-from pyotp import TOTP
-import qrcode
-from io import BytesIO
-import base64
-from django.db import transaction
-from django.contrib.auth.hashers import check_password
 from core.utils.errors import extract_error_message
 
+from .services.auth_service import AuthService
+from .services.session_service import SessionService
+from .services.password_service import PasswordService
+from .services.email_verification_service import EmailVerificationService
+from .services.oauth_service_layer import OAuthServiceLayer
+from .services.invitation_service import InvitationService
+from .services.mfa_service import MFAService
 
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Health Check
+# ---------------------------------------------------------------------------
 
 class HealthCheckView(APIView):
     """Health check endpoint - no auth required"""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="API Health Check",
         responses={200: inline_serializer(
@@ -61,15 +56,15 @@ class HealthCheckView(APIView):
             message='Server is healthy'
         )
 
+
+# ---------------------------------------------------------------------------
+# Registration & Login
+# ---------------------------------------------------------------------------
+
 class RegisterView(APIView):
-    """
-    Email/password owner registration.
-    
-    Creates new tenant + owner account.
-    Engineers must join via invitation links.
-    """
+    """Email/password owner registration. Creates new tenant + owner account."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Register Owner & Tenant",
         request=RegisterSerializer,
@@ -77,9 +72,8 @@ class RegisterView(APIView):
     )
     def post(self, request):
         frontend_url = request.data.get('frontend_url', settings.FRONTEND_URL)
-        
         serializer = RegisterSerializer(data=request.data)
-        
+
         if not serializer.is_valid():
             return APIResponse.error(
                 message='Registration failed',
@@ -87,22 +81,10 @@ class RegisterView(APIView):
                 code='validation_error',
                 errors=serializer.errors
             )
-        
+
         user = serializer.save()
-        
-        # Create email verification token
-        verification = EmailVerification.objects.create(user=user)
-        
-        # Send verification email
-        try:
-            email_service.send_verification_email(
-                user=user,
-                verification_token=verification.token,
-                frontend_url=frontend_url
-            )
-        except Exception as e:
-            logger.error(f"Failed to send verification email: {str(e)}")
-        
+        AuthService.register(user, frontend_url)
+
         return APIResponse.created(
             data=UserSerializer(user).data,
             message='Owner account created. Please check your email to verify.',
@@ -114,7 +96,7 @@ class RegisterView(APIView):
 class LoginView(APIView):
     """Login user with session tracking."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Login User",
         request=LoginSerializer,
@@ -122,144 +104,54 @@ class LoginView(APIView):
     )
     def post(self, request):
         email = request.data.get('email', '').lower()
-        
-        # Check rate limiting
+
         if cache_manager.is_login_rate_limited(email):
             raise RateLimitException('Too many failed login attempts')
-        
+
         serializer = LoginSerializer(data=request.data)
-        
+
         if serializer.is_valid():
             user = serializer.validated_data['user']
-            
             cache_manager.reset_failed_login(email)
+            return AuthService.login(user, request)
 
-            # Check if MFA is enabled
-            try:
-                device = TOTPDevice.objects.get(user=user, is_confirmed=True)
-                
-                # MFA is enabled - return temporary MFA token
-                mfa_token_obj = MFAVerificationToken.objects.create(user=user)
-                
-                logger.info(f"MFA verification required for {user.email}")
-                
-                return APIResponse.success(
-                    message='MFA required. Please verify with authenticator app.',
-                    mfa_token=mfa_token_obj.token,  # Send this back
-                    requires_mfa=True
-                )
-            except TOTPDevice.DoesNotExist:
-                # MFA not enabled - return access tokens directly
-                access_token, refresh_token = JWTAuthentication.generate_tokens(
-                    user,
-                    request
-                )
-
-                logger.info(f"User {email} logged in from {JWTAuthentication._get_client_ip(request)}")
-
-                AuditLog.objects.create(
-                    tenant=user.tenant,
-                    user=user,
-                    user_email=user.email,
-                    action='LOGIN',
-                    ip_address=JWTAuthentication._get_client_ip(request)
-                )
-
-                return APIResponse.success(
-                    data=UserSerializer(user).data,
-                    message='Login successful.',
-                    access_token=access_token,
-                    refresh_token=refresh_token
-                )
-            
+        # Handle unverified email — silently resend verification
         email_error = serializer.errors.get('email', [None])[0]
         if email_error == 'Please verify your email before logging in.':
-            try:
-                user = User.objects.get(email=email)
-                
-                if not user.email_verified:
-                    frontend_url = request.data.get('frontend_url', settings.FRONTEND_URL)
-                    
-                    # Delete old tokens and create fresh one
-                    EmailVerification.objects.filter(user=user).delete()
-                    verification = EmailVerification.objects.create(user=user)
-                    
-                    try:
-                        email_service.send_verification_email(
-                            user=user,
-                            verification_token=verification.token,
-                            frontend_url=frontend_url
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to resend verification email: {str(e)}")
+            frontend_url = request.data.get('frontend_url', settings.FRONTEND_URL)
+            AuthService.handle_unverified_login(email, frontend_url)
 
-            except User.DoesNotExist:
-                pass            
-            
-        
-        failed_count = cache_manager.increment_failed_login(email)
-        
-        if failed_count >= 3:
-            logger.warning(f"Multiple failed login attempts for {email}: {failed_count}")
+        return AuthService.record_login_failure(email, serializer, request)
 
-        first_error = next(iter(serializer.errors.values()))[0]
-        
-        AuditLog.objects.create(
-            user_email=email,
-            action='LOGIN_FAILED',
-            success=False,
-            description=f"error: {first_error}",
-            ip_address=JWTAuthentication._get_client_ip(request)
-        )
-        
-        return APIResponse.error(
-            message=first_error,
-            status_code=401,
-            code='auth_error',
-            errors=serializer.errors
-        )
-    
+
 class TokenRefreshView(APIView):
-    """
-    Refresh access token using refresh token.
-    POST /api/auth/refresh-token
-    {
-        "refresh_token": "eyJ0eXAi..."
-    }
-    """
+    """Refresh access token using refresh token."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Refresh Access Token",
         request=TokenRefreshSerializer,
         responses={200: inline_serializer(
             name='TokenRefreshResponse',
-            fields={'access_token': serializers.CharField(), 'refresh_token': serializers.CharField()}
+            fields={
+                'access_token': serializers.CharField(),
+                'refresh_token': serializers.CharField()
+            }
         )}
     )
     def post(self, request):
         serializer = TokenRefreshSerializer(data=request.data)
-        
-
 
         if serializer.is_valid():
-            payload = JWTAuthentication.verify_token(
+            access_token, refresh_token = AuthService.refresh_token(
                 serializer.validated_data['refresh_token']
             )
-            
-
-            # Get user from token
-            user = User.objects.get(id=payload['user_id'])
-            
-            # Generate new tokens
-            access_token, refresh_token = JWTAuthentication.generate_tokens(user)
-            
             return APIResponse.success(
                 message='Token refreshed successfully.',
                 access_token=access_token,
                 refresh_token=refresh_token
             )
-        
+
         return APIResponse.error(
             message='Token refresh failed',
             status_code=400,
@@ -269,31 +161,26 @@ class TokenRefreshView(APIView):
 
 
 class MeView(APIView):
-    """
-    Get current user profile.
-    GET /api/auth/me
-    Headers: Authorization: Bearer <access_token>
-    """
+    """Get current user profile."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
-    
+
     @extend_schema(
         summary="Get Current User Profile",
         responses={200: UserSerializer}
     )
     def get(self, request):
-        user = request.user
         return APIResponse.success(
-            data=UserSerializer(user).data,
+            data=UserSerializer(request.user).data,
             message='User profile retrieved.'
         )
-    
+
 
 class LogoutView(APIView):
     """Logout user - revoke token and session."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
-    
+
     @extend_schema(
         summary="Logout User",
         request=None,
@@ -301,55 +188,22 @@ class LogoutView(APIView):
     )
     def post(self, request):
         try:
-            user_id = request.user_id
-            jti = request.auth.get('jti')
-            
-            if not jti:
-                raise ValidationException('Invalid token format')
-            
-            # Add token to revocation blocklist
-            exp_time = request.auth.get('exp')
-            if exp_time:
-                remaining_seconds = int(exp_time - timezone.now().timestamp())
-                if remaining_seconds > 0:
-                    cache_manager.blocklist_token(jti, remaining_seconds)
-            
-            # Revoke session record
-            try:
-                session = UserSession.objects.get(session_id=jti)
-                session.revoke()
-            except UserSession.DoesNotExist:
-                pass
-            
-            logger.info(f"User {request.user_email} logged out")
-            
-            AuditLog.objects.create(
-                tenant_id=request.tenant_id,
-                user_id=request.user_id,
-                user_email=request.user_email,
-                action='LOGOUT',
-                ip_address=JWTAuthentication._get_client_ip(request)
-            )
-            
-            return APIResponse.success(
-                message='Logged out successfully.'
-            )
-        
+            AuthService.logout(request)
+            return APIResponse.success(message='Logged out successfully.')
         except Exception as e:
             logger.error(f"Logout error: {str(e)}")
             raise
 
-# ADD SessionListView (see all active sessions):
+
+# ---------------------------------------------------------------------------
+# Sessions
+# ---------------------------------------------------------------------------
 
 class SessionListView(APIView):
-    """
-    List all active sessions for current user.
-    GET /api/auth/sessions
-    Headers: Authorization: Bearer <access_token>
-    """
+    """List all active sessions for current user."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
-    
+
     @extend_schema(
         summary="List User Sessions",
         responses={200: inline_serializer(
@@ -366,42 +220,15 @@ class SessionListView(APIView):
         )}
     )
     def get(self, request):
-        user_id = request.user_id
-        sessions = UserSession.objects.filter(
-            user_id=user_id,
-            is_active=True,
-            is_revoked=False
-        ).order_by('-last_activity_at')
-        
-        data = [
-            {
-                'id': str(session.id),
-                'device_name': session.device_name,
-                'ip_address': session.ip_address,
-                'last_activity': session.last_activity_at.isoformat(),
-                'created_at': session.created_at.isoformat(),
-                'expires_at': session.expires_at.isoformat(),
-            }
-            for session in sessions
-        ]
-        
-        return APIResponse.success(
-            data=data,
-            message='Sessions retrieved successfully.'
-        )
+        data = SessionService.get_active_sessions(request.user_id)
+        return APIResponse.success(data=data, message='Sessions retrieved successfully.')
 
-
-# ADD RevokeSessionView (force logout from device):
 
 class RevokeSessionView(APIView):
-    """
-    Revoke a specific session (force logout from device).
-    POST /api/auth/sessions/<session_id>/revoke
-    Headers: Authorization: Bearer <access_token>
-    """
+    """Revoke a specific session (force logout from device)."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
-    
+
     @extend_schema(
         summary="Revoke User Session",
         request=None,
@@ -409,39 +236,21 @@ class RevokeSessionView(APIView):
     )
     def post(self, request, session_id):
         try:
-            session = UserSession.objects.get(
-                id=session_id,
-                user_id=request.user_id
-            )
-            
-            session.revoke()
-            
-            # Add token to blocklist (prevent reuse)
-            cache_manager.blocklist_token(session.session_id, 86400)
-            
-            logger.info(f"User {request.user_email} revoked session {session_id}")
-            
-            return APIResponse.success(
-                message='Session revoked successfully.'
-            )
-        
-        except UserSession.DoesNotExist:
-            raise NotFoundException('Session not found')
+            SessionService.revoke_session(session_id, request.user_id, request.user_email)
+            return APIResponse.success(message='Session revoked successfully.')
         except Exception as e:
             logger.error(f"Revoke session error: {str(e)}")
             raise
 
 
+# ---------------------------------------------------------------------------
+# Email Verification
+# ---------------------------------------------------------------------------
+
 class VerifyEmailView(APIView):
-    """
-    Verify email with token.
-    POST /api/auth/verify-email
-    {
-        "token": "abc123..."
-    }
-    """
+    """Verify email with token."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Verify Email",
         request=VerifyEmailSerializer,
@@ -449,51 +258,29 @@ class VerifyEmailView(APIView):
     )
     def post(self, request):
         serializer = VerifyEmailSerializer(data=request.data)
-        
+
         if serializer.is_valid():
             verification = serializer.validated_data['token']
-            
-            # Mark as verified
-            verification.verify()
-            user = verification.user
-            
-            # Send welcome email
-            try:
-                email_service.send_welcome_email(user)
-            except Exception as e:
-                logger.warning(f"Failed to send welcome email: {str(e)}")
-            
-            # Generate tokens for auto-login
-            access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
-            
-            logger.info(f"Email verified for user {user.email}")
-            
+            user, access_token, refresh_token = EmailVerificationService.verify_email(
+                verification, request
+            )
             return APIResponse.success(
                 data=UserSerializer(user).data,
                 message='Email verified successfully.',
                 access_token=access_token,
                 refresh_token=refresh_token
             )
-        
+
         return APIResponse.error(
             message='Email verification failed',
             status_code=400,
             code='verification_error',
             errors=serializer.errors
         )
-    
+
 
 class ResendVerificationEmailView(APIView):
-    """
-    Resend verification email.
-
-    POST /api/auth/resend-verification
-
-    {
-        "email": "user@example.com"
-    }
-    """
-
+    """Resend verification email."""
     permission_classes = [AllowAny]
 
     @extend_schema(
@@ -513,47 +300,13 @@ class ResendVerificationEmailView(APIView):
             )
 
         email = serializer.validated_data['email']
+        already_verified = EmailVerificationService.resend_verification(email)
 
-        try:
-            user = User.objects.get(email=email)
-
-            # User exists but already verified
-            if user.email_verified:
-                return APIResponse.error(
-                    message='Email already verified.',
-                    status_code=400,
-                    code='already_verified'
-                )
-
-            # Always use backend-configured frontend URL
-            frontend_url = settings.FRONTEND_URL
-
-            # Delete old tokens
-            EmailVerification.objects.filter(user=user).delete()
-
-            # Create new token
-            verification = EmailVerification.objects.create(user=user)
-
-            # Send verification email
-            try:
-                email_service.send_verification_email(
-                    user=user,
-                    verification_token=verification.token,
-                    frontend_url=frontend_url
-                )
-
-            except Exception as e:
-                logger.error(
-                    f"Failed to send verification email to {email}: {str(e)}"
-                )
-
-            logger.info(f"Verification email resent to {email}")
-
-        except User.DoesNotExist:
-            # IMPORTANT:
-            # Do NOT reveal whether user exists
-            logger.warning(
-                f"Verification resend requested for non-existent email: {email}"
+        if already_verified:
+            return APIResponse.error(
+                message='Email already verified.',
+                status_code=400,
+                code='already_verified'
             )
 
         return APIResponse.success(
@@ -562,20 +315,14 @@ class ResendVerificationEmailView(APIView):
                 'a verification email has been sent.'
             )
         )
-        
 
+
+# ---------------------------------------------------------------------------
+# Password
+# ---------------------------------------------------------------------------
 
 class ForgotPasswordView(APIView):
-    """
-    Request password reset.
-
-    POST /api/auth/forgot-password
-
-    {
-        "email": "user@example.com"
-    }
-    """
-
+    """Request password reset."""
     permission_classes = [AllowAny]
 
     @extend_schema(
@@ -594,49 +341,8 @@ class ForgotPasswordView(APIView):
                 errors=serializer.errors
             )
 
-        email = serializer.validated_data['email']
+        PasswordService.forgot_password(serializer.validated_data['email'], request)
 
-        try:
-            user = User.objects.get(email=email)
-
-            # Always use backend-configured frontend URL
-            frontend_url = settings.FRONTEND_URL
-
-            # Delete old reset tokens
-            PasswordReset.objects.filter(user=user).delete()
-
-            # Get client IP
-            ip_address = JWTAuthentication._get_client_ip(request)
-
-            # Create new reset token
-            reset = PasswordReset.objects.create(
-                user=user,
-                ip_address=ip_address
-            )
-
-            # Send password reset email
-            try:
-                email_service.send_password_reset_email(
-                    user=user,
-                    reset_token=reset.token,
-                    frontend_url=frontend_url
-                )
-
-            except Exception as e:
-                logger.error(
-                    f"Failed to send password reset email to {email}: {str(e)}"
-                )
-
-            logger.info(f"Password reset requested for {email}")
-
-        except User.DoesNotExist:
-            # IMPORTANT:
-            # Do NOT reveal whether email exists
-            logger.warning(
-                f"Password reset requested for non-existent email: {email}"
-            )
-
-        # ALWAYS return success
         return APIResponse.success(
             message=(
                 'If this email exists, '
@@ -645,20 +351,10 @@ class ForgotPasswordView(APIView):
         )
 
 
-# ADD ResetPasswordView:
-
 class ResetPasswordView(APIView):
-    """
-    Reset password with token.
-    POST /api/auth/reset-password
-    {
-        "token": "abc123...",
-        "new_password": "NewPass123",
-        "new_password_confirm": "NewPass123"
-    }
-    """
+    """Reset password with token."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Reset Password",
         request=ResetPasswordSerializer,
@@ -666,36 +362,16 @@ class ResetPasswordView(APIView):
     )
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
-        
+
         if serializer.is_valid():
-            reset = serializer.validated_data['token']
-            new_password = serializer.validated_data['new_password']
-            
-            user = reset.user
-            
-            # Update password
-            user.set_password(new_password)
-            user.save()
-            
-            # Mark token as used
-            reset.use()
-            
-            # Revoke all sessions (force re-login)
-            UserSession.objects.filter(user=user).delete()
-            
-            
-            # Send notification email
-            try:
-                email_service.send_password_changed_notification(user)
-            except Exception as e:
-                logger.warning(f"Failed to send password changed email: {str(e)}")
-            
-            logger.info(f"Password reset for user {user.email}")
-            
+            PasswordService.reset_password(
+                serializer.validated_data['token'],
+                serializer.validated_data['new_password']
+            )
             return APIResponse.success(
                 message='Password reset successfully. Please log in with your new password.'
             )
-        
+
         return APIResponse.error(
             message='Password reset failed',
             status_code=400,
@@ -704,96 +380,51 @@ class ResetPasswordView(APIView):
         )
 
 
-# ADD ChangePasswordView (for authenticated users):
-
 class ChangePasswordView(APIView):
-    """
-    Change password (authenticated user).
-    POST /api/auth/change-password
-    Headers: Authorization: Bearer <access_token>
-    {
-        "current_password": "OldPass123",
-        "new_password": "NewPass123",
-        "new_password_confirm": "NewPass123"
-    }
-    """
+    """Change password (authenticated user)."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
-    
+
     @extend_schema(
         summary="Change Password",
         request=ChangePasswordSerializer,
         responses={200: OpenApiResponse(description="Password changed successfully")}
     )
     def post(self, request):
-        user = request.user
-        
         serializer = ChangePasswordSerializer(data=request.data)
-        
+
         if serializer.is_valid():
-            current_password = serializer.validated_data['current_password']
-            new_password = serializer.validated_data['new_password']
-            
-            # Verify current password
-            if not user.check_password(current_password):
+            success, error = PasswordService.change_password(
+                request.user,
+                serializer.validated_data['current_password'],
+                serializer.validated_data['new_password']
+            )
+            if not success:
                 return APIResponse.error(
-                    message='Current password is incorrect',
+                    message=error,
                     status_code=400,
                     code='auth_error'
                 )
-            
-            # Update password
-            user.set_password(new_password)
-            user.save()
-            
-            # Revoke all sessions (force re-login on all devices)
-            UserSession.objects.filter(user=user).delete()
-            
-            
-            # Send notification email
-            try:
-                email_service.send_password_changed_notification(user)
-            except Exception as e:
-                logger.warning(f"Failed to send password changed email: {str(e)}")
-            
-            logger.info(f"Password changed for user {user.email}")
-            
             return APIResponse.success(
                 message='Password changed successfully. Please log in again.'
             )
-        
+
         return APIResponse.error(
             message='Password change failed',
             status_code=400,
             code='validation_error',
             errors=serializer.errors
         )
-    
+
+
+# ---------------------------------------------------------------------------
+# OAuth
+# ---------------------------------------------------------------------------
+
 class GoogleOAuthCallbackView(APIView):
-    """
-    Google OAuth callback.
-    
-    POST /api/auth/google/callback
-    {
-        "code": "authorization_code",
-        "invite_token": "engineer_invitation_token"  // optional
-    }
-    
-    Flows:
-    1. Owner signup (no invite_token): BLOCKED ❌
-       → Returns error: "Please sign up with email/password"
-       
-    2. Owner login (no invite_token, existing account): ALLOWED ✅
-       → Sign in to existing owner account
-       
-    3. Engineer signup (with invite_token): ALLOWED ✅
-       → Create engineer account in invited tenant
-       
-    4. Engineer login (no invite_token, existing account): ALLOWED ✅
-       → Sign in to existing engineer account
-    """
+    """Google OAuth callback."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Google OAuth Callback",
         request=GoogleOAuthCallbackSerializer,
@@ -801,7 +432,7 @@ class GoogleOAuthCallbackView(APIView):
     )
     def post(self, request):
         serializer = GoogleOAuthCallbackSerializer(data=request.data)
-        
+
         if not serializer.is_valid():
             return APIResponse.error(
                 message='OAuth authentication failed',
@@ -809,107 +440,34 @@ class GoogleOAuthCallbackView(APIView):
                 code='validation_error',
                 errors=serializer.errors
             )
-        
+
         try:
-            access_token = serializer.validated_data['code']
-            invitation = serializer.validated_data.get('invite_token')
-            
-            # Get user info from Google
-            user_info = GoogleOAuthService.get_user_info(access_token)
-            user_info['provider'] = 'google'
-            email = user_info['email']
-           
-            # Route to appropriate handler
-            if invitation:
-                # Engineer joining via invitation
-                logger.info(f"Engineer OAuth signup via invitation - {user_info['email']}")
-                user = EngineerOAuthHandler.process_oauth_invitation(
-                    user_info,
-                    invitation
-                )
-                log_message = (
-                    f"Engineer {user.email} joined {invitation.tenant.name} "
-                    f"via Google OAuth"
-                )
-               
-            else:
-                try:
-                    
-                    existing_user = User.objects.get(email=email)
-                   
+            result = OAuthServiceLayer.handle_google_oauth(
+                access_token=serializer.validated_data['code'],
+                invitation=serializer.validated_data.get('invite_token'),
+                request=request
+            )
 
-                except User.DoesNotExist:
-                    raise ValidationError(
-                        "No account found with this email. "
-                        "Please contact your administrator."
-                    )
-                
-                if existing_user.role == 'owner':
-                  
-                    logger.info(
-                        f"Owner OAuth login attempt - {email}"
-                    )
-                    user = OwnerOAuthHandler.process_oauth_login(user_info)
-                    log_message = f"Owner {user.email} signed in via Google OAuth"
-                   
-                
-                else:
-                    logger.info(
-                        f"Engineer OAuth login attempt - {email}"
-                    )
-                   
-                    user = EngineerOAuthHandler.process_oauth_login(
-                        user_info
-                    )
-                   
+            logger.info(result['log_message'])
 
-                    log_message = (
-                        f"Engineer {user.email} signed in "
-                        f"via Google OAuth"
-                    )
-
-                   
-            
-           
-            try:
-                device = TOTPDevice.objects.get(user=user, is_confirmed=True)
-                
-                # MFA is enabled - return temporary MFA token
-                mfa_token_obj = MFAVerificationToken.objects.create(user=user)
-                
-                logger.info(f"MFA verification required for {user.email}")
-                
+            if result['requires_mfa']:
                 return APIResponse.success(
                     message='MFA required. Please verify with authenticator app.',
-                    mfa_token=mfa_token_obj.token,  # Send this back
+                    mfa_token=result['mfa_token'],
                     requires_mfa=True
                 )
-                
-            except TOTPDevice.DoesNotExist:
-                # MFA not enabled - return access tokens directly
-                access_token, refresh_token = JWTAuthentication.generate_tokens(
-                    user,
-                    request
-                )
-            
-            logger.info(log_message)
-            
-            
+
             return APIResponse.success(
-                data=UserSerializer(user).data,
+                data=UserSerializer(result['user']).data,
                 message='Authenticated via Google.',
-                access_token=access_token,
-                refresh_token=refresh_token
+                access_token=result['access_token'],
+                refresh_token=result['refresh_token']
             )
-        
+
         except ValidationError as e:
             error_msg = extract_error_message(e)
             logger.warning(f"Google OAuth error: {error_msg}")
-            return APIResponse.error(
-                message=error_msg,
-                status_code=400,
-                code='auth_error'
-            )
+            return APIResponse.error(message=error_msg, status_code=400, code='auth_error')
         except Exception as e:
             logger.error(f"Google OAuth error: {str(e)}", exc_info=True)
             return APIResponse.error(
@@ -917,33 +475,12 @@ class GoogleOAuthCallbackView(APIView):
                 status_code=400,
                 code='oauth_error'
             )
- 
- 
+
+
 class GitHubOAuthCallbackView(APIView):
-    """
-    GitHub OAuth callback.
-    
-    POST /api/auth/github/callback
-    {
-        "code": "authorization_code",
-        "invite_token": "engineer_invitation_token"  // optional
-    }
-    
-    Flows:
-    1. Owner signup (no invite_token): BLOCKED ❌
-       → Returns error: "Please sign up with email/password"
-       
-    2. Owner login (no invite_token, existing account): ALLOWED ✅
-       → Sign in to existing owner account
-       
-    3. Engineer signup (with invite_token): ALLOWED ✅
-       → Create engineer account in invited tenant
-       
-    4. Engineer login (no invite_token, existing account): ALLOWED ✅
-       → Sign in to existing engineer account
-    """
+    """GitHub OAuth callback."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="GitHub OAuth Callback",
         request=GitHubOAuthCallbackSerializer,
@@ -951,7 +488,7 @@ class GitHubOAuthCallbackView(APIView):
     )
     def post(self, request):
         serializer = GitHubOAuthCallbackSerializer(data=request.data)
-        
+
         if not serializer.is_valid():
             return APIResponse.error(
                 message='OAuth authentication failed',
@@ -959,71 +496,34 @@ class GitHubOAuthCallbackView(APIView):
                 code='validation_error',
                 errors=serializer.errors
             )
-        
+
         try:
-            access_token = serializer.validated_data['code']
-            invitation = serializer.validated_data.get('invite_token')
-            
-            # Get user info from GitHub
-            user_info = GitHubOAuthService.get_user_info(access_token)
-            user_info['provider'] = 'github'
-            
-            # Route to appropriate handler
-            if invitation:
-                # Engineer joining via invitation
-                logger.info(f"Engineer OAuth signup via invitation - {user_info['email']}")
-                user = EngineerOAuthHandler.process_oauth_invitation(
-                    user_info,
-                    invitation
-                )
-                log_message = (
-                    f"Engineer {user.email} joined {invitation.tenant.name} "
-                    f"via GitHub OAuth"
-                )
-            else:
-                # No invitation → Try owner login (signup is BLOCKED)
-                logger.info(f"Owner OAuth login attempt - {user_info['email']}")
-                user = OwnerOAuthHandler.process_oauth_login(user_info)
-                log_message = f"Owner {user.email} signed in via GitHub OAuth"
-            
-            try:
-                device = TOTPDevice.objects.get(user=user, is_confirmed=True)
-                
-                # MFA is enabled - return temporary MFA token
-                mfa_token_obj = MFAVerificationToken.objects.create(user=user)
-                
-                logger.info(f"MFA verification required for {user.email}")
-                
+            result = OAuthServiceLayer.handle_github_oauth(
+                access_token=serializer.validated_data['code'],
+                invitation=serializer.validated_data.get('invite_token'),
+                request=request
+            )
+
+            logger.info(result['log_message'])
+
+            if result['requires_mfa']:
                 return APIResponse.success(
                     message='MFA required. Please verify with authenticator app.',
-                    mfa_token=mfa_token_obj.token,  # Send this back
+                    mfa_token=result['mfa_token'],
                     requires_mfa=True
                 )
-            except TOTPDevice.DoesNotExist:
-                # MFA not enabled - return access tokens directly
-                access_token, refresh_token = JWTAuthentication.generate_tokens(
-                    user,
-                    request
-                )
-            
-            
-            logger.info(log_message)
-            
+
             return APIResponse.success(
-                data=UserSerializer(user).data,
+                data=UserSerializer(result['user']).data,
                 message='Authenticated via GitHub.',
-                access_token=access_token,
-                refresh_token=refresh_token
+                access_token=result['access_token'],
+                refresh_token=result['refresh_token']
             )
-        
+
         except ValidationError as e:
             error_msg = extract_error_message(e)
             logger.warning(f"GitHub OAuth error: {error_msg}")
-            return APIResponse.error(
-                message=error_msg,
-                status_code=400,
-                code='auth_error'
-            )
+            return APIResponse.error(message=error_msg, status_code=400, code='auth_error')
         except Exception as e:
             logger.error(f"GitHub OAuth error: {str(e)}", exc_info=True)
             return APIResponse.error(
@@ -1033,21 +533,15 @@ class GitHubOAuthCallbackView(APIView):
             )
 
 
-# ADD InviteEngineerView (admin action):
+# ---------------------------------------------------------------------------
+# Invitations
+# ---------------------------------------------------------------------------
 
 class InviteEngineerView(APIView):
-    """
-    Admin invites engineer to tenant.
-    POST /api/invitations/send
-    Headers: Authorization: Bearer <access_token>
-    {
-        "email": "bob@company.com",
-        "role": "engineer"
-    }
-    """
+    """Admin invites engineer to tenant."""
     permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
-    
+
     @extend_schema(
         summary="Invite Engineer to Tenant",
         request=InviteEngineerSerializer,
@@ -1064,20 +558,14 @@ class InviteEngineerView(APIView):
         )}
     )
     def post(self, request):
-        """Invite engineer to tenant."""
-        tenant_id = request.tenant_id
-        user_id = request.user_id
-        
         try:
-            tenant = Tenant.objects.get(id=tenant_id)
-            inviter = User.objects.get(id=user_id)
-        except (Tenant.DoesNotExist, User.DoesNotExist):
-            raise NotFoundException('Tenant or user not found')
-        
-        QuotaService.check_user_limit(tenant)
-        
+            inviter = User.objects.get(id=request.user_id)
+        except User.DoesNotExist:
+            from core.exceptions import NotFoundException
+            raise NotFoundException('User not found')
+
         serializer = InviteEngineerSerializer(data=request.data)
-        
+
         if not serializer.is_valid():
             return APIResponse.error(
                 message='Invitation failed',
@@ -1085,56 +573,30 @@ class InviteEngineerView(APIView):
                 code='validation_error',
                 errors=serializer.errors
             )
-        
-        email = serializer.validated_data['email']
-        role = serializer.validated_data['role']
+
         frontend_url = request.data.get('frontend_url', settings.FRONTEND_URL)
-        
-        try:
-            # Check if user already exists in tenant
-            existing_user = User.objects.get(email=email, tenant=tenant)
-            return APIResponse.error(
-                message=f'User {email} already exists in {tenant.name}',
-                status_code=409,
-                code='conflict'
-            )
-        except User.DoesNotExist:
-            pass
-        
-        # Create or update invitation
-        invitation, created = UserInvitation.objects.get_or_create(
-            tenant=tenant,
-            email=email,
-            status='pending',
-            defaults={
-                'invited_by': inviter,
-                'role': role,
-            }
+
+        invitation, error = InvitationService.send_invitation(
+            tenant_id=request.tenant_id,
+            inviter=inviter,
+            email=serializer.validated_data['email'],
+            role=serializer.validated_data['role'],
+            frontend_url=frontend_url
         )
-        
-        # If invitation already existed but was expired, reset it
-        if not created and invitation.status == 'expired':
-            invitation.status = 'pending'
-            invitation.expires_at = timezone.now() + timedelta(days=7)
-            invitation.invited_by = inviter
-            invitation.role = role
-            invitation.save()
-        
-        # Send invitation email
-        try:
-            email_service.send_invitation_email(invitation, frontend_url)
-        except Exception as e:
-            logger.error(f"Failed to send invitation email: {str(e)}")
+
+        if error == 'email_failed':
             return APIResponse.error(
                 message='Invitation created but email delivery failed. Please retry.',
                 status_code=500,
                 code='email_error'
             )
-        
-        logger.info(
-            f"Admin {inviter.email} invited {email} to {tenant.name} as {role}"
-        )
-        
+        if error:
+            return APIResponse.error(
+                message=error,
+                status_code=409,
+                code='conflict'
+            )
+
         return APIResponse.created(
             data={
                 'id': str(invitation.id),
@@ -1144,19 +606,14 @@ class InviteEngineerView(APIView):
                 'created_at': invitation.created_at.isoformat(),
                 'expires_at': invitation.expires_at.isoformat(),
             },
-            message=f'Invitation sent to {email}'
+            message=f'Invitation sent to {invitation.email}'
         )
 
 
-# ADD ValidateInvitationView (public - no auth):
-
 class ValidateInvitationView(APIView):
-    """
-    Validate invitation token before signup.
-    GET /api/invitations/validate?token=xyz
-    """
+    """Validate invitation token before signup."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Validate Invitation Token",
         responses={200: inline_serializer(
@@ -1171,32 +628,22 @@ class ValidateInvitationView(APIView):
         )}
     )
     def get(self, request):
-        """Validate invitation and return details."""
         token = request.query_params.get('token')
-        
-        if not token:
+        invitation, error = InvitationService.validate_invitation(token)
+
+        if error == 'missing_token':
             return APIResponse.error(
-                message='Invitation token required',
-                status_code=400,
-                code='validation_error'
+                message='Invitation token required', status_code=400, code='validation_error'
             )
-        
-        try:
-            invitation = UserInvitation.objects.get(token=token)
-        except UserInvitation.DoesNotExist:
+        if error == 'not_found':
             return APIResponse.error(
-                message='Invalid invitation token',
-                status_code=404,
-                code='not_found'
+                message='Invalid invitation token', status_code=404, code='not_found'
             )
-        
-        if not invitation.is_valid():
+        if error == 'expired':
             return APIResponse.error(
-                message='Invitation has expired',
-                status_code=403,
-                code='invitation_expired'
+                message='Invitation has expired', status_code=403, code='invitation_expired'
             )
-        
+
         return APIResponse.success(
             data={
                 'token': token,
@@ -1213,31 +660,18 @@ class ValidateInvitationView(APIView):
         )
 
 
-# ADD JoinWithEmailPasswordView (engineer signup with invitation):
-
 class JoinWithEmailPasswordView(APIView):
-    """
-    Engineer joins via invitation with email/password.
-    POST /api/invitations/join
-    {
-        "invite_token": "xyz123",
-        "password": "SecurePass123",
-        "password_confirm": "SecurePass123",
-        "first_name": "Bob",
-        "last_name": "Engineer"
-    }
-    """
+    """Engineer joins via invitation with email/password."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Join via Invitation",
         request=JoinWithInvitationSerializer,
         responses={201: UserSerializer}
     )
     def post(self, request):
-        """Join tenant via invitation with password."""
         serializer = JoinWithInvitationSerializer(data=request.data)
-        
+
         if not serializer.is_valid():
             return APIResponse.error(
                 message='Failed to join',
@@ -1245,53 +679,21 @@ class JoinWithEmailPasswordView(APIView):
                 code='validation_error',
                 errors=serializer.errors
             )
-        
-        invitation = serializer.validated_data['invitation']
-        password = serializer.validated_data['password']
-        first_name = serializer.validated_data.get('first_name', '')
-        last_name = serializer.validated_data.get('last_name', '')
-        
+
         try:
-            with transaction.atomic():
-                # Create user in invited tenant
-                user = User.objects.create_user(
-                    email=invitation.email,
-                    password=password,
-                    tenant=invitation.tenant,
-                    first_name=first_name,
-                    last_name=last_name,
-                    role=invitation.role,
-                    is_staff=False,
-                    email_verified=True  # Email is verified via invitation
-                )
-                
-                # Mark invitation as accepted
-                invitation.accept(user)
-                
-                # Send notification to admin
-                try:
-                    email_service.send_team_member_joined_notification(invitation)
-                except Exception as e:
-                    logger.warning(f"Failed to send joined notification: {str(e)}")
-                
-                # Generate tokens
-                access_token, refresh_token = JWTAuthentication.generate_tokens(
-                    user,
-                    request
-                )
-                
-                logger.info(
-                    f"Engineer {user.email} joined {invitation.tenant.name} "
-                    f"as {user.role} via email/password"
-                )
-                
-                return APIResponse.created(
-                    data=UserSerializer(user).data,
-                    message=f'Welcome to {invitation.tenant.name}!',
-                    access_token=access_token,
-                    refresh_token=refresh_token
-                )
-        
+            user, access_token, refresh_token = InvitationService.join_with_password(
+                invitation=serializer.validated_data['invitation'],
+                password=serializer.validated_data['password'],
+                first_name=serializer.validated_data.get('first_name', ''),
+                last_name=serializer.validated_data.get('last_name', ''),
+                request=request
+            )
+            return APIResponse.created(
+                data=UserSerializer(user).data,
+                message=f'Welcome to {user.tenant.name}!',
+                access_token=access_token,
+                refresh_token=refresh_token
+            )
         except Exception as e:
             logger.error(f"Failed to join via invitation: {str(e)}", exc_info=True)
             return APIResponse.error(
@@ -1301,17 +703,11 @@ class JoinWithEmailPasswordView(APIView):
             )
 
 
-# ADD ListInvitationsView (admin sees sent invitations):
-
 class ListInvitationsView(APIView):
-    """
-    List pending invitations for tenant.
-    GET /api/invitations?status=pending
-    Headers: Authorization: Bearer <access_token>
-    """
+    """List pending invitations for tenant."""
     permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
-    
+
     @extend_schema(
         summary="List Pending Invitations",
         responses={200: inline_serializer(
@@ -1330,244 +726,84 @@ class ListInvitationsView(APIView):
         )}
     )
     def get(self, request):
-        """List invitations for tenant."""
-        tenant_id = request.tenant_id
         status = request.query_params.get('status', 'pending')
-        
-        invitations = UserInvitation.objects.filter(
-            tenant_id=tenant_id,
-            status=status
-        ).order_by('-created_at')
-        
-        data = [
-            {
-                'id': str(inv.id),
-                'email': inv.email,
-                'role': inv.role,
-                'status': inv.status,
-                'invited_by': inv.invited_by.email if inv.invited_by else None,
-                'created_at': inv.created_at.isoformat(),
-                'expires_at': inv.expires_at.isoformat(),
-                'accepted_at': inv.accepted_at.isoformat() if inv.accepted_at else None,
-            }
-            for inv in invitations
-        ]
-        
-        return APIResponse.success(
-            data=data,
-            message=f'Found {len(data)} invitations'
-        )
+        data = InvitationService.list_invitations(request.tenant_id, status)
+        return APIResponse.success(data=data, message=f'Found {len(data)} invitations')
 
-
-# ADD CancelInvitationView (admin cancels invitation):
 
 class CancelInvitationView(APIView):
-    """
-    Cancel pending invitation.
-    POST /api/invitations/{invitation_id}/cancel
-    Headers: Authorization: Bearer <access_token>
-    """
+    """Cancel pending invitation."""
     permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
-    
+
     @extend_schema(
         summary="Cancel Invitation",
         request=None,
         responses={200: OpenApiResponse(description="Invitation cancelled")}
     )
     def post(self, request, invitation_id):
-        """Cancel invitation."""
-        tenant_id = request.tenant_id
-        
-        try:
-            invitation = UserInvitation.objects.get(
-                id=invitation_id,
-                tenant_id=tenant_id
-            )
-        except UserInvitation.DoesNotExist:
-            raise NotFoundException('Invitation not found')
-        
-        if invitation.status != 'pending':
-            return APIResponse.error(
-                message=f'Cannot cancel invitation with status: {invitation.status}',
-                status_code=400,
-                code='invalid_status'
-            )
-        
-        invitation.cancel()
-        
-        logger.info(f"Invitation {invitation_id} cancelled")
-        
-        return APIResponse.success(
-            message='Invitation cancelled'
+        invitation, error = InvitationService.cancel_invitation(
+            invitation_id, request.tenant_id
         )
+        if error:
+            return APIResponse.error(
+                message=error, status_code=400, code='invalid_status'
+            )
+        return APIResponse.success(message='Invitation cancelled')
 
-
-# ADD ResendInvitationView (admin resends invitation):
 
 class ResendInvitationView(APIView):
-    """
-    Resend invitation email.
-    POST /api/invitations/{invitation_id}/resend
-    Headers: Authorization: Bearer <access_token>
-    """
+    """Resend invitation email."""
     permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
-    
+
     @extend_schema(
         summary="Resend Invitation Email",
         request=None,
         responses={200: OpenApiResponse(description="Invitation resent")}
     )
     def post(self, request, invitation_id):
-        """Resend invitation email."""
-        tenant_id = request.tenant_id
         frontend_url = request.data.get('frontend_url', settings.FRONTEND_URL)
-        
-        try:
-            invitation = UserInvitation.objects.get(
-                id=invitation_id,
-                tenant_id=tenant_id
-            )
-        except UserInvitation.DoesNotExist:
-            raise NotFoundException('Invitation not found')
-        
-        if invitation.status != 'pending':
-            return APIResponse.error(
-                message=f'Cannot resend invitation with status: {invitation.status}',
-                status_code=400,
-                code='invalid_status'
-            )
-        
-        # Check if invitation expired
-        if not invitation.is_valid():
-            # Reset expiration
-            invitation.expires_at = timezone.now() + timedelta(days=7)
-            invitation.save()
-        
-        try:
-            email_service.send_invitation_reminder_email(invitation, frontend_url)
-        except Exception as e:
-            logger.error(f"Failed to resend invitation: {str(e)}")
-            return APIResponse.error(
-                message='Failed to resend invitation',
-                status_code=500,
-                code='email_error'
-            )
-        
-        logger.info(f"Invitation {invitation_id} resent to {invitation.email}")
-        
-        return APIResponse.success(
-            message=f'Invitation resent to {invitation.email}'
+        success, error = InvitationService.resend_invitation(
+            invitation_id, request.tenant_id, frontend_url
         )
-    
+        if not success:
+            return APIResponse.error(
+                message=error, status_code=500, code='email_error'
+            )
+        from .models import UserInvitation
+        inv = UserInvitation.objects.get(id=invitation_id)
+        return APIResponse.success(message=f'Invitation resent to {inv.email}')
 
+
+# ---------------------------------------------------------------------------
+# MFA
+# ---------------------------------------------------------------------------
 
 class SetupMFAView(APIView):
-    """
-    Start MFA setup - generate secret & QR code.
-    
-    GET /api/auth/mfa/setup
-    Headers: Authorization: Bearer <access_token>
-    
-    Response:
-    {
-        "secret": "JBSWY3DPEBLW64TMMQ======",
-        "qr_code": "data:image/png;base64,iVBORw0KGgoAAAANS...",
-        "setup_url": "otpauth://totp/..."
-    }
-    """
+    """Start MFA setup - generate secret & QR code."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
-    
+
     def get(self, request):
-        """Generate TOTP secret and QR code."""
+        data, error = MFAService.setup(request.user)
 
-        user = request.user
-
-        # Check if MFA already enabled
-        existing_device = TOTPDevice.objects.filter(
-            user=user,
-            is_confirmed=True
-        ).exists()
-
-        if existing_device:
+        if error == 'already_enabled':
             return APIResponse.error(
                 message='MFA is already enabled for this account.',
                 status_code=400,
                 code='mfa_already_enabled'
             )
 
-        # Delete existing unconfirmed device
-        TOTPDevice.objects.filter(
-            user=user,
-            is_confirmed=False
-        ).delete()
-
-        # Generate new secret
-        secret = TOTPDevice.generate_secret()
-
-        # Create device
-        device = TOTPDevice.objects.create(
-            user=user,
-            secret_key=secret,
-            is_confirmed=False
-        )
-
-        # Generate QR setup URL
-        qr_url = device.get_qr_code(user.email)
-
-        # Generate QR image
-        qr = qrcode.QRCode()
-        qr.add_data(qr_url)
-        qr.make()
-
-        img = qr.make_image(
-            fill_color="black",
-            back_color="white"
-        )
-
-        img_bytes = BytesIO()
-        img.save(img_bytes)
-
-        img_base64 = base64.b64encode(
-            img_bytes.getvalue()
-        ).decode()
-
-        logger.info(f"MFA setup started for {user.email}")
-
-        return APIResponse.success(
-            data={
-                'secret': secret,
-                'qr_code': f'data:image/png;base64,{img_base64}',
-                'setup_url': qr_url,
-                'message': (
-                    'Scan QR code with Google Authenticator, '
-                    'Authy, or Microsoft Authenticator'
-                )
-            }
-        )
+        return APIResponse.success(data=data)
 
 
 class ConfirmMFAView(APIView):
-    """
-    Verify TOTP code to confirm MFA setup.
-    
-    POST /api/auth/mfa/confirm
-    Headers: Authorization: Bearer <access_token>
-    {
-        "code": "123456"
-    }
-    
-    Response: MFA now active, 10 backup codes generated
-    """
+    """Verify TOTP code to confirm MFA setup."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
-    
+
     def post(self, request):
-        """Confirm MFA by verifying TOTP code."""
-        user = request.user
-        
         serializer = ConfirmMFASerializer(data=request.data)
         if not serializer.is_valid():
             return APIResponse.error(
@@ -1576,84 +812,43 @@ class ConfirmMFAView(APIView):
                 code='validation_error',
                 errors=serializer.errors
             )
-        
-        code = serializer.validated_data['code']
-        
-        try:
-            # Get unconfirmed device
-            device = TOTPDevice.objects.get(
-                user=user,
-                is_confirmed=False
-            )
-        except TOTPDevice.DoesNotExist:
+
+        backup_codes, error = MFAService.confirm(
+            request.user, serializer.validated_data['code']
+        )
+
+        if error == 'setup_required':
             return APIResponse.error(
                 message='MFA setup not started. Please go to /api/auth/mfa/setup first.',
                 status_code=400,
                 code='setup_required'
             )
-        
-        # Verify code
-        if not device.verify_token(code):
-            logger.warning(f"Invalid MFA code for {user.email}")
+        if error == 'invalid_code':
             return APIResponse.error(
                 message='Invalid code. Please check your authenticator app.',
                 status_code=400,
                 code='invalid_code'
             )
-        
-        try:
-            with transaction.atomic():
-                # Confirm device
-                device.confirm()
-                
-                # Delete old backup codes
-                BackupCode.objects.filter(user=user).delete()
-                
-                # Generate new backup codes
-                codes = BackupCode.generate_codes(count=10)
-                backup_codes = []
-                
-                for code in codes:
-                    code_hash = BackupCode.hash_code(code)
-                    BackupCode.objects.create(
-                        user=user,
-                        code_hash=code_hash
-                    )
-                    backup_codes.append(code)
-                
-                logger.info(f"MFA confirmed for {user.email}")
-                
-                return APIResponse.success(
-                    data={
-                        'message': 'MFA enabled successfully',
-                        'backup_codes': backup_codes,
-                        'warning': 'Save these backup codes in a safe place. Each can be used once if you lose your authenticator.'
-                    }
-                )
-        
-        except Exception as e:
-            logger.error(f"MFA confirmation error: {str(e)}")
+        if error == 'mfa_error':
             return APIResponse.error(
                 message='Failed to confirm MFA',
                 status_code=500,
                 code='mfa_error'
             )
 
+        return APIResponse.success(
+            data={
+                'message': 'MFA enabled successfully',
+                'backup_codes': backup_codes,
+                'warning': 'Save these backup codes in a safe place. Each can be used once if you lose your authenticator.'
+            }
+        )
+
 
 class VerifyMFATokenView(APIView):
-    """
-    Verify TOTP code and exchange MFA token for access tokens.
-    
-    POST /api/auth/mfa/verify
-    {
-        "mfa_token": "temporary-mfa-token",
-        "code": "123456"
-    }
-    
-    Response: access_token, refresh_token
-    """
+    """Verify TOTP code and exchange MFA token for access tokens."""
     permission_classes = [AllowAny]
-    
+
     @extend_schema(
         summary="Verify MFA Code",
         request=VerifyMFATokenSerializer,
@@ -1666,9 +861,8 @@ class VerifyMFATokenView(APIView):
         )}
     )
     def post(self, request):
-        """Verify TOTP code and return access tokens."""
         serializer = VerifyMFATokenSerializer(data=request.data)
-        
+
         if not serializer.is_valid():
             return APIResponse.error(
                 message='Verification failed',
@@ -1676,122 +870,45 @@ class VerifyMFATokenView(APIView):
                 code='validation_error',
                 errors=serializer.errors
             )
-        
-        mfa_token = serializer.validated_data['mfa_token']
-        code = serializer.validated_data['code']
-        
-        # Verify MFA token exists and is valid
-        try:
-            mfa_token_obj = MFAVerificationToken.objects.get(token=mfa_token)
-        except MFAVerificationToken.DoesNotExist:
-            logger.warning(f"Invalid MFA token used")
-            return APIResponse.error(
-                message='Invalid MFA token. Please log in again.',
-                status_code=400,
-                code='invalid_token'
-            )
-        
-        if not mfa_token_obj.is_valid():
-            mfa_token_obj.delete()
-            return APIResponse.error(
-                message='MFA token expired. Please log in again.',
-                status_code=400,
-                code='token_expired'
-            )
-        
-        user = mfa_token_obj.user
-        
-        # Check rate limiting on MFA attempts
-        mfa_attempts = cache_manager.get_mfa_attempts(user.email)
-        if mfa_attempts >= 5:
-            # Lock MFA verification for 15 minutes
-            cache_manager.lock_mfa_verification(user.email, 15)
-            logger.warning(f"MFA verification rate limited for {user.email}")
-            return APIResponse.error(
-                message='Too many failed attempts. Try again in 15 minutes.',
-                status_code=429,
-                code='rate_limited'
-            )
-        
-        # Try TOTP code first
-        device = TOTPDevice.objects.get(user=user)
-        
-        if device.verify_token(code):
-            # Valid TOTP code
-            cache_manager.reset_mfa_attempts(user.email)
-            mfa_token_obj.delete()
-            
-            # Generate access/refresh tokens
-            access_token, refresh_token = JWTAuthentication.generate_tokens(
-                user,
-                request
-            )
-            
-            logger.info(f"MFA verification success for {user.email}")
-            
+
+        result, error = MFAService.verify_token(
+            mfa_token=serializer.validated_data['mfa_token'],
+            code=serializer.validated_data['code'],
+            request=request
+        )
+
+        error_map = {
+            'invalid_token': ('Invalid MFA token. Please log in again.', 400, 'invalid_token'),
+            'token_expired': ('MFA token expired. Please log in again.', 400, 'token_expired'),
+            'rate_limited': ('Too many failed attempts. Try again in 15 minutes.', 429, 'rate_limited'),
+            'invalid_code': ('Invalid code. Check your authenticator app.', 400, 'invalid_code'),
+        }
+
+        if error:
+            msg, status, code = error_map.get(error, ('Verification failed.', 400, 'mfa_error'))
+            return APIResponse.error(message=msg, status_code=status, code=code)
+
+        if result.get('used_backup_code'):
             return APIResponse.success(
-                data=UserSerializer(user).data,
-                message='MFA verified. Welcome!',
-                access_token=access_token,
-                refresh_token=refresh_token
+                message='Backup code verified. Generate new backup codes from settings.',
+                access_token=result['access_token'],
+                refresh_token=result['refresh_token']
             )
-        
-        # Try backup code
-        backup = BackupCode.objects.filter(
-            user=user,
-            is_used=False
-        ).first()
-        
-        if backup:
-            from django.contrib.auth.hashers import check_password
-            if check_password(code, backup.code_hash):
-                # Valid backup code
-                backup.use()
-                cache_manager.reset_mfa_attempts(user.email)
-                mfa_token_obj.delete()
-                
-                access_token, refresh_token = JWTAuthentication.generate_tokens(
-                    user,
-                    request
-                )
-                
-                logger.warning(f"Backup code used by {user.email}")
-                
-                return APIResponse.success(
-                    message='Backup code verified. Generate new backup codes from settings.',
-                    access_token=access_token,
-                    refresh_token=refresh_token
-                )
-        
-        # Invalid code
-        cache_manager.increment_mfa_attempts(user.email)
-        logger.warning(f"Invalid MFA code for {user.email}")
-        
-        return APIResponse.error(
-            message='Invalid code. Check your authenticator app.',
-            status_code=400,
-            code='invalid_code'
+
+        return APIResponse.success(
+            data=UserSerializer(result['user']).data,
+            message='MFA verified. Welcome!',
+            access_token=result['access_token'],
+            refresh_token=result['refresh_token']
         )
 
 
 class DisableMFAView(APIView):
-    """
-    Disable MFA - requires password + TOTP verification.
-    
-    POST /api/auth/mfa/disable
-    Headers: Authorization: Bearer <access_token>
-    {
-        "password": "user_password",
-        "code": "123456"  // TOTP code
-    }
-    """
+    """Disable MFA - requires password + TOTP verification."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
-    
+
     def post(self, request):
-        """Disable MFA for user."""
-        user = request.user
-        
         serializer = DisableMFASerializer(data=request.data)
         if not serializer.is_valid():
             return APIResponse.error(
@@ -1800,60 +917,23 @@ class DisableMFAView(APIView):
                 code='validation_error',
                 errors=serializer.errors
             )
-        
-        password = serializer.validated_data['password']
-        code = serializer.validated_data.get('code')
-        
-        # Verify password
-        if not user.check_password(password):
-            logger.warning(f"Password verification failed for MFA disable - {user.email}")
-            return APIResponse.error(
-                message='Incorrect password',
-                status_code=400,
-                code='auth_error'
-            )
-        
-        # Verify MFA code if MFA is active
-        try:
-            device = TOTPDevice.objects.get(user=user, is_confirmed=True)
-        except TOTPDevice.DoesNotExist:
-            return APIResponse.error(
-                message='MFA not enabled',
-                status_code=400,
-                code='mfa_not_enabled'
-            )
-        
-        if not code:
-            return APIResponse.error(
-                message='MFA code required to disable MFA',
-                status_code=400,
-                code='mfa_code_required'
-            )
-        
-        # Verify code
-        if not device.verify_token(code):
-            logger.warning(f"Invalid MFA code during disable - {user.email}")
-            return APIResponse.error(
-                message='Invalid MFA code',
-                status_code=400,
-                code='invalid_code'
-            )
-        
-        # Disable MFA
-        try:
-            with transaction.atomic():
-                device.delete()
-                BackupCode.objects.filter(user=user).delete()
-                
-                logger.info(f"MFA disabled for {user.email}")
-                
-                return APIResponse.success(
-                    message='MFA disabled successfully'
-                )
-        except Exception as e:
-            logger.error(f"MFA disable error: {str(e)}")
-            return APIResponse.error(
-                message='Failed to disable MFA',
-                status_code=500,
-                code='mfa_error'
-            )
+
+        success, error = MFAService.disable(
+            user=request.user,
+            password=serializer.validated_data['password'],
+            code=serializer.validated_data.get('code')
+        )
+
+        error_map = {
+            'wrong_password': ('Incorrect password', 400, 'auth_error'),
+            'mfa_not_enabled': ('MFA not enabled', 400, 'mfa_not_enabled'),
+            'code_required': ('MFA code required to disable MFA', 400, 'mfa_code_required'),
+            'invalid_code': ('Invalid MFA code', 400, 'invalid_code'),
+            'mfa_error': ('Failed to disable MFA', 500, 'mfa_error'),
+        }
+
+        if not success:
+            msg, status, code = error_map.get(error, ('Failed to disable MFA', 500, 'mfa_error'))
+            return APIResponse.error(message=msg, status_code=status, code=code)
+
+        return APIResponse.success(message='MFA disabled successfully')
