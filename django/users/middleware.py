@@ -1,89 +1,109 @@
 from django.utils.deprecation import MiddlewareMixin
 from django.conf import settings
+from django.db import connection, transaction
 import jwt
 import logging
 
 logger = logging.getLogger(__name__)
 
-
-class TenantMiddleware(MiddlewareMixin):
+class TenantMiddleware:
     """
     Extract tenant_id from JWT token and attach to request.
-    
-    Ensures every request has tenant context for multi-tenant isolation.
-    
-    Workflow:
-    1. Check Authorization header for Bearer token
-    2. Verify JWT signature (no DB call)
-    3. Extract tenant_id from JWT claims
-    4. Attach to request.tenant_id
-    
-    If token is invalid/missing, request.tenant_id = None (public endpoints)
+    Manages PostgreSQL Row-Level Security (RLS) context via set_config
+    inside a transaction-scoped block for strict isolation.
     """
-    
-    def process_request(self, request):
-        """Attach tenant context to request before view processing."""
-        
-        # Initialize tenant context (default to None for public endpoints)
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        # Initialize context
         request.tenant_id = None
         request.user_id = None
         request.user_email = None
         request.user_role = None
         request.is_superadmin = False
         
-        # Extract Authorization header
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
         
-        if not auth_header.startswith('Bearer '):
-            # No token provided - public endpoint (health, register, login)
-            return None
+        if auth_header.startswith('Bearer '):
+            try:
+                token = auth_header.split(' ')[1]
+                payload = self._verify_jwt_token(token)
+                
+                request.tenant_id = payload.get('tenant_id')
+                request.user_id = payload.get('user_id')
+                request.user_email = payload.get('email')
+                request.user_role = payload.get('role')
+                request.is_superadmin = payload.get('is_superadmin', False)
+                
+                # Trust the JWT payload for superadmin status rather than inferring from roles
+                # request.is_superadmin is already set from payload.get('is_superadmin', False)
+                
+                logger.debug(
+                    f"Tenant context: user={request.user_email}, tenant={request.tenant_id}, superadmin={request.is_superadmin}"
+                )
+            except Exception as e:
+                logger.debug(f"JWT verification failed in middleware: {str(e)}")
+        
+        # --- Connection-Level RLS Context ---
+        # We avoid transaction.atomic() to prevent long-running transactions from locking Postgres.
+        # Instead, we set variables at the connection level (is_local=false) and MUST clear them in finally.
+        
+        # RLS Chicken-and-Egg Fix: Auth endpoints need to look up users across all tenants to verify passwords
+        # Since these views are strictly controlled and don't expose tenant data, we bypass RLS for them.
+        UNRESTRICTED_PATHS = [
+            '/api/auth/login',
+            '/api/auth/register',
+            '/api/auth/forgot-password',
+            '/api/auth/reset-password',
+            '/api/auth/verify-email',
+            '/api/auth/resend-verification',
+            '/api/auth/refresh-token',
+            '/api/auth/google/callback',
+            '/api/auth/github/callback',
+            '/api/auth/mfa/',
+            '/api/invitations/'
+        ]
+        is_unrestricted = any(request.path.startswith(p) for p in UNRESTRICTED_PATHS)
         
         try:
-            # Extract token
-            token = auth_header.split(' ')[1]
+            with connection.cursor() as cursor:
+                if is_unrestricted or request.is_superadmin:
+                    # Auth endpoint or Platform admin: explicit RLS bypass
+                    cursor.execute("SELECT set_config('app.bypass_rls', 'on', false)")
+                    cursor.execute("SELECT set_config('app.current_tenant', '', false)")
+                elif request.tenant_id:
+                    # Normal tenant: strict isolation
+                    cursor.execute("SELECT set_config('app.bypass_rls', 'off', false)")
+                    cursor.execute("SELECT set_config('app.current_tenant', %s, false)", [str(request.tenant_id)])
+                else:
+                    # Unauthenticated/Invalid: Fail closed
+                    cursor.execute("SELECT set_config('app.bypass_rls', 'off', false)")
+                    cursor.execute("SELECT set_config('app.current_tenant', '', false)")
             
-            # Verify token signature (no database call)
-            payload = self._verify_jwt_token(token)
+            # Process the view
+            response = self.get_response(request)
             
-            # Attach claims to request
-            request.tenant_id = payload.get('tenant_id')
-            request.user_id = payload.get('user_id')
-            request.user_email = payload.get('email')
-            request.user_role = payload.get('role')
-            request.is_superadmin = payload.get('is_superadmin', False)
+        finally:
+            # CRITICAL: Clean up connection variables before the connection returns to the Django pool!
+            # If the process hard-crashes, Postgres drops the connection and wipes state anyway.
+            if connection.connection is not None:
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT set_config('app.bypass_rls', 'off', false)")
+                        cursor.execute("SELECT set_config('app.current_tenant', '', false)")
+                except Exception:
+                    # If the connection is already dead, Postgres will wipe the session state automatically.
+                    pass
             
-            logger.debug(
-                f"Tenant context attached: user={request.user_email}, tenant={request.tenant_id}"
-            )
-            
-        except Exception as e:
-            # JWT verification failed - will be handled by JWTAuthentication in view
-            logger.debug(f"JWT verification failed in middleware: {str(e)}")
-            request.tenant_id = None
-        
-        return None
-    
+        return response
+
     @staticmethod
     def _verify_jwt_token(token):
-        """
-        Verify JWT token signature without database call.
-        
-        Args:
-            token: JWT token string
-            
-        Returns:
-            dict: JWT claims/payload
-            
-        Raises:
-            jwt.ExpiredSignatureError: Token has expired
-            jwt.InvalidTokenError: Token signature invalid
-        """
         secret = settings.JWT_SECRET_KEY
         algorithm = settings.JWT_ALGORITHM
-        
         try:
-            payload = jwt.decode(token, secret, algorithms=[algorithm])
-            return payload
+            return jwt.decode(token, secret, algorithms=[algorithm])
         except jwt.ExpiredSignatureError:
             raise jwt.ExpiredSignatureError('Token has expired')
         except jwt.InvalidTokenError as e:

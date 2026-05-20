@@ -95,28 +95,35 @@ class RegisterSerializer(serializers.Serializer):
     
     def create(self, validated_data):
         """Create tenant and user"""
+        from django.db import connection, transaction
         
-        # Create tenant
-        slug = validated_data['tenant_name'].lower().replace(' ', '-').replace('_', '-')
-        tenant = Tenant.objects.create(
-            name=validated_data['tenant_name'],
-            slug=slug,
-            plan_tier='free',
-            status='active'
-        )
-        
-        # Create user as tenant owner
-        user = User.objects.create_user(
-            email=validated_data['email'],
-            password=validated_data['password'],
-            tenant=tenant,
-            first_name=validated_data.get('first_name', ''),
-            last_name=validated_data.get('last_name', ''),
-            role='owner',
-            is_staff=False,
-            email_verified=False
-        )
-        
+        # Registration happens on an unauthenticated endpoint.
+        # RLS will block creating a tenant/user unless we explicitly bypass it for this transaction!
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT set_config('app.bypass_rls', 'on', true)")
+                
+                # Create tenant
+                slug = validated_data['tenant_name'].lower().replace(' ', '-').replace('_', '-')
+                tenant = Tenant.objects.create(
+                    name=validated_data['tenant_name'],
+                    slug=slug,
+                    plan_tier='free',
+                    status='active'
+                )
+                
+                # Create user as tenant owner
+                user = User.objects.create_user(
+                    email=validated_data['email'],
+                    password=validated_data['password'],
+                    tenant=tenant,
+                    first_name=validated_data.get('first_name', ''),
+                    last_name=validated_data.get('last_name', ''),
+                    role='owner',
+                    is_staff=False,
+                    email_verified=False
+                )
+                
         return user
 
 
@@ -165,8 +172,15 @@ class LoginSerializer(serializers.Serializer):
                 }
             )
 
+        # Check if tenant is active
+        if not user.is_tenant_active():
+            raise serializers.ValidationError(
+                {'email': 'Your organization account is currently inactive.'}
+            )
+
         data['user'] = user
         return data
+
 
 class TokenRefreshSerializer(serializers.Serializer):
     """Refresh access token using refresh token"""

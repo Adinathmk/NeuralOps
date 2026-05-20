@@ -58,3 +58,6 @@ class TenantConfiguration(models.Model):
     
     class Meta:
         db_table = 'tenant_configurations'
+        indexes = [
+            models.Index(fields=['tenant']),
+        ]

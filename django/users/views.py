@@ -8,7 +8,8 @@ from .serializers import (
     ConfirmMFASerializer,VerifyMFATokenSerializer,DisableMFASerializer
 )
 from .authentication import JWTAuthentication
-from .models import User,UserSession,MFAVerificationToken
+from .models import User,UserSession,MFAVerificationToken, AuditLog
+from core.quotas import QuotaService
 from .cache import cache_manager
 import logging
 from datetime import datetime
@@ -156,6 +157,14 @@ class LoginView(APIView):
 
                 logger.info(f"User {email} logged in from {JWTAuthentication._get_client_ip(request)}")
 
+                AuditLog.objects.create(
+                    tenant=user.tenant,
+                    user=user,
+                    user_email=user.email,
+                    action='LOGIN',
+                    ip_address=JWTAuthentication._get_client_ip(request)
+                )
+
                 return APIResponse.success(
                     data=UserSerializer(user).data,
                     message='Login successful.',
@@ -194,6 +203,15 @@ class LoginView(APIView):
             logger.warning(f"Multiple failed login attempts for {email}: {failed_count}")
 
         first_error = next(iter(serializer.errors.values()))[0]
+        
+        AuditLog.objects.create(
+            user_email=email,
+            action='LOGIN_FAILED',
+            success=False,
+            description=f"error: {first_error}",
+            ip_address=JWTAuthentication._get_client_ip(request)
+        )
+        
         return APIResponse.error(
             message=first_error,
             status_code=401,
@@ -264,11 +282,7 @@ class MeView(APIView):
         responses={200: UserSerializer}
     )
     def get(self, request):
-        user_id = request.user_id
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            raise NotFoundException('User not found')
+        user = request.user
         return APIResponse.success(
             data=UserSerializer(user).data,
             message='User profile retrieved.'
@@ -308,6 +322,14 @@ class LogoutView(APIView):
                 pass
             
             logger.info(f"User {request.user_email} logged out")
+            
+            AuditLog.objects.create(
+                tenant_id=request.tenant_id,
+                user_id=request.user_id,
+                user_email=request.user_email,
+                action='LOGOUT',
+                ip_address=JWTAuthentication._get_client_ip(request)
+            )
             
             return APIResponse.success(
                 message='Logged out successfully.'
@@ -704,8 +726,7 @@ class ChangePasswordView(APIView):
         responses={200: OpenApiResponse(description="Password changed successfully")}
     )
     def post(self, request):
-        user_id = request.user_id
-        user = User.objects.get(id=user_id)
+        user = request.user
         
         serializer = ChangePasswordSerializer(data=request.data)
         
@@ -1052,6 +1073,8 @@ class InviteEngineerView(APIView):
             inviter = User.objects.get(id=user_id)
         except (Tenant.DoesNotExist, User.DoesNotExist):
             raise NotFoundException('Tenant or user not found')
+        
+        QuotaService.check_user_limit(tenant)
         
         serializer = InviteEngineerSerializer(data=request.data)
         
@@ -1460,8 +1483,7 @@ class SetupMFAView(APIView):
     def get(self, request):
         """Generate TOTP secret and QR code."""
 
-        user_id = request.user_id
-        user = User.objects.get(id=user_id)
+        user = request.user
 
         # Check if MFA already enabled
         existing_device = TOTPDevice.objects.filter(
@@ -1544,8 +1566,7 @@ class ConfirmMFAView(APIView):
     
     def post(self, request):
         """Confirm MFA by verifying TOTP code."""
-        user_id = request.user_id
-        user = User.objects.get(id=user_id)
+        user = request.user
         
         serializer = ConfirmMFASerializer(data=request.data)
         if not serializer.is_valid():
@@ -1769,8 +1790,7 @@ class DisableMFAView(APIView):
     
     def post(self, request):
         """Disable MFA for user."""
-        user_id = request.user_id
-        user = User.objects.get(id=user_id)
+        user = request.user
         
         serializer = DisableMFASerializer(data=request.data)
         if not serializer.is_valid():

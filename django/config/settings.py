@@ -145,6 +145,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # ============================================================================
 
 REST_FRAMEWORK = {
+    'EXCEPTION_HANDLER': 'core.exception_handler.custom_exception_handler',
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'users.authentication.JWTAuthentication',
     ],
@@ -154,6 +155,12 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'core.throttling.TenantRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'tenant': '60/minute',
+    },
 }
 
 # ============================================================================

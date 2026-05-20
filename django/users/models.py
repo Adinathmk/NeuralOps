@@ -11,6 +11,7 @@ from datetime import timedelta
 from django.utils import timezone
 import pyotp
 import datetime
+from tenants.managers import TenantManager 
 
 
 
@@ -117,7 +118,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     class Meta:
         db_table = 'users'
-        unique_together = ('tenant', 'email')
         indexes = [
             models.Index(fields=['tenant', 'email']),
             models.Index(fields=['is_active']),
@@ -146,6 +146,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     def is_platform_admin(self):
         """Check if user is a platform administrator (no tenant)."""
         return self.is_superuser and self.tenant is None
+    
+    def is_tenant_active(self) -> bool:
+      """Return True only if the user's tenant is in 'active' status."""
+      if self.tenant is None:
+          # Platform superadmins have no tenant — always allowed.
+          return True
+      return self.tenant.status == "active"
+
 
 # ============================================================================
 # USER INVITATION
@@ -161,13 +169,15 @@ class UserInvitation(models.Model):
     3. Engineer signs up (email/password or OAuth) → joins tenant
     4. Invitation marked accepted
     """
-    
+
     STATUS_CHOICES = [
         ('pending', 'Pending'),
         ('accepted', 'Accepted'),
         ('expired', 'Expired'),
         ('cancelled', 'Cancelled'),
     ]
+
+    objects = TenantManager()
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
@@ -252,7 +262,8 @@ class UserInvitation(models.Model):
             resource_type='UserInvitation',
             resource_id=str(self.id),
             description=f'User accepted invitation to join as {user.role}',
-            success=True
+            success=True,
+            user=user
         )
     
     def cancel(self):
@@ -282,13 +293,38 @@ class UserInvitation(models.Model):
 
 class AuditLog(models.Model):
     ACTION_CHOICES = [
-        ('USER_CREATED', 'User Created'),
-        ('USER_UPDATED', 'User Updated'),
-        ('USER_DELETED', 'User Deleted'),
-        ('LOGIN', 'Login'),
-        ('LOGOUT', 'Logout'),
-        ('API_KEY_CREATED', 'API Key Created'),
+        # --- existing ---
+        ("USER_CREATED",             "User Created"),
+        ("USER_UPDATED",             "User Updated"),
+        ("USER_DELETED",             "User Deleted"),
+        ("ROLE_CHANGED",             "Role Changed"),
+        ("API_KEY_CREATED",          "API Key Created"),
+        ("API_KEY_REVOKED",          "API Key Revoked"),
+        # --- new: invitation lifecycle ---
+        ("USER_INVITED",             "User Invited"),
+        ("USER_INVITE_ACCEPTED",     "User Invite Accepted"),
+        ("USER_INVITE_CANCELLED",    "User Invite Cancelled"),
+        ("USER_INVITE_RESENT",       "User Invite Resent"),
+        # --- new: authentication events ---
+        ("LOGIN",                    "Login"),
+        ("LOGIN_FAILED",             "Login Failed"),
+        ("LOGOUT",                   "Logout"),
+        ("TOKEN_REVOKED",            "Token Revoked"),
+        ("PASSWORD_RESET_REQUESTED", "Password Reset Requested"),
+        ("PASSWORD_RESET_COMPLETED", "Password Reset Completed"),
+        ("EMAIL_VERIFIED",           "Email Verified"),
+        # --- new: MFA events ---
+        ("MFA_SETUP",                "MFA Setup"),
+        ("MFA_VERIFIED",             "MFA Verified"),
+        ("MFA_DISABLED",             "MFA Disabled"),
+        # --- new: tenant lifecycle ---
+        ("TENANT_CREATED",           "Tenant Created"),
+        ("TENANT_SUSPENDED",         "Tenant Suspended"),
+        ("TENANT_REACTIVATED",       "Tenant Reactivated"),
+        ("TENANT_CONFIG_UPDATED",    "Tenant Config Updated"),
     ]
+
+    objects = TenantManager()
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user_email = models.EmailField()
@@ -300,9 +336,20 @@ class AuditLog(models.Model):
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     success = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    user = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="audit_logs",
+        help_text="FK to the user at time of event; preserved even if email changes.",
+    )
     
     class Meta:
         db_table = 'audit_logs'
+        indexes = [
+            models.Index(fields=['tenant']),
+        ]
 
 
 # ============================================================================
@@ -310,6 +357,8 @@ class AuditLog(models.Model):
 # ============================================================================
 
 class APIKey(models.Model):
+    objects = TenantManager()
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='api_keys')
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
@@ -322,6 +371,9 @@ class APIKey(models.Model):
     class Meta:
         db_table = 'api_keys'
         unique_together = ('tenant', 'name')
+        indexes = [
+            models.Index(fields=['tenant']),
+        ]
     
     def is_valid(self):
         return self.is_active
@@ -348,9 +400,9 @@ class UserSession(models.Model):
     - Force logout from a device
     - Detect suspicious login patterns
     """
+    objects = TenantManager()
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
     # Link to user and tenant
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sessions')
     tenant = models.ForeignKey(
@@ -382,6 +434,7 @@ class UserSession(models.Model):
     class Meta:
         db_table = 'user_sessions'
         indexes = [
+            models.Index(fields=['tenant']),
             models.Index(fields=['user', 'is_active']),
             models.Index(fields=['session_id']),
             models.Index(fields=['expires_at']),
