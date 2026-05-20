@@ -8,6 +8,7 @@ import sys
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BASE_DIR / 'apps'))
 
 # Load environment variables
 # In Docker, env vars come from docker-compose env_file — .env.local is only for local dev.
