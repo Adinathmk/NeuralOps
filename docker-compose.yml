@@ -81,6 +81,7 @@ services:
     image: nginx:alpine
     container_name: neuralops_nginx
     restart: unless-stopped
+    env_file: .env.docker
     ports:
       - "80:80"
     volumes:
@@ -98,6 +99,159 @@ services:
       retries: 3
       start_period: 20s
 
+
+  # ── Kafka ──────────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: neuralops_kafka
+    restart: unless-stopped
+    env_file: .env.docker
+    environment:
+      # KRaft mode — no Zookeeper
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}   # cp-kafka entrypoint requires CLUSTER_ID
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Storage
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      # Replication (single node dev — all set to 1)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      # Performance tuning for dev
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID} # fixed ID for dev stability
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - neuralops_network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Schema Registry ──────────────────────────────────────────────────────────
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.7.0
+    container_name: neuralops_schema_registry
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - neuralops_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+  
+
+  # ── Debezium Connect ─────────────────────────────────────────────────────────
+  debezium:
+    image: debezium/connect:2.7.0.Final
+    container_name: neuralops_debezium
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: debezium-django-db1
+      CONFIG_STORAGE_TOPIC: debezium_configs
+      OFFSET_STORAGE_TOPIC: debezium_offsets
+      STATUS_STORAGE_TOPIC: debezium_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+    networks:
+      - neuralops_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Elasticsearch ──────────────────────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: neuralops_elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - neuralops_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+
+  # ── Celery Worker ──────────────────────────────────────────────────────────
+  celery-worker:
+    build:
+      context: ./django
+      dockerfile: Dockerfile
+      target: worker
+    container_name: neuralops_celery_worker
+    restart: unless-stopped
+    env_file: .env.docker
+    networks:
+      - neuralops_network
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # ── Celery Beat ──────────────────────────────────────────────────────────
+
+  celery-beat:
+    build:
+      context: ./django
+      dockerfile: Dockerfile
+      target: worker
+    container_name: neuralops_celery_beat
+    restart: unless-stopped
+    env_file: .env.docker
+    command: >
+      celery -A config beat
+      --loglevel=${CELERY_LOG_LEVEL:-info}
+      --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    networks:
+      - neuralops_network
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+
 # ── Named Volumes ────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
@@ -109,6 +263,10 @@ volumes:
   media_files:
     driver: local
   app_logs:
+    driver: local
+  kafka_data:
+    driver: local
+  elasticsearch_data:
     driver: local
 
 # ── Internal Network ─────────────────────────────────────────────────────────

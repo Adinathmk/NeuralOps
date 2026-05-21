@@ -44,3 +44,13 @@ services:
   redis:
     ports:
       - "6379:6379"               # expose Redis for local tools (RedisInsight)
+  
+  kafka:
+    ports:
+      - "9092:9092"
+  elasticsearch:
+    ports:
+      - "9200:9200"
+  schema-registry:
+    ports:
+      - "8081:8081"

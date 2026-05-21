@@ -51,11 +51,11 @@ setup:
 
 # ── Build ────────────────────────────────────────────────────
 build:
-	docker compose build --no-cache
+	docker compose --env-file .env.docker build --no-cache
 
 # ── Start ────────────────────────────────────────────────────
 up:
-	docker compose up -d
+	docker compose --env-file .env.docker up -d
 	@echo ""
 	@echo "  ✔ NeuralOps is running!"
 	@echo "  API:     http://localhost/api/"
@@ -65,49 +65,70 @@ up:
 
 # ── Stop ─────────────────────────────────────────────────────
 down:
-	docker compose down
+	docker compose --env-file .env.docker down
 
 restart:
-	docker compose restart
+	docker compose --env-file .env.docker restart
 
 # ── Logs ─────────────────────────────────────────────────────
 logs:
-	docker compose logs -f $(s)
+	docker compose --env-file .env.docker logs -f $(s)
 
 # ── Shell access ─────────────────────────────────────────────
 shell:
-	docker compose exec web bash
+	docker compose --env-file .env.docker exec web bash
 
 # ── Django management ────────────────────────────────────────
 migrate:
-	docker compose exec web python manage.py migrate
+	docker compose --env-file .env.docker exec web python manage.py migrate
 
 collectstatic:
-	docker compose exec web python manage.py collectstatic --noinput
+	docker compose --env-file .env.docker exec web python manage.py collectstatic --noinput
 
 superuser:
-	docker compose exec web python manage.py createsuperuser
+	docker compose --env-file .env.docker exec web python manage.py createsuperuser
 
 test:
-	docker compose exec web python manage.py test
+	docker compose --env-file .env.docker exec web python manage.py test
 
 # ── Database ─────────────────────────────────────────────────
 db-shell:
-	docker compose exec db psql -U neuralops -d neuralops_db
+	docker compose --env-file .env.docker exec db psql -U neuralops -d neuralops_db
 
 # ── Redis ─────────────────────────────────────────────────────
 redis-cli:
-	docker compose exec redis redis-cli
+	docker compose --env-file .env.docker exec redis redis-cli
 
 # ── Status ───────────────────────────────────────────────────
 ps:
-	docker compose ps
+	docker compose --env-file .env.docker ps
 
 # ── Cleanup ──────────────────────────────────────────────────
 clean:
-	docker compose down --rmi local
+	docker compose --env-file .env.docker down --rmi local
 
 clean-volumes:
 	@echo "  ⚠  WARNING: This will delete ALL data including the database!"
 	@read -p "  Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ]
-	docker compose down -v --rmi local
+	docker compose --env-file .env.docker down -v --rmi local
+
+
+kafka-topics:
+	docker compose --env-file .env.docker exec kafka kafka-topics \
+		--bootstrap-server localhost:9092 --list
+
+kafka-topic-create:
+	docker compose --env-file .env.docker exec kafka kafka-topics \
+		--bootstrap-server localhost:9092 \
+		--create --if-not-exists \
+		--topic $(topic) --partitions 1 --replication-factor 1
+
+kafka-consume:
+	docker compose --env-file .env.docker exec kafka kafka-console-consumer \
+		--bootstrap-server localhost:9092 \
+		--topic $(topic) --from-beginning
+
+kafka-lag:
+	docker compose --env-file .env.docker exec kafka kafka-consumer-groups \
+		--bootstrap-server localhost:9092 --describe --all-groups
+

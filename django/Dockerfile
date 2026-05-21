@@ -60,3 +60,22 @@ USER django
 EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
+
+
+# ============================================================
+# Stage 3: Celery Worker — same image, different CMD
+# ============================================================
+FROM production AS worker
+
+# Switch back to root temporarily
+USER root
+
+# Override entrypoint for Celery
+COPY entrypoint.worker.sh /entrypoint.worker.sh
+RUN chmod +x /entrypoint.worker.sh
+
+# Drop privileges again
+USER django
+
+ENTRYPOINT ["/entrypoint.worker.sh"]
+

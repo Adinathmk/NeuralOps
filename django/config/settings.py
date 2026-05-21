@@ -34,12 +34,20 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    
+    
+    #  Third-party apps
     'rest_framework',
     'corsheaders',
     'drf_spectacular',
+    'django_celery_beat',   
+
     # Our apps
     'tenants',
     'users',
+    'outbox',
+    'superadmin',
+    'analytics',
 ]
 
 # ============================================================================
@@ -55,7 +63,9 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',        # ← FIXED: After session
     'django.contrib.messages.middleware.MessageMiddleware',           # ← FIXED: After auth
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'users.middleware.TenantMiddleware',                              # ← NEW: Multi-tenant
+    
+    'core.middleware.RequestIDMiddleware',
+    'users.middleware.TenantMiddleware',
     'core.middleware.ExceptionHandlingMiddleware',
 ]
 
@@ -100,24 +110,39 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # DATABASE CONFIGURATION
 # ============================================================================
 
-DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///db.sqlite3')
+import dj_database_url
 
-if DATABASE_URL.startswith('sqlite'):
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
-else:
-    import dj_database_url
-    DATABASES = {
-        'default': dj_database_url.config(
-            default=DATABASE_URL,
-            conn_max_age=600,
-            conn_health_checks=True
-        )
-    }
+DATABASE_URL = os.getenv(
+    'DATABASE_URL',
+    'postgresql://postgres:postgres@localhost:5432/neuralops'
+)
+
+DATABASE_REPLICA_URL = os.getenv(
+    'DATABASE_REPLICA_URL',
+    DATABASE_URL
+)
+
+DATABASES = {
+    'default': dj_database_url.config(
+        default=DATABASE_URL,
+        conn_max_age=600,
+        conn_health_checks=True,
+    ),
+
+    'replica': dj_database_url.config(
+        default=DATABASE_REPLICA_URL,
+        conn_max_age=600,
+        conn_health_checks=True,
+    ),
+}
+
+# During tests, replica mirrors primary
+DATABASES['replica']['TEST'] = {
+    'MIRROR': 'default'
+}
+
+
+DATABASE_ROUTERS = ['config.db_router.AnalyticsReadRouter']
 
 # ============================================================================
 # CUSTOM AUTH USER MODEL (CRITICAL FOR MULTI-TENANCY)
@@ -185,8 +210,11 @@ CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000'
 # JWT CONFIGURATION
 # ============================================================================
 
-JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'jwt-secret-dev-key')
-JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
+# RS256 — Django holds the private key for signing only
+JWT_PRIVATE_KEY = os.getenv('JWT_PRIVATE_KEY', '').replace('\\n', '\n')
+# Public key is distributed to FastAPI and the gateway
+JWT_PUBLIC_KEY = os.getenv('JWT_PUBLIC_KEY', '').replace('\\n', '\n')
+JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'RS256')
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', 15))
 JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv('JWT_REFRESH_TOKEN_EXPIRE_DAYS', 7))
 
@@ -220,32 +248,30 @@ LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'verbose': {
-            'format': '[{levelname}] {asctime} {name} {message}',
-            'style': '{',
+        'json': {
+            '()': 'pythonjsonlogger.jsonlogger.JsonFormatter',
+            'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
         },
-        'simple': {
-            'format': '[{levelname}] {name} {message}',
+        'verbose': {
+            # Fallback for local dev without json logger installed
+            'format': '[{levelname}] {asctime} {name} {message}',
             'style': '{',
         },
     },
     'handlers': {
-        # stdout handler — used by Docker (docker compose logs)
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
+            'formatter': 'json' if not DEBUG else 'verbose',
         },
-        # Rotating file handler — used for local dev
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': BASE_DIR / 'logs/django.log',
-            'maxBytes': 1024 * 1024 * 5,  # 5 MB
+            'maxBytes': 1024 * 1024 * 5,
             'backupCount': 5,
-            'formatter': 'verbose',
+            'formatter': 'json' if not DEBUG else 'verbose',
         },
     },
     'root': {
-        # Both handlers active: Docker captures stdout, local dev uses file
         'handlers': ['console', 'file'],
         'level': 'INFO',
     },
@@ -261,7 +287,7 @@ LOGGING = {
             'propagate': False,
         },
     },
-}   
+}
 
 
 
@@ -292,3 +318,63 @@ GITHUB_OAUTH_REDIRECT_URI = os.getenv('GITHUB_OAUTH_REDIRECT_URI', 'http://local
 # Frontend OAuth callback URLs
 FRONTEND_OAUTH_SUCCESS_URL = os.getenv('FRONTEND_OAUTH_SUCCESS_URL', 'http://localhost:3000/dashboard')
 FRONTEND_OAUTH_ERROR_URL = os.getenv('FRONTEND_OAUTH_ERROR_URL', 'http://localhost:3000/login')
+
+
+
+
+# Kafka
+KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
+SCHEMA_REGISTRY_URL = os.getenv('SCHEMA_REGISTRY_URL', 'http://localhost:8081')
+
+# Elasticsearch
+ELASTICSEARCH_URL = os.getenv('ELASTICSEARCH_URL', 'http://localhost:9200')
+
+
+
+# ============================================================================
+# CELERY CONFIGURATION
+# ============================================================================
+
+CELERY_BROKER_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 300        # hard kill at 5 min
+CELERY_TASK_SOFT_TIME_LIMIT = 240   # raises SoftTimeLimitExceeded at 4 min
+
+# Retry policy (matches doc: base 5s, doubles, ceiling 300s, max 5 retries)
+CELERY_TASK_MAX_RETRIES = 5
+CELERY_TASK_DEFAULT_RETRY_DELAY = 5
+
+# Dead letter queue — tasks exhausting retries write here
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+
+# Beat schedule (periodic tasks — placeholder for Phase 7)
+CELERY_BEAT_SCHEDULE = {}
+
+
+
+# ============================================================================
+# AWS S3 / OBJECT STORAGE
+# ============================================================================
+
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+AWS_REGION_NAME = os.getenv('AWS_REGION_NAME', 'us-east-1')
+AWS_S3_BUCKET_NAME = os.getenv('AWS_S3_BUCKET_NAME', 'neuralops-artifacts')
+
+# Pre-signed URL expiry (15 minutes — matches doc)
+AWS_S3_SIGNED_URL_EXPIRY = int(os.getenv('AWS_S3_SIGNED_URL_EXPIRY', 900))
+
+
+
+# ============================================================================
+# ELASTICSEARCH (read-only for Django analytics)
+# ============================================================================
+
+ELASTICSEARCH_URL = os.getenv('ELASTICSEARCH_URL', 'http://localhost:9200')
+ELASTICSEARCH_INDEX_LOGS = os.getenv('ELASTICSEARCH_INDEX_LOGS', 'logs')
+

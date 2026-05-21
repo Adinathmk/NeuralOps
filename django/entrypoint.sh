@@ -11,7 +11,7 @@ set -e
 # ============================================================
 
 # ── 1. Wait for PostgreSQL ───────────────────────────────────
-echo "==> [1/5] Waiting for PostgreSQL at ${DB_HOST:-db}:${DB_PORT:-5432}..."
+echo "==> [1/6] Waiting for PostgreSQL at ${DB_HOST:-db}:${DB_PORT:-5432}..."
 until pg_isready -h "${DB_HOST:-db}" -p "${DB_PORT:-5432}" -U "${DB_USER:-neuralops}" -q; do
   echo "    PostgreSQL not ready yet — retrying in 2s..."
   sleep 2
@@ -19,7 +19,7 @@ done
 echo "    PostgreSQL is ready!"
 
 # ── 2. Wait for Redis ────────────────────────────────────────
-echo "==> [2/5] Waiting for Redis at ${REDIS_HOST:-redis}:${REDIS_PORT:-6379}..."
+echo "==> [2/6] Waiting for Redis at ${REDIS_HOST:-redis}:${REDIS_PORT:-6379}..."
 until python -c "
 import redis, sys
 try:
@@ -34,16 +34,36 @@ except Exception:
 done
 echo "    Redis is ready!"
 
-# ── 3. Run database migrations ───────────────────────────────
-echo "==> [3/5] Running database migrations..."
+
+# ── 3. Wait for Kafka ────────────────────────────────────────
+echo "==> [3/6] Waiting for Kafka at ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}..."
+KAFKA_HOST=$(echo "${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}" | cut -d: -f1)
+KAFKA_PORT=$(echo "${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}" | cut -d: -f2)
+until python -c "
+import socket, sys
+try:
+    s = socket.create_connection(('${KAFKA_HOST}', ${KAFKA_PORT}), timeout=2)
+    s.close()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null; do
+  echo "    Kafka not ready yet — retrying in 2s..."
+  sleep 2
+done
+echo "    Kafka is ready!"
+
+
+# ── 4. Run database migrations ───────────────────────────────
+echo "==> [4/6] Running database migrations..."
 python manage.py migrate --noinput
 
-# ── 4. Collect static files ──────────────────────────────────
-echo "==> [4/5] Collecting static files..."
+# ── 5. Collect static files ──────────────────────────────────
+echo "==> [5/6] Collecting static files..."
 python manage.py collectstatic --noinput --clear
 
-# ── 5. Start Gunicorn ────────────────────────────────────────
-echo "==> [5/5] Starting Gunicorn (workers=${GUNICORN_WORKERS:-3})..."
+# ── 6. Start Gunicorn ────────────────────────────────────────
+echo "==> [6/6] Starting Gunicorn (workers=${GUNICORN_WORKERS:-3})..."
 exec gunicorn config.wsgi:application \
     --bind 0.0.0.0:8000 \
     --reload \

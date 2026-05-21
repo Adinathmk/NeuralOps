@@ -44,7 +44,8 @@ class JWTAuthentication(TokenAuthentication):
             user: User instance
             request: Django request object (for IP, user agent)
         """
-        secret = settings.JWT_SECRET_KEY
+        secret = settings.JWT_PRIVATE_KEY
+
         algorithm = settings.JWT_ALGORITHM
         
         access_expire = timezone.now() + timedelta(
@@ -117,7 +118,7 @@ class JWTAuthentication(TokenAuthentication):
         Raises:
             AuthenticationFailed: If signature invalid or token expired
         """
-        secret = settings.JWT_SECRET_KEY
+        secret = settings.JWT_PUBLIC_KEY
         algorithm = settings.JWT_ALGORITHM
         
         try:

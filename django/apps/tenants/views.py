@@ -4,6 +4,8 @@ from rest_framework.response import Response
 from rest_framework import status, serializers
 from core.permissions import IsTenantAdmin   # adjust import path as needed
 from core.responses import APIResponse
+from django.db import transaction
+from outbox.mixins import write_outbox
  
  
 class TenantConfigSerializer(serializers.Serializer):
@@ -55,41 +57,88 @@ class TenantConfigView(APIView):
         return APIResponse.success(data=data, message="Configuration retrieved successfully.")
  
     def patch(self, request):
-        from users.cache import cache_tenant_config, invalidate_tenant_config
+        from users.cache import (
+            cache_tenant_config,
+            invalidate_tenant_config,
+        )
+
         from tenants.models import TenantConfiguration
         from users.models import AuditLog
- 
+
         tenant_id = request.tenant_id
- 
-        serializer = TenantConfigSerializer(data=request.data, partial=True)
+
+        serializer = TenantConfigSerializer(
+            data=request.data,
+            partial=True
+        )
+
         serializer.is_valid(raise_exception=True)
+
         updates = serializer.validated_data
- 
+
         try:
-            config = TenantConfiguration.objects.get(tenant_id=tenant_id)
+            config = TenantConfiguration.objects.get(
+                tenant_id=tenant_id
+            )
+
         except TenantConfiguration.DoesNotExist:
             return APIResponse.error(
                 message="Tenant configuration not found.",
                 status_code=404,
                 code="not_found"
             )
- 
-        for field, value in updates.items():
-            setattr(config, field, value)
-        config.save(update_fields=list(updates.keys()))
- 
-        # --- Invalidate stale cache and write fresh ---
+
+        # -----------------------------
+        # ATOMIC TRANSACTION
+        # -----------------------------
+        with transaction.atomic():
+
+            # Update config
+            for field, value in updates.items():
+                setattr(config, field, value)
+
+            config.save(
+                update_fields=list(updates.keys())
+            )
+
+            # Fresh serialized state
+            refreshed_data = TenantConfigSerializer(
+                config
+            ).data
+
+            # Audit log
+            AuditLog.objects.create(
+                tenant_id=tenant_id,
+                user=request.user,
+                user_email=request.user.email,
+                action="TENANT_CONFIG_UPDATED",
+                description=f"updated_fields: {list(updates.keys())}",
+            )
+
+            # Transactional outbox event
+            write_outbox(
+                topic="config.tenants.updated",
+                key=f"tenant:{tenant_id}",
+                payload={
+                    "tenant_id": str(tenant_id),
+                    "updated_fields": list(updates.keys()),
+                    "config": refreshed_data,
+                },
+            )
+
+        # -----------------------------
+        # CACHE OPERATIONS
+        # OUTSIDE TRANSACTION
+        # -----------------------------
+
         invalidate_tenant_config(tenant_id)
-        refreshed_data = TenantConfigSerializer(config).data
-        cache_tenant_config(tenant_id, **refreshed_data)
- 
-        # --- Audit log ---
-        AuditLog.objects.create(
-            tenant_id=tenant_id,
-            user=request.user,
-            user_email=request.user.email,
-            action="TENANT_CONFIG_UPDATED",
-            description=f"updated_fields: {list(updates.keys())}",
+
+        cache_tenant_config(
+            tenant_id,
+            **refreshed_data
         )
- 
-        return APIResponse.success(data=refreshed_data, message="Configuration updated successfully.")
+
+        return APIResponse.success(
+            data=refreshed_data,
+            message="Configuration updated successfully."
+        )
