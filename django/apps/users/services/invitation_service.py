@@ -6,7 +6,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from ..authentication import JWTAuthentication
-from ..models import User, UserInvitation
+from ..models import User, UserInvitation, AuditLog
 from ..email import email_service
 from ..serializers import UserSerializer
 from core.quotas import QuotaService
@@ -73,6 +73,14 @@ class InvitationService:
             f"Admin {inviter.email} invited {email} to {tenant.name} as {role}"
         )
 
+        AuditLog.log(
+            action='USER_INVITED',
+            user=inviter,
+            resource_type='UserInvitation',
+            resource_id=str(invitation.id),
+            description=f"Invited {email} as {role} to {tenant.name}",
+        )
+
         return invitation, None
 
     @staticmethod
@@ -137,6 +145,16 @@ class InvitationService:
                 f"as {user.role} via email/password"
             )
 
+            AuditLog.log(
+                action='USER_CREATED',
+                user=user,
+                description=(
+                    f"Engineer joined tenant '{invitation.tenant.name}' "
+                    f"as {user.role} via invitation"
+                ),
+                ip_address=JWTAuthentication._get_client_ip(request),
+            )
+
             return user, access_token, refresh_token
 
     @staticmethod
@@ -184,6 +202,16 @@ class InvitationService:
 
         invitation.cancel()
         logger.info(f"Invitation {invitation_id} cancelled")
+
+        AuditLog.log(
+            action='USER_INVITE_CANCELLED',
+            tenant=invitation.tenant,
+            user_email=invitation.email,
+            resource_type='UserInvitation',
+            resource_id=str(invitation.id),
+            description=f"Invitation to {invitation.email} cancelled",
+        )
+
         return invitation, None
 
     @staticmethod
@@ -218,4 +246,14 @@ class InvitationService:
             return False, 'Failed to resend invitation'
 
         logger.info(f"Invitation {invitation_id} resent to {invitation.email}")
+
+        AuditLog.log(
+            action='USER_INVITE_RESENT',
+            tenant=invitation.tenant,
+            user_email=invitation.email,
+            resource_type='UserInvitation',
+            resource_id=str(invitation.id),
+            description=f"Invitation resent to {invitation.email}",
+        )
+
         return True, None

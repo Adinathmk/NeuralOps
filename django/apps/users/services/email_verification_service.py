@@ -3,7 +3,7 @@ import logging
 from django.conf import settings
 
 from ..authentication import JWTAuthentication
-from ..models import User, EmailVerification
+from ..models import User, EmailVerification, AuditLog
 from ..email import email_service
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,7 @@ class EmailVerificationService:
         - Marks the token as verified
         - Sends welcome email
         - Generates JWT tokens for auto-login
+        - Writes EMAIL_VERIFIED audit log entry
         Returns (user, access_token, refresh_token).
         """
         # Mark as verified
@@ -33,9 +34,18 @@ class EmailVerificationService:
         # Generate tokens for auto-login
         access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
 
+        AuditLog.log(
+            action='EMAIL_VERIFIED',
+            user=user,
+            resource_type='EmailVerification',
+            resource_id=str(verification_obj.id),
+            ip_address=JWTAuthentication._get_client_ip(request),
+        )
+
         logger.info(f"Email verified for user {user.email}")
 
         return user, access_token, refresh_token
+
 
     @staticmethod
     def resend_verification(email):

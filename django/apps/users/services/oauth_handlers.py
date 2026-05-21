@@ -12,7 +12,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from ..models import User, OAuthAccount
+from ..models import User, OAuthAccount, AuditLog
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,11 @@ class OwnerOAuthHandler:
             oauth_account.save()
             
             logger.info(f"OAuth signin for existing owner {email} via {provider}")
+            AuditLog.log(
+                action='LOGIN',
+                user=user,
+                description=f"Owner OAuth login via existing {provider} account",
+            )
             return user
         
         except OAuthAccount.DoesNotExist:
@@ -109,6 +114,11 @@ class OwnerOAuthHandler:
 
 
             logger.info(f"Linked {provider} OAuth to existing owner {email}")
+            AuditLog.log(
+                action='LOGIN',
+                user=user,
+                description=f"Owner OAuth login via linked {provider} account",
+            )
             return user
         
         except User.DoesNotExist:
@@ -172,6 +182,12 @@ class EngineerOAuthHandler:
                 f"{email} via {provider}"
             )
 
+            AuditLog.log(
+                action='LOGIN',
+                user=user,
+                description=f"Engineer OAuth login via existing {provider} account",
+            )
+
             return user
 
         except OAuthAccount.DoesNotExist:
@@ -214,6 +230,12 @@ class EngineerOAuthHandler:
             if not user.email_verified:
                 user.email_verified = True
                 user.save(update_fields=['email_verified'])
+
+            AuditLog.log(
+                action='LOGIN',
+                user=user,
+                description=f"Engineer OAuth login via linked {provider} account",
+            )
 
             return user
 
@@ -302,4 +324,13 @@ class EngineerOAuthHandler:
             f"via {provider} OAuth"
         )
 
-        return user
+        AuditLog.log(
+            action='USER_CREATED',
+            user=user,
+            description=(
+                f"Engineer joined tenant '{tenant.name}' "
+                f"as {invitation.role} via {provider} OAuth invitation"
+            ),
+        )
+
+        return user

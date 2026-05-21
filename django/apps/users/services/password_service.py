@@ -3,7 +3,7 @@ import logging
 from django.conf import settings
 
 from ..authentication import JWTAuthentication
-from ..models import User, PasswordReset, UserSession
+from ..models import User, PasswordReset, UserSession, AuditLog
 from ..email import email_service
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,14 @@ class PasswordService:
 
             logger.info(f"Password reset requested for {email}")
 
+            AuditLog.log(
+                action='PASSWORD_RESET_REQUESTED',
+                user=user,
+                resource_type='PasswordReset',
+                resource_id=str(reset.id),
+                ip_address=ip_address,
+            )
+
         except User.DoesNotExist:
             # IMPORTANT: Do NOT reveal whether email exists
             logger.warning(
@@ -87,6 +95,12 @@ class PasswordService:
 
         logger.info(f"Password reset for user {user.email}")
 
+        AuditLog.log(
+            action='PASSWORD_RESET_COMPLETED',
+            user=user,
+            description='Password reset via email link',
+        )
+
     @staticmethod
     def change_password(user, current_password, new_password):
         """
@@ -115,5 +129,11 @@ class PasswordService:
             logger.warning(f"Failed to send password changed email: {str(e)}")
 
         logger.info(f"Password changed for user {user.email}")
+
+        AuditLog.log(
+            action='PASSWORD_RESET_COMPLETED',
+            user=user,
+            description='Password changed by authenticated user',
+        )
 
         return True, None

@@ -1,6 +1,6 @@
 import logging
 
-from ..models import UserSession
+from ..models import UserSession, AuditLog
 from ..cache import cache_manager
 from core.exceptions import NotFoundException
 
@@ -37,7 +37,8 @@ class SessionService:
     def revoke_session(session_id, user_id, user_email):
         """
         Revokes a specific session by ID (scoped to the requesting user),
-        and blocklists the token to prevent reuse.
+        blocklists the token to prevent reuse, and writes a TOKEN_REVOKED
+        audit log entry.
         Raises NotFoundException if session does not exist.
         """
         try:
@@ -54,3 +55,13 @@ class SessionService:
         cache_manager.blocklist_token(session.session_id, 86400)
 
         logger.info(f"User {user_email} revoked session {session_id}")
+
+        AuditLog.log(
+            action='TOKEN_REVOKED',
+            user_email=user_email,
+            tenant=session.tenant,
+            resource_type='UserSession',
+            resource_id=str(session_id),
+            description=f"Session revoked — device: {session.device_name or 'unknown'}",
+        )
+

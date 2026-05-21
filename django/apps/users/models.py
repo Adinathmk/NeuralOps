@@ -255,15 +255,13 @@ class UserInvitation(models.Model):
         self.save()
         
         # Log to audit
-        AuditLog.objects.create(
-            user_email=user.email,
+        AuditLog.log(
+            action='USER_INVITE_ACCEPTED',
+            user=user,
             tenant=self.tenant,
-            action='USER_INVITED_ACCEPTED',
             resource_type='UserInvitation',
             resource_id=str(self.id),
             description=f'User accepted invitation to join as {user.role}',
-            success=True,
-            user=user
         )
     
     def cancel(self):
@@ -349,7 +347,48 @@ class AuditLog(models.Model):
         db_table = 'audit_logs'
         indexes = [
             models.Index(fields=['tenant']),
+            models.Index(fields=['action']),
+            models.Index(fields=['created_at']),
         ]
+
+    def __str__(self):
+        return f"[{self.action}] {self.user_email} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+    @classmethod
+    def log(
+        cls,
+        action,
+        user=None,
+        tenant=None,
+        user_email=None,
+        resource_type='',
+        resource_id='',
+        description='',
+        ip_address=None,
+        success=True,
+    ):
+        """
+        Convenience factory for writing audit log entries.
+
+        All service methods should use this instead of calling
+        .objects.create() directly to avoid repeating boilerplate.
+
+        ``tenant`` and ``user_email`` are auto-resolved from ``user``
+        when not provided explicitly.
+        """
+        resolved_tenant = tenant if tenant is not None else (user.tenant if user else None)
+        resolved_email = user_email if user_email else (user.email if user else '')
+        cls.objects.create(
+            action=action,
+            user=user,
+            tenant=resolved_tenant,
+            user_email=resolved_email,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            description=description,
+            ip_address=ip_address,
+            success=success,
+        )
 
 
 # ============================================================================

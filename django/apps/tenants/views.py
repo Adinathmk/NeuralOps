@@ -107,11 +107,10 @@ class TenantConfigView(APIView):
             ).data
 
             # Audit log
-            AuditLog.objects.create(
-                tenant_id=tenant_id,
-                user=request.user,
-                user_email=request.user.email,
+            AuditLog.log(
                 action="TENANT_CONFIG_UPDATED",
+                user=request.user,
+                tenant=config.tenant,
                 description=f"updated_fields: {list(updates.keys())}",
             )
 

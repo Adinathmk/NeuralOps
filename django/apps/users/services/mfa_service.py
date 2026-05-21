@@ -7,7 +7,7 @@ from django.db import transaction
 from django.contrib.auth.hashers import check_password
 
 from ..authentication import JWTAuthentication
-from ..models import MFAVerificationToken, TOTPDevice, BackupCode
+from ..models import MFAVerificationToken, TOTPDevice, BackupCode, AuditLog
 from ..cache import cache_manager
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,13 @@ class MFAService:
                     backup_codes.append(code)
 
                 logger.info(f"MFA confirmed for {user.email}")
+
+                AuditLog.log(
+                    action='MFA_SETUP',
+                    user=user,
+                    description='MFA TOTP device confirmed and activated',
+                )
+
                 return backup_codes, None
 
         except Exception as e:
@@ -172,6 +179,13 @@ class MFAService:
 
             logger.info(f"MFA verification success for {user.email}")
 
+            AuditLog.log(
+                action='MFA_VERIFIED',
+                user=user,
+                description='MFA verified via TOTP',
+                ip_address=JWTAuthentication._get_client_ip(request),
+            )
+
             return {
                 'user': user,
                 'access_token': access_token,
@@ -190,6 +204,13 @@ class MFAService:
             access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
 
             logger.warning(f"Backup code used by {user.email}")
+
+            AuditLog.log(
+                action='MFA_VERIFIED',
+                user=user,
+                description='MFA verified via backup code',
+                ip_address=JWTAuthentication._get_client_ip(request),
+            )
 
             return {
                 'user': user,
@@ -242,6 +263,13 @@ class MFAService:
                 BackupCode.objects.filter(user=user).delete()
 
                 logger.info(f"MFA disabled for {user.email}")
+
+                AuditLog.log(
+                    action='MFA_DISABLED',
+                    user=user,
+                    description='MFA disabled by user',
+                )
+
                 return True, None
 
         except Exception as e:

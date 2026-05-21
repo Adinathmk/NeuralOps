@@ -21,10 +21,25 @@ class AuthService:
     def register(user, frontend_url):
         """
         Post-registration side effects:
-        Creates email verification token and sends verification email.
+        Creates email verification token, sends verification email,
+        and writes USER_CREATED + TENANT_CREATED audit log entries.
         Called after serializer.save() in RegisterView.
         """
         verification = EmailVerification.objects.create(user=user)
+
+        # Audit: new owner account + new tenant
+        AuditLog.log(
+            action='TENANT_CREATED',
+            user=user,
+            resource_type='Tenant',
+            resource_id=str(user.tenant.id) if user.tenant else '',
+            description=f"Tenant '{user.tenant.name}' created" if user.tenant else 'Tenant created',
+        )
+        AuditLog.log(
+            action='USER_CREATED',
+            user=user,
+            description=f"Owner account registered",
+        )
 
         try:
             email_service.send_verification_email(
@@ -64,12 +79,10 @@ class AuthService:
                 f"{JWTAuthentication._get_client_ip(request)}"
             )
 
-            AuditLog.objects.create(
-                tenant=user.tenant,
-                user=user,
-                user_email=user.email,
+            AuditLog.log(
                 action='LOGIN',
-                ip_address=JWTAuthentication._get_client_ip(request)
+                user=user,
+                ip_address=JWTAuthentication._get_client_ip(request),
             )
 
             from ..serializers import UserSerializer
@@ -119,12 +132,12 @@ class AuthService:
 
         first_error = next(iter(serializer.errors.values()))[0]
 
-        AuditLog.objects.create(
-            user_email=email,
+        AuditLog.log(
             action='LOGIN_FAILED',
+            user_email=email,
             success=False,
             description=f"error: {first_error}",
-            ip_address=JWTAuthentication._get_client_ip(request)
+            ip_address=JWTAuthentication._get_client_ip(request),
         )
 
         return APIResponse.error(
@@ -174,9 +187,9 @@ class AuthService:
         logger.info(f"User {request.user_email} logged out")
 
         AuditLog.objects.create(
-            tenant_id=request.tenant_id,
-            user_id=request.user_id,
-            user_email=request.user_email,
             action='LOGOUT',
-            ip_address=JWTAuthentication._get_client_ip(request)
+            user_email=request.user_email,
+            tenant_id=request.tenant_id,
+            ip_address=JWTAuthentication._get_client_ip(request),
         )
+
