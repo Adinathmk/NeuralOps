@@ -11,7 +11,9 @@
 # ============================================================
 
 .PHONY: help setup build up down restart logs shell migrate collectstatic \
-        clean clean-volumes ps db-shell redis-cli superuser test
+        clean clean-volumes ps db-shell redis-cli superuser test \
+        fastapi-shell fastapi-migrate fastapi-migrate-gen fastapi-migrate-down fastapi-test \
+        fastapi-db-shell
 
 # ── Default target ───────────────────────────────────────────
 help:
@@ -24,13 +26,25 @@ help:
 	@echo "  make down           Stop and remove containers"
 	@echo "  make restart        Restart all services"
 	@echo "  make logs           Tail logs (all services)"
-	@echo "  make logs s=web     Tail logs for a specific service"	
+	@echo "  make logs s=django   Tail logs for a specific service"	
 	@echo "  make shell          Open Django container bash shell"
-	@echo "  make migrate        Run Django migrations"
+	@echo "  make migrate        Run Django DB migrations"
 	@echo "  make collectstatic  Collect static files"
 	@echo "  make superuser      Create Django superuser"
 	@echo "  make test           Run Django test suite"
-	@echo "  make db-shell       Open PostgreSQL interactive shell"
+	@echo ""
+	@echo "  FastAPI"
+	@echo "  ─────────────────────────────────────────────────"
+	@echo "  make fastapi-shell              Open FastAPI container bash shell"
+	@echo "  make fastapi-migrate            Run Alembic migrations (upgrade head)"
+	@echo "  make fastapi-migrate-gen m=msg  Generate new Alembic migration"
+	@echo "  make fastapi-migrate-down       Roll back last Alembic migration"
+	@echo "  make fastapi-test               Run FastAPI test suite"
+	@echo "  make fastapi-db-shell           Open FastAPI PostgreSQL shell"
+	@echo ""
+	@echo "  Infrastructure"
+	@echo "  ─────────────────────────────────────────────────"
+	@echo "  make db-shell       Open Django PostgreSQL interactive shell"
 	@echo "  make redis-cli      Open Redis CLI"
 	@echo "  make ps             Show container status"
 	@echo "  make clean          Remove containers + images"
@@ -76,24 +90,45 @@ logs:
 
 # ── Shell access ─────────────────────────────────────────────
 shell:
-	docker compose --env-file .env.docker exec web bash
+	docker compose --env-file .env.docker exec django bash
 
 # ── Django management ────────────────────────────────────────
 migrate:
-	docker compose --env-file .env.docker exec web python manage.py migrate
+	docker compose --env-file .env.docker exec django python manage.py migrate
 
 collectstatic:
-	docker compose --env-file .env.docker exec web python manage.py collectstatic --noinput
+	docker compose --env-file .env.docker exec django python manage.py collectstatic --noinput
 
 superuser:
-	docker compose --env-file .env.docker exec web python manage.py createsuperuser
+	docker compose --env-file .env.docker exec django python manage.py createsuperuser
 
 test:
-	docker compose --env-file .env.docker exec web python manage.py test
+	docker compose --env-file .env.docker exec django python manage.py test
+
+# ── FastAPI management ───────────────────────────────────────
+fastapi-shell:
+	docker compose --env-file .env.docker exec fastapi bash
+
+fastapi-migrate:
+	docker compose --env-file .env.docker exec fastapi alembic upgrade head
+
+fastapi-migrate-gen:
+	@[ "$(m)" ] || ( echo "  ⚠  Usage: make fastapi-migrate-gen m=your_message" ; exit 1 )
+	docker compose --env-file .env.docker exec fastapi alembic revision --autogenerate -m "$(m)"
+
+fastapi-migrate-down:
+	docker compose --env-file .env.docker exec fastapi alembic downgrade -1
+
+fastapi-test:
+	docker compose --env-file .env.docker exec fastapi python -m pytest
 
 # ── Database ─────────────────────────────────────────────────
 db-shell:
-	docker compose --env-file .env.docker exec db psql -U neuralops -d neuralops_db
+	docker compose --env-file .env.docker exec django_db psql -U ${DJANGO_DB_USER:-neuralops} -d ${DJANGO_DB_NAME:-neuralops_db}
+
+fastapi-db-shell:
+	docker compose --env-file .env.docker exec fastapi_db psql -U ${FASTAPI_DB_USER:-neuralops_fastapi} -d ${FASTAPI_DB_NAME:-neuralops_fastapi_db}
+
 
 # ── Redis ─────────────────────────────────────────────────────
 redis-cli:

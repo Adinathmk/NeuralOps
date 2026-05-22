@@ -1,7 +1,5 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import User, UserInvitation, AuditLog, APIKey
-from tenants.models import TenantConfiguration
 from .models import (
     User, UserInvitation, AuditLog, APIKey, UserSession, OAuthAccount,
     EmailVerification, PasswordReset, TOTPDevice, BackupCode, MFAVerificationToken
@@ -70,11 +68,6 @@ class APIKeyAdmin(admin.ModelAdmin):
     search_fields = ('name', 'tenant__name')
     readonly_fields = ('key', 'created_at')
 
-
-@admin.register(TenantConfiguration)
-class TenantConfigurationAdmin(admin.ModelAdmin):
-    list_display = ('tenant', 'alert_confidence_threshold', 'log_retention_days')
-    search_fields = ('tenant__name',)
 
 @admin.register(EmailVerification)
 class EmailVerificationAdmin(admin.ModelAdmin):

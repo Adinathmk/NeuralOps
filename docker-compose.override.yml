@@ -2,7 +2,7 @@
 # NeuralOps — Development Override
 # Overrides production settings for local development:
 #   - Mounts source code for hot-reload (no rebuild needed)
-#   - Exposes Django port 8000 directly
+#   - Exposes Django port 8000 and FastAPI port 8001 directly
 #   - Sets DEBUG=True
 #   - Uses console email backend (no real emails sent)
 # ============================================================
@@ -13,7 +13,7 @@
 
 services:
 
-  web:
+  django:
     build:
       target: production          # still build the same image
 
@@ -37,9 +37,30 @@ services:
       GUNICORN_WORKERS: "1"
       GUNICORN_LOG_LEVEL: "debug"
 
-  db:
+  django_db:
     ports:
-      - "5432:5432"               # expose Postgres for local tools (DBeaver, pgAdmin)
+      - "5433:5432"               # expose Postgres for local tools (DBeaver, pgAdmin)
+
+  fastapi:
+    user: root                    # write to Windows bind-mounted folders
+    volumes:
+      - ./fastapi:/app            # ← hot-reload: changes reflect immediately
+    ports:
+      - "8001:8001"               # expose FastAPI directly for debugging
+    command: >
+      uvicorn main:app
+      --host 0.0.0.0
+      --port 8001
+      --reload
+      --log-level debug
+    environment:
+      DEBUG: "true"
+      APP_ENV: development
+
+
+  fastapi_db:
+    ports:
+      - "5434:5432"               # expose Postgres for local tools (DBeaver, pgAdmin)
 
   redis:
     ports:

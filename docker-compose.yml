@@ -1,27 +1,49 @@
 # ============================================================
 # NeuralOps — Production Docker Compose
-# Services: PostgreSQL, Redis, Django/Gunicorn, Nginx
+# Services: PostgreSQL (x2), Redis, Django/Gunicorn, FastAPI/Uvicorn, Nginx
 # ============================================================
 
 services:
 
-  # ── PostgreSQL Database ──────────────────────────────────────────────────────
-  db:
+  # ── DB-1 (Django Database) ───────────────────────────────────────────────────
+  django_db:
     image: postgres:16-alpine
-    container_name: neuralops_db
+    container_name: neuralops_django_db
     restart: unless-stopped
     env_file: .env.docker
     environment:
-      POSTGRES_DB: ${DB_NAME:-neuralops_db}
-      POSTGRES_USER: ${DB_USER:-neuralops}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-neuralops_password}
+      POSTGRES_DB: ${DJANGO_DB_NAME:-django_db}
+      POSTGRES_USER: ${DJANGO_DB_USER:-neuralops}
+      POSTGRES_PASSWORD: ${DJANGO_DB_PASSWORD:-neuralops_password}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - neuralops_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-neuralops} -d ${DB_NAME:-neuralops_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DJANGO_DB_USER:-neuralops} -d ${DJANGO_DB_NAME:-django_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+  
+  # ── DB-2 (FastAPI Database) ──────────────────────────────────────────────────
+  fastapi_db:
+    image: postgres:16-alpine
+    container_name: neuralops_fastapi_db
+    restart: unless-stopped
+    env_file: .env.docker
+    environment:
+      POSTGRES_DB: ${FASTAPI_DB_NAME:-neuralops_fastapi_db}
+      POSTGRES_USER: ${FASTAPI_DB_USER:-neuralops_fastapi}
+      POSTGRES_PASSWORD: ${FASTAPI_DB_PASSWORD:-fastapi_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - fastapi_postgres_data:/var/lib/postgresql/data
+    networks:
+      - neuralops_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${FASTAPI_DB_USER:-neuralops_fastapi} -d ${FASTAPI_DB_NAME:-neuralops_fastapi_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -50,12 +72,12 @@ services:
       start_period: 10s
 
   # ── Django / Gunicorn ────────────────────────────────────────────────────────
-  web:
+  django:
     build:
       context: ./django
       dockerfile: Dockerfile
       target: production
-    container_name: neuralops_web
+    container_name: neuralops_django
     restart: unless-stopped
     env_file: .env.docker
     volumes:
@@ -65,7 +87,7 @@ services:
     networks:
       - neuralops_network
     depends_on:
-      db:
+      django_db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -91,7 +113,7 @@ services:
     networks:
       - neuralops_network
     depends_on:
-      - web
+      - django
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health/"]
       interval: 30s
@@ -99,6 +121,41 @@ services:
       retries: 3
       start_period: 20s
 
+
+  # ── FastAPI / Uvicorn ───────────────────────────────────────────────────────
+  fastapi:
+    build:
+      context: ./fastapi
+      dockerfile: Dockerfile
+      target: production
+    container_name: neuralops_fastapi
+    restart: unless-stopped
+    env_file: .env.docker
+    environment:
+      APP_ENV: production
+      APP_NAME: neuralops-fastapi
+      APP_VERSION: 1.0.0
+      DEBUG: "false"
+      DATABASE_URL: postgresql+asyncpg://${FASTAPI_DB_USER:-neuralops_fastapi}:${FASTAPI_DB_PASSWORD:-fastapi_password}@fastapi_db:5432/${FASTAPI_DB_NAME:-neuralops_fastapi_db}
+      REDIS_URL: redis://redis:6379/1
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
+      JWT_ALGORITHM: RS256
+      TENANT_SUSPENSION_REDIS_PREFIX: tenant
+      TENANT_SUSPENSION_REDIS_SUFFIX: suspended
+      CORS_ALLOWED_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
+    networks:
+      - neuralops_network
+    depends_on:
+      fastapi_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # ── Kafka ──────────────────────────────────────────────────────────────────────
   kafka:
@@ -170,7 +227,7 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-      db:
+      django_db:
         condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: kafka:9092
@@ -222,7 +279,7 @@ services:
     networks:
       - neuralops_network
     depends_on:
-      db:
+      django_db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -246,7 +303,7 @@ services:
     networks:
       - neuralops_network
     depends_on:
-      db:
+      django_db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -255,6 +312,8 @@ services:
 # ── Named Volumes ────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
+    driver: local
+  fastapi_postgres_data:
     driver: local
   redis_data:
     driver: local
