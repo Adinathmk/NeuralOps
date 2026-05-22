@@ -167,3 +167,30 @@ kafka-lag:
 	docker compose --env-file .env.docker exec kafka kafka-consumer-groups \
 		--bootstrap-server localhost:9092 --describe --all-groups
 
+# ── Kong API Gateway ─────────────────────────────────────────────────────────
+kong-validate:
+	@echo "  Validating kong/kong.yml declarative config ..."
+	docker compose --env-file .env.docker exec kong kong config parse /usr/local/kong/declarative/kong.yml
+
+kong-reload:
+	@echo "  Reloading Kong config (hot reload without restart) ..."
+	docker compose --env-file .env.docker exec kong kong reload
+
+kong-shell:
+	docker compose --env-file .env.docker exec kong bash
+
+# ── Debezium CDC ─────────────────────────────────────────────────────────────
+debezium-register:
+	@echo "  Registering Debezium connectors for DB-1 (Django) and DB-2 (FastAPI) ..."
+	python scripts/register_debezium_connectors.py
+
+debezium-status:
+	@echo "  Connector list:"
+	curl -sf http://localhost:8083/connectors | python3 -m json.tool
+	@echo ""
+	@echo "  Django outbox connector status:"
+	curl -sf http://localhost:8083/connectors/neuralops-django-outbox/status | python3 -m json.tool
+	@echo ""
+	@echo "  FastAPI outbox connector status:"
+	curl -sf http://localhost:8083/connectors/neuralops-fastapi-outbox/status | python3 -m json.tool
+

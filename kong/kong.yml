@@ -1,0 +1,224 @@
+# ============================================================
+# NeuralOps — Kong Declarative Configuration (DB-less mode)
+# ============================================================
+# Kong applies rate limiting and routes:
+#   /api/v1/*, /ws/*, /health  → FastAPI (port 8001)
+#   everything else            → Django  (port 8000)
+#
+# JWT validation is applied specifically to protected routes.
+# ============================================================
+
+_format_version: "3.0"
+_transform: true
+
+# ── Upstreams ──────────────────────────────────────────────────────────────────
+upstreams:
+  - name: django-upstream
+    targets:
+      - target: django:8000
+        weight: 100
+
+  - name: fastapi-upstream
+    targets:
+      - target: fastapi:8001
+        weight: 100
+
+# ── Services ───────────────────────────────────────────────────────────────────
+services:
+  # ── Django Core Management Service ─────────────────────────────────────────
+  - name: django-service
+    host: django-upstream
+    port: 80
+    protocol: http
+    connect_timeout: 60000
+    read_timeout: 120000
+    write_timeout: 120000
+    routes:
+      - name: auth-routes
+        paths:
+          - /api/auth
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        # PUBLIC: No JWT validation required.
+
+      - name: admin-routes
+        paths:
+          - /api/admin
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
+
+      - name: tenants-routes
+        paths:
+          - /api/tenants
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
+
+      - name: users-routes
+        paths:
+          - /api/users
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
+
+      - name: billing-routes
+        paths:
+          - /api/billing
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
+
+      - name: collaboration-routes
+        paths:
+          - /api/collaboration
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
+
+      - name: static-routes
+        paths:
+          - /static
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+
+      - name: media-routes
+        paths:
+          - /media
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+
+      # Django admin panel (Swagger, DRF browsable API, Django admin)
+      - name: django-admin-panel
+        paths:
+          - /admin
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        # PUBLIC/Session Auth
+
+  # ── FastAPI AI + Real-time Service ─────────────────────────────────────────
+  - name: fastapi-service
+    host: fastapi-upstream
+    port: 80
+    protocol: http
+    connect_timeout: 60000
+    read_timeout: 120000
+    write_timeout: 120000
+    routes:
+      - name: api-v1-routes
+        paths:
+          - /api/v1
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
+
+      - name: websocket-routes
+        paths:
+          - /ws
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        headers:
+          Upgrade:
+            - websocket
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
+
+      - name: health-route
+        paths:
+          - /health
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+
+# ── Consumers ──────────────────────────────────────────────────────────────────
+consumers:
+  - username: neuralops-app
+    jwt_secrets:
+      - key: neuralops-jwt-key          # matches the "iss" claim in Django-issued JWTs
+        algorithm: RS256
+        rsa_public_key: |
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArw/EwBiAmWXR2hJBYR5Q
+          M/dUvBKyQ6L+tcTrNRVWWaPIEX0TJ/mpAS8uCwYjV4Mj/2/NwMyQn/D8T/2d3v/J
+          tY/eziz8u7MzBgWnPOyOvPGd811SNiHIRCFDmDkUIRAmKcTfY06/XL/+nSdzCmv7
+          GOhDpQFcu5t2kXpXo+JYzZRXiNfOolesKgL5H9OvfIQEcDbjYLkH6bleCyZayAa0
+          wXX1oDNzPDdHzTRsljra45lBUaQGlZf9/u/T+3aymbG3KtXPGttBpor5w7lXP757
+          /GRZ1m/2fP4xtq0UlpB6M6hTbH/fxmY8HD0Mz08+e5+dQHa+4+jFSTQSC5iRtQcG
+          QQIDAQAB
+          -----END PUBLIC KEY-----
+
+# ── Global Plugins ─────────────────────────────────────────────────────────────
+plugins:
+  # ── Rate Limiting ─────────────────────────────────────────────────────────
+  - name: rate-limiting
+    config:
+      minute: 60
+      policy: local
+      hide_client_headers: false
+      fault_tolerant: true

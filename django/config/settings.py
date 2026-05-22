@@ -56,6 +56,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',                     # ← ADDED: Serve static files behind Kong
     'django.contrib.sessions.middleware.SessionMiddleware',           # ← FIXED: Position 2
     'corsheaders.middleware.CorsMiddleware',                          # ← FIXED: After session
     'django.middleware.common.CommonMiddleware',
@@ -233,6 +234,12 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Enable WhiteNoise compression and caching
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'mediafiles'
 
 # ============================================================================
 # DEFAULT PRIMARY KEY
