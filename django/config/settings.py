@@ -48,6 +48,8 @@ INSTALLED_APPS = [
     'outbox',
     'superadmin',
     'analytics',
+    'alerts',
+    'playbooks',
 ]
 
 # ============================================================================
