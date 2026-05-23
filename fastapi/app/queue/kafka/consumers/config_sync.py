@@ -61,7 +61,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.database.session import SessionLocal
+from app.database.session import AsyncSessionLocal
 from app.models.snapshots import AlertRuleSnapshot, PlaybookSnapshot, TenantSnapshot
 
 logger = logging.getLogger(__name__)
@@ -334,7 +334,7 @@ class ConfigSyncConsumer:
         tenant_id = uuid.UUID(str(tenant_data["id"]))
         incoming_version: int = int(tenant_data["source_version"])
 
-        async with SessionLocal() as session:
+        async with AsyncSessionLocal() as session:
             async with session.begin():
                 existing = await self._get_tenant_snapshot(session, tenant_id)
 
@@ -415,7 +415,7 @@ class ConfigSyncConsumer:
         incoming_version: int = int(rule_data["source_version"])
         is_deleted: bool = bool(rule_data.get("deleted", False))
 
-        async with SessionLocal() as session:
+        async with AsyncSessionLocal() as session:
             async with session.begin():
                 existing = await self._get_alert_rule_snapshot(session, rule_id)
 
@@ -523,7 +523,7 @@ class ConfigSyncConsumer:
         incoming_version: int = int(playbook_data["source_version"])
         is_deleted: bool = bool(playbook_data.get("deleted", False))
 
-        async with SessionLocal() as session:
+        async with AsyncSessionLocal() as session:
             async with session.begin():
                 existing = await self._get_playbook_snapshot(session, playbook_id)
 
