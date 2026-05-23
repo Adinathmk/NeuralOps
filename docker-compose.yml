@@ -214,26 +214,7 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── Schema Registry ──────────────────────────────────────────────────────────
-  schema-registry:
-    image: confluentinc/cp-schema-registry:7.7.0
-    container_name: neuralops_schema_registry
-    restart: unless-stopped
-    depends_on:
-      kafka:
-        condition: service_healthy
-    environment:
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
-      SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
-    networks:
-      - neuralops_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
+
   
 
   # ── Debezium Connect ─────────────────────────────────────────────────────────

@@ -72,9 +72,7 @@ services:
   elasticsearch:
     ports:
       - "9200:9200"
-  schema-registry:
-    ports:
-      - "8081:8081"
+
   debezium:
     ports:
       - "8083:8083"
