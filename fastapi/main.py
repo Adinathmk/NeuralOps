@@ -13,6 +13,11 @@ Phase 1 scope:
   - Structured JSON error handling (global exception handlers)
   - Structured logging (structlog / JSON in production)
 
+Phase 2 scope (added here):
+  - ConfigSyncConsumer background task started on lifespan startup
+  - ConfigSyncConsumer cleanly stopped on lifespan shutdown
+  - Kafka bootstrap servers and consumer group ID added to Settings
+
 Later phases will add:
   - Log ingestion endpoints (Phase 2+)
   - AI agent pipeline (Phase 4+)
@@ -21,6 +26,7 @@ Later phases will add:
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -40,7 +46,16 @@ from app.middleware.error_handler import register_exception_handlers
 from app.middleware.tenant_rls import TenantRLSMiddleware
 from app.api.v1.health import router as health_router
 
+# Phase 2: Config sync consumer
+from app.queue.kafka.consumers.config_sync import ConfigSyncConsumer
+
 settings = get_settings()
+
+# ── Module-level consumer instance ────────────────────────────────────────────
+# A single instance is created at module load time so the same object is
+# referenced by both the lifespan startup (create_task) and shutdown
+# (await stop) blocks.  It is NOT started until the lifespan begins.
+_config_sync_consumer = ConfigSyncConsumer()
 
 
 # ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
@@ -52,12 +67,14 @@ async def lifespan(app: FastAPI):
 
     Startup:
       1. Configure structured logging.
-      2. Create all DB-2 tables that do not yet exist.
-         (In production, Alembic migrations handle this; create_all is
-          kept here as a convenience for local development.)
+      2. Log service start metadata.
+      3. Start the ConfigSyncConsumer as a background asyncio task.
+         The consumer subscribes to config.tenants, config.alert_rules,
+         and config.playbooks and keeps DB-2 snapshot tables in sync.
 
     Shutdown:
-      1. Dispose the async engine connection pool.
+      1. Signal the ConfigSyncConsumer to stop and drain in-flight messages.
+      2. Dispose the async engine connection pool.
     """
     # ── Startup ───────────────────────────────────────────────────────────────
     configure_logging()
@@ -70,13 +87,46 @@ async def lifespan(app: FastAPI):
         environment=settings.APP_ENV,
     )
 
+    logger.info(
+        "database_tables_ready",
+        database_url=settings.DATABASE_URL.split("@")[-1],
+    )
 
-    logger.info("database_tables_ready", database_url=settings.DATABASE_URL.split("@")[-1])
+    # Start the Kafka config-sync consumer as a background task.
+    # asyncio.create_task schedules _config_sync_consumer.start() on the
+    # running event loop without blocking the lifespan coroutine.
+    # The consumer's internal retry loop means a transient Kafka outage at
+    # startup does NOT prevent FastAPI from becoming ready to serve traffic.
+    _consumer_task = asyncio.create_task(
+        _config_sync_consumer.start(),
+        name="config_sync_consumer",
+    )
+
+    logger.info(
+        "config_sync_consumer_task_created",
+        kafka_bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
+        kafka_group_id=settings.KAFKA_CONFIG_GROUP_ID,
+    )
 
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("service_shutting_down", service=settings.APP_NAME)
+
+    # Stop the Kafka consumer gracefully: drain in-flight messages, commit
+    # last offsets, and close the broker connection.
+    await _config_sync_consumer.stop()
+    logger.info("config_sync_consumer_stopped")
+
+    # Cancel the background task if it is still running (e.g. the consumer's
+    # internal retry loop is sleeping between reconnect attempts).
+    if not _consumer_task.done():
+        _consumer_task.cancel()
+        try:
+            await _consumer_task
+        except asyncio.CancelledError:
+            pass  # Expected during shutdown
+
     await engine.dispose()
     logger.info("database_engine_disposed")
 

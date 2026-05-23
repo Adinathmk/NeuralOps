@@ -9,9 +9,9 @@ No secret is hard-coded here.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Annotated, List
+from typing import List
 
-from pydantic import AnyUrl, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -67,6 +67,24 @@ class Settings(BaseSettings):
         default=["http://localhost:3000", "http://localhost:5173"],
     )
 
+    # ── Kafka ─────────────────────────────────────────────────────────────────
+    KAFKA_BOOTSTRAP_SERVERS: str = Field(
+        default="kafka:9092",
+        description=(
+            "Comma-separated Kafka broker addresses. "
+            "e.g. 'kafka:9092' or 'broker1:9092,broker2:9092'"
+        ),
+    )
+    KAFKA_CONFIG_GROUP_ID: str = Field(
+        default="fastapi-config-sync-group",
+        description=(
+            "Kafka consumer group ID for the config-sync consumer. "
+            "Must be unique per service instance type. "
+            "Changing this causes the consumer to replay from the last committed offset "
+            "for that group — use a new value only intentionally."
+        ),
+    )
+
     # ── Derived helpers ───────────────────────────────────────────────────────
     @field_validator("JWT_PUBLIC_KEY", mode="before")
     @classmethod
@@ -81,6 +99,14 @@ class Settings(BaseSettings):
             f":{tenant_id}"
             f":{self.TENANT_SUSPENSION_REDIS_SUFFIX}"
         )
+
+    def tenant_config_cache_key(self, tenant_id: str) -> str:
+        """
+        Return the Redis key for a tenant's aggregated config cache.
+        Pattern: tenant:{tenant_id}:config  (TTL: 1 hour, set by the API layer)
+        Invalidated here after any snapshot upsert so the next API request rebuilds it.
+        """
+        return f"tenant:{tenant_id}:config"
 
     @property
     def is_production(self) -> bool:
