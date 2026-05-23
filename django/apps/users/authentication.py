@@ -60,6 +60,7 @@ class JWTAuthentication(TokenAuthentication):
         
         access_payload = {
             'jti': jti,
+            'iss': 'neuralops-jwt-key',
             'user_id': str(user.id),
             'email': user.email,
             'tenant_id': str(user.tenant.id) if user.tenant else None,
@@ -73,6 +74,7 @@ class JWTAuthentication(TokenAuthentication):
         
         refresh_payload = {
             'jti': jti,
+            'iss': 'neuralops-jwt-key',
             'user_id': str(user.id),
             'tenant_id': str(user.tenant.id) if user.tenant else None,
             'exp': refresh_expire,

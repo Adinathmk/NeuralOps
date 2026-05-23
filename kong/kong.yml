@@ -248,3 +248,31 @@ plugins:
         - X-Auth-Token
       credentials: true
       max_age: 3600
+
+  # ── JWT Claims Injection (FastAPI Strategy 1) ─────────────────────────────
+  - name: pre-function
+    config:
+      access:
+        - |
+          local auth_header = kong.request.get_header("Authorization")
+          if auth_header and string.sub(auth_header, 1, 7) == "Bearer " then
+            local token = string.sub(auth_header, 8)
+            local payload_b64 = token:match("^[^%.]+%.([^%.]+)%.[^%.]+$")
+            if payload_b64 then
+              local remainder = #payload_b64 % 4
+              if remainder > 0 then
+                payload_b64 = payload_b64 .. string.rep("=", 4 - remainder)
+              end
+              local payload_b64_url = payload_b64:gsub("-", "+"):gsub("_", "/")
+              local decoded = ngx.decode_base64(payload_b64_url)
+              if decoded then
+                local cjson = require("cjson.safe")
+                local payload = cjson.decode(decoded)
+                if payload then
+                  if payload.tenant_id then kong.service.request.set_header("x-tenant-id", payload.tenant_id) end
+                  if payload.user_id then kong.service.request.set_header("x-user-id", payload.user_id) end
+                  if payload.role then kong.service.request.set_header("x-user-role", payload.role) end
+                end
+              end
+            end
+          end
