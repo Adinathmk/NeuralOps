@@ -785,6 +785,10 @@ class SetupMFAView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
+    @extend_schema(
+        summary="Setup MFA",
+        responses={200: OpenApiResponse(description="MFA Setup details")}
+    )
     def get(self, request):
         data, error = MFAService.setup(request.user)
 
@@ -803,6 +807,11 @@ class ConfirmMFAView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
+    @extend_schema(
+        summary="Confirm MFA Setup",
+        request=ConfirmMFASerializer,
+        responses={200: OpenApiResponse(description="MFA enabled successfully")}
+    )
     def post(self, request):
         serializer = ConfirmMFASerializer(data=request.data)
         if not serializer.is_valid():
@@ -908,6 +917,11 @@ class DisableMFAView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
+    @extend_schema(
+        summary="Disable MFA",
+        request=DisableMFASerializer,
+        responses={200: OpenApiResponse(description="MFA disabled successfully")}
+    )
     def post(self, request):
         serializer = DisableMFASerializer(data=request.data)
         if not serializer.is_valid():

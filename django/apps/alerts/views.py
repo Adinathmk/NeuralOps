@@ -2,6 +2,7 @@ import logging
 from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.exceptions import NotFound, PermissionDenied
+from drf_spectacular.utils import extend_schema_view, extend_schema
 
 from core.permissions import IsTenantAdmin
 from core.responses import APIResponse
@@ -13,6 +14,14 @@ from .serializers import AlertRuleSerializer
 logger = logging.getLogger(__name__)
 
 
+@extend_schema_view(
+    list=extend_schema(summary="List Alert Rules"),
+    retrieve=extend_schema(summary="Retrieve Alert Rule"),
+    create=extend_schema(summary="Create Alert Rule", request=AlertRuleSerializer, responses={201: AlertRuleSerializer}),
+    update=extend_schema(summary="Update Alert Rule", request=AlertRuleSerializer, responses={200: AlertRuleSerializer}),
+    partial_update=extend_schema(summary="Partial Update Alert Rule", request=AlertRuleSerializer, responses={200: AlertRuleSerializer}),
+    destroy=extend_schema(summary="Delete Alert Rule")
+)
 class AlertRuleViewSet(viewsets.ViewSet):
     """
     CRUD ViewSet for AlertRule resources scoped to the authenticated tenant.

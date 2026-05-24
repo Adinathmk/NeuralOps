@@ -10,6 +10,7 @@ services:
     image: postgres:16-alpine
     container_name: neuralops_django_db
     restart: unless-stopped
+    command: postgres -c wal_level=logical -c max_wal_senders=10 -c max_replication_slots=10
     env_file: .env.docker
     environment:
       POSTGRES_DB: ${DJANGO_DB_NAME:-django_db}
@@ -32,6 +33,7 @@ services:
     image: postgres:16-alpine
     container_name: neuralops_fastapi_db
     restart: unless-stopped
+    command: postgres -c wal_level=logical -c max_wal_senders=10 -c max_replication_slots=10
     env_file: .env.docker
     environment:
       POSTGRES_DB: ${FASTAPI_DB_NAME:-neuralops_fastapi_db}

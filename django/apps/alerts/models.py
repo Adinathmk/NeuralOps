@@ -41,7 +41,7 @@ class AlertRule(models.Model):
 
     def save(self, *args, **kwargs):
         # Increment source_version on every update (not on initial create).
-        if self.pk:
+        if not self._state.adding:
             AlertRule.objects.filter(pk=self.pk).update(
                 source_version=models.F("source_version") + 1
             )

@@ -2,6 +2,7 @@ import logging
 from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.exceptions import NotFound, PermissionDenied
+from drf_spectacular.utils import extend_schema_view, extend_schema
 
 from core.permissions import IsTenantAdmin
 from core.responses import APIResponse
@@ -13,6 +14,14 @@ from .serializers import PlaybookSerializer
 logger = logging.getLogger(__name__)
 
 
+@extend_schema_view(
+    list=extend_schema(summary="List Playbooks"),
+    retrieve=extend_schema(summary="Retrieve Playbook"),
+    create=extend_schema(summary="Create Playbook", request=PlaybookSerializer, responses={201: PlaybookSerializer}),
+    update=extend_schema(summary="Update Playbook", request=PlaybookSerializer, responses={200: PlaybookSerializer}),
+    partial_update=extend_schema(summary="Partial Update Playbook", request=PlaybookSerializer, responses={200: PlaybookSerializer}),
+    destroy=extend_schema(summary="Delete Playbook")
+)
 class PlaybookViewSet(viewsets.ViewSet):
     """
     CRUD ViewSet for Playbook resources scoped to the authenticated tenant.
@@ -168,3 +177,8 @@ class PlaybookViewSet(viewsets.ViewSet):
 
         logger.info("playbook_deleted", extra={"playbook_id": playbook_id, "tenant_id": str(tenant_id)})
         return APIResponse.success(message="Playbook deleted.")
+
+
+
+
+

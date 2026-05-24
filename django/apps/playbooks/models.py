@@ -32,7 +32,7 @@ class Playbook(models.Model):
 
     def save(self, *args, **kwargs):
         # Increment source_version on every update (not on initial create).
-        if self.pk:
+        if not self._state.adding:
             Playbook.objects.filter(pk=self.pk).update(
                 source_version=models.F("source_version") + 1
             )

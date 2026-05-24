@@ -2,6 +2,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, serializers
+from drf_spectacular.utils import extend_schema
 from core.permissions import IsTenantAdmin   # adjust import path as needed
 from core.responses import APIResponse
 from django.db import transaction
@@ -28,6 +29,10 @@ class TenantConfigView(APIView):
  
     permission_classes = [IsTenantAdmin]
  
+    @extend_schema(
+        summary="Get Tenant Configuration",
+        responses={200: TenantConfigSerializer}
+    )
     def get(self, request):
         from users.cache import cache_manager
         from tenants.models import TenantConfiguration
@@ -56,6 +61,11 @@ class TenantConfigView(APIView):
  
         return APIResponse.success(data=data, message="Configuration retrieved successfully.")
  
+    @extend_schema(
+        summary="Update Tenant Configuration",
+        request=TenantConfigSerializer,
+        responses={200: TenantConfigSerializer}
+    )
     def patch(self, request):
         from users.cache import (
             cache_tenant_config,

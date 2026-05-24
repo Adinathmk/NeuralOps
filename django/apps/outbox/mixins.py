@@ -9,18 +9,8 @@ def write_outbox(topic: str, key: str, payload: dict, source_version: int = None
     """
     from outbox.models import OutboxEvent
     
-    envelope = {
-        'event_id': str(uuid.uuid4()),
-        'event_type': topic,
-        'version': 1,
-        'idempotency_key': key,
-        'source_version': source_version,
-        'occurred_at': timezone.now().isoformat(),
-        'payload': payload,
-    }
-    
     OutboxEvent.objects.create(
         topic=topic,
         key=key,
-        payload=envelope,
+        payload=payload,
     )
