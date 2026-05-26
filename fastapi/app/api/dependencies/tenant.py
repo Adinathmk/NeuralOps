@@ -3,22 +3,23 @@ app/api/dependencies/tenant.py
 
 FastAPI dependency: resolve and validate the current request's tenant.
 
-This dependency is the gatekeeper for all protected routes that interact
-with tenant data. It implements the two-layer suspension check described
-in the NeuralOps architecture documentation:
+Two-layer validation:
 
-Layer 1 — Redis (synchronous, authoritative for suspension):
-    Django writes `tenant:{id}:suspended = true` directly to Redis when
-    it suspends a tenant.  This key has no TTL and is deleted on reinstate.
-    FastAPI checks this key on *every* ingest/API request.
-    Staleness SLO: 5 seconds (bypasses Kafka propagation entirely).
+  Layer 1 — Redis suspension flag (authoritative, ~5 s staleness SLO):
+      Django writes `tenant:{id}:suspended = true` directly to Redis on
+      suspend; deletes the key on reinstate.  Checked on *every* request.
 
-Layer 2 — DB-2 tenant_snapshots (eventual-consistent, ~60s lag):
-    The snapshot table holds the full tenant configuration (plan tier,
-    vector namespace, etc.).  It is populated by the Kafka consumer
-    in app/queue/kafka/consumers/config_sync.py.
-    If the snapshot row is missing, the dependency raises TenantConfigStaleError
-    (503) — callers may choose to retry or surface a degraded-mode warning.
+  Layer 1b — Redis L1 config cache (`tenant:{id}:config`, 1-hour TTL):
+      A serialised JSON snapshot of the TenantSnapshot row is stored here
+      after the first successful DB-2 read.  All subsequent requests within
+      the TTL window are served from Redis without touching Postgres.
+      Cache invalidation is handled by ConfigSyncConsumer after every
+      successful snapshot upsert — this module only handles reads and
+      cache-population writes.
+
+  Layer 2 — DB-2 `tenant_snapshots` (eventual-consistent, ~60 s lag):
+      On a Redis cache miss the snapshot row is fetched from Postgres,
+      serialised, and written to the Redis L1 cache before being returned.
 
 Usage in route functions:
     from app.api.dependencies.tenant import get_validated_tenant
@@ -31,11 +32,12 @@ Usage in route functions:
     ):
         ...
 
-Architecture reference: NeuralOps Technical Documentation — Sections 5, 13
+Architecture reference: NeuralOps Technical Documentation — Sections 5, 7, 13
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Annotated, Optional
 
@@ -57,38 +59,37 @@ from app.models.snapshots import TenantSnapshot
 
 logger = get_logger(__name__)
 
-# ── Redis client singleton ─────────────────────────────────────────────────────
-# Created once; reused across requests.  redis.asyncio is async-safe.
 _settings = get_settings()
 _redis_client: Optional[aioredis.Redis] = None
 
+# ── Redis client singleton ─────────────────────────────────────────────────────
 
 def get_redis() -> aioredis.Redis:
-    """Return the module-level async Redis client, creating it if necessary."""
+    """Return the module-level async Redis client, creating it on first call."""
     global _redis_client
     if _redis_client is None:
         _redis_client = aioredis.from_url(
             _settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True,
-            # socket_connect_timeout ensures we fail fast if Redis is down
             socket_connect_timeout=2,
             socket_timeout=2,
         )
     return _redis_client
 
 
-# ── Suspension check ──────────────────────────────────────────────────────────
+# ── Suspension check (Layer 1) ─────────────────────────────────────────────────
 
 async def _check_suspension_flag(tenant_id: str) -> None:
     """
-    Check Redis for the tenant suspension flag.
+    Check Redis for the authoritative tenant suspension flag.
 
-    Redis key: tenant:{tenant_id}:suspended
-    Written by Django on suspend; deleted on reinstate.
-    No TTL — the key persists until explicitly deleted.
+    Key: tenant:{tenant_id}:suspended
+    No TTL — persists until Django explicitly deletes it on reinstate.
 
-    Raises TenantSuspendedError if the key exists (any value).
+    Raises TenantSuspendedError if the key exists.
+    Falls through silently if Redis is unavailable (fail-open on Redis
+    errors for the suspension check; snapshot table is the fallback).
     """
     redis = get_redis()
     key = _settings.tenant_suspension_key(tenant_id)
@@ -96,9 +97,6 @@ async def _check_suspension_flag(tenant_id: str) -> None:
     try:
         value = await redis.get(key)
     except Exception as exc:
-        # Redis is unavailable. Log the failure but do NOT block the request —
-        # falling back to the snapshot table's is_suspended field.
-        # This matches the architecture's SLO: 5-second staleness on suspension.
         logger.error(
             "redis_suspension_check_failed",
             tenant_id=tenant_id,
@@ -114,31 +112,155 @@ async def _check_suspension_flag(tenant_id: str) -> None:
         )
 
 
-# ── Snapshot lookup ────────────────────────────────────────────────────────────
+# ── Redis L1 cache helpers (Layer 1b) ─────────────────────────────────────────
+
+_CACHE_TTL_SECONDS = 3600  # 1 hour
+
+
+def _snapshot_to_dict(snapshot: TenantSnapshot) -> dict:
+    """
+    Serialise a TenantSnapshot ORM instance to a plain dict suitable for
+    JSON storage in Redis.  Only the fields needed by downstream consumers
+    are included.
+    """
+    return {
+        "tenant_id": str(snapshot.tenant_id),
+        "plan_tier": snapshot.plan_tier,
+        "vector_namespace": snapshot.vector_namespace,
+        "kafka_group_id": snapshot.kafka_group_id,
+        "is_suspended": snapshot.is_suspended,
+        "source_version": snapshot.source_version,
+    }
+
+
+def _dict_to_snapshot(data: dict) -> TenantSnapshot:
+    """
+    Reconstruct a *detached* (not session-bound) TenantSnapshot instance
+    from a cached dict.  The instance is safe to read from but must not
+    be used for ORM write operations.
+    """
+    snapshot = TenantSnapshot()
+    snapshot.tenant_id = uuid.UUID(data["tenant_id"])
+    snapshot.plan_tier = data.get("plan_tier")
+    snapshot.vector_namespace = data.get("vector_namespace")
+    snapshot.kafka_group_id = data.get("kafka_group_id")
+    snapshot.is_suspended = bool(data.get("is_suspended", False))
+    snapshot.source_version = data.get("source_version")
+    return snapshot
+
+
+async def _get_cached_snapshot(tenant_id: str) -> Optional[TenantSnapshot]:
+    """
+    Attempt to load the tenant snapshot from the Redis L1 cache.
+
+    Returns a detached TenantSnapshot on a cache hit, or None on a miss
+    or any Redis error (allows the request to fall through to Postgres).
+    """
+    redis = get_redis()
+    key = _settings.tenant_config_cache_key(tenant_id)
+
+    try:
+        raw = await redis.get(key)
+    except Exception as exc:
+        logger.warning(
+            "redis_l1_cache_read_failed",
+            tenant_id=tenant_id,
+            error=str(exc),
+            detail="Falling back to Postgres snapshot lookup.",
+        )
+        return None
+
+    if raw is None:
+        logger.debug("redis_l1_cache_miss", tenant_id=tenant_id)
+        return None
+
+    try:
+        data = json.loads(raw)
+        snapshot = _dict_to_snapshot(data)
+        logger.debug("redis_l1_cache_hit", tenant_id=tenant_id)
+        return snapshot
+    except (json.JSONDecodeError, KeyError, ValueError) as exc:
+        # Corrupt cache entry — treat as a miss so Postgres repairs it.
+        logger.warning(
+            "redis_l1_cache_corrupt",
+            tenant_id=tenant_id,
+            error=str(exc),
+            detail="Ignoring corrupt cache entry; falling back to Postgres.",
+        )
+        return None
+
+
+async def _populate_cache(tenant_id: str, snapshot: TenantSnapshot) -> None:
+    """
+    Write a freshly-fetched TenantSnapshot to the Redis L1 cache.
+
+    TTL is set to _CACHE_TTL_SECONDS (3600 s / 1 hour).
+    Cache write errors are logged but never propagated — a failed cache
+    write does not prevent a successful response.
+    """
+    redis = get_redis()
+    key = _settings.tenant_config_cache_key(tenant_id)
+
+    try:
+        payload = json.dumps(_snapshot_to_dict(snapshot))
+        await redis.setex(key, _CACHE_TTL_SECONDS, payload)
+        logger.debug(
+            "redis_l1_cache_populated",
+            tenant_id=tenant_id,
+            ttl_seconds=_CACHE_TTL_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning(
+            "redis_l1_cache_write_failed",
+            tenant_id=tenant_id,
+            error=str(exc),
+            detail="Cache population failed; request succeeded via Postgres.",
+        )
+
+
+# ── Postgres snapshot lookup (Layer 2) ────────────────────────────────────────
 
 async def _get_tenant_snapshot(
     tenant_id: str,
     db: AsyncSession,
 ) -> TenantSnapshot:
     """
-    Fetch the tenant's snapshot row from DB-2.
+    Fetch the tenant snapshot from DB-2 (cache-miss path).
 
-    Because RLS is active, the session must already have app.tenant_id set
-    (done by TenantRLSMiddleware → apply_tenant_rls_to_session).
+    Read-through logic:
+      1. Check the Redis L1 cache.
+      2. On a hit, return the cached snapshot without touching Postgres.
+      3. On a miss, query Postgres, populate the cache, and return the row.
 
     Raises:
-        TenantNotFoundError     — tenant UUID is not a valid UUID4.
-        TenantConfigStaleError  — snapshot row does not exist yet (Kafka lag).
-        TenantSuspendedError    — snapshot's is_suspended flag is True
-                                  (eventual-consistent fallback).
+        TenantNotFoundError     — invalid UUID format.
+        TenantConfigStaleError  — snapshot row missing (Kafka consumer lag).
+        TenantSuspendedError    — snapshot.is_suspended is True (fallback).
     """
-    # Validate UUID format before hitting the DB
+    # ── Step 1: validate UUID ─────────────────────────────────────────────────
     try:
         tenant_uuid = uuid.UUID(tenant_id)
     except ValueError as exc:
         raise TenantNotFoundError(
             f"'{tenant_id}' is not a valid tenant UUID."
         ) from exc
+
+    # ── Step 2: Redis L1 cache check ─────────────────────────────────────────
+    cached = await _get_cached_snapshot(tenant_id)
+    if cached is not None:
+        # Still honour the snapshot-level suspension flag even from cache.
+        if cached.is_suspended:
+            logger.warning(
+                "tenant_suspended_via_cached_snapshot",
+                tenant_id=tenant_id,
+            )
+            raise TenantSuspendedError(
+                f"Tenant {tenant_id} is suspended. Contact support for assistance."
+            )
+        return cached
+
+    # ── Step 3: Postgres lookup (cache miss) ──────────────────────────────────
+    logger.debug("postgres_snapshot_lookup", tenant_id=tenant_id)
 
     result = await db.execute(
         select(TenantSnapshot).where(TenantSnapshot.tenant_id == tenant_uuid)
@@ -150,8 +272,8 @@ async def _get_tenant_snapshot(
             "tenant_snapshot_missing",
             tenant_id=tenant_id,
             detail=(
-                "Tenant snapshot not found in DB-2. "
-                "Kafka consumer may be lagging behind config.tenants topic."
+                "Snapshot not found in DB-2. "
+                "Kafka config-sync consumer may be lagging."
             ),
         )
         raise TenantConfigStaleError(
@@ -159,7 +281,7 @@ async def _get_tenant_snapshot(
             "Please retry in a few moments."
         )
 
-    # Eventual-consistent suspension fallback (Redis check already passed)
+    # Eventual-consistent suspension fallback (Redis check already passed).
     if snapshot.is_suspended:
         logger.warning(
             "tenant_suspended_via_snapshot",
@@ -169,6 +291,9 @@ async def _get_tenant_snapshot(
         raise TenantSuspendedError(
             f"Tenant {tenant_id} is suspended. Contact support for assistance."
         )
+
+    # ── Step 4: Populate Redis L1 cache for subsequent requests ──────────────
+    await _populate_cache(tenant_id, snapshot)
 
     return snapshot
 
@@ -180,21 +305,24 @@ async def get_validated_tenant(
     db: AsyncSession = Depends(get_db),
 ) -> TenantSnapshot:
     """
-    FastAPI dependency that validates the current request's tenant.
+    FastAPI dependency: validate the current request's tenant.
 
-    Steps:
-    1. Read tenant_id from request.state (set by JWTAuthMiddleware).
-    2. Check Redis suspension flag (authoritative, ~5s staleness SLO).
-    3. Fetch tenant snapshot from DB-2 (eventual-consistent, ~60s lag).
-    4. Check snapshot's is_suspended flag (fallback if Redis missed it).
+    Resolution order:
+      1. Read tenant_id from request.state (set by JWTAuthMiddleware).
+      2. Check Redis suspension flag (authoritative, ~5 s staleness SLO).
+      3. Check Redis L1 config cache (`tenant:{id}:config`, 1-hour TTL).
+      4. On cache miss: fetch snapshot from DB-2 Postgres, populate cache.
+      5. Check snapshot.is_suspended as eventual-consistent fallback.
 
-    Returns the TenantSnapshot instance for use in the route handler.
+    Returns:
+        TenantSnapshot — may be a detached instance reconstructed from
+        the Redis cache or a session-bound ORM instance from Postgres.
 
     Raises:
-        TokenMissingError       — no tenant_id in request state.
-        TenantSuspendedError    — tenant is suspended.
-        TenantConfigStaleError  — snapshot not yet available.
-        TenantNotFoundError     — invalid tenant UUID.
+        TokenMissingError       — no tenant_id in request.state.
+        TenantSuspendedError    — tenant is suspended (Redis or snapshot).
+        TenantConfigStaleError  — snapshot not yet available in DB-2.
+        TenantNotFoundError     — invalid tenant UUID format.
     """
     tenant_id: str = getattr(request.state, "tenant_id", "")
 
@@ -206,21 +334,21 @@ async def get_validated_tenant(
 
     logger.debug("tenant_validation_start", tenant_id=tenant_id)
 
-    # Layer 1: Redis suspension check (fast, authoritative)
+    # Layer 1: Redis suspension flag (fast, authoritative)
     await _check_suspension_flag(tenant_id)
 
-    # Layer 2: DB-2 snapshot lookup (eventual-consistent config)
+    # Layer 1b + 2: Redis L1 cache → Postgres read-through
     snapshot = await _get_tenant_snapshot(tenant_id, db)
 
     logger.debug(
         "tenant_validation_success",
         tenant_id=tenant_id,
         plan_tier=snapshot.plan_tier,
+        source="cache" if snapshot.source_version else "postgres",
     )
 
     return snapshot
 
 
-# ── Annotated type alias for clean route signatures ───────────────────────────
-# Usage: async def my_route(tenant: ValidatedTenant): ...
+# ── Annotated type alias ───────────────────────────────────────────────────────
 ValidatedTenant = Annotated[TenantSnapshot, Depends(get_validated_tenant)]

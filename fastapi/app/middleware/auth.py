@@ -37,9 +37,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.core.exceptions import TokenMissingError
+from app.core.exceptions import NeuralOpsError, TokenMissingError
 from app.core.logging import get_logger, request_id_ctx, tenant_id_ctx
 from app.core.security import decode_token
+from app.middleware.error_handler import _error_response
 
 logger = get_logger(__name__)
 
@@ -66,66 +67,75 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        path = request.url.path
+        try:
+            path = request.url.path
 
-        # ── Skip unauthenticated paths ────────────────────────────────────────
-        if path in UNAUTHENTICATED_PATHS or path.startswith("/health"):
-            return await call_next(request)
+            # ── Skip unauthenticated paths ────────────────────────────────────────
+            if path in UNAUTHENTICATED_PATHS or path.startswith("/health"):
+                return await call_next(request)
 
-        # ── Strategy 1: Trust gateway-injected headers (production path) ──────
-        tenant_id = request.headers.get("x-tenant-id")
-        user_id = request.headers.get("x-user-id")
-        user_role = request.headers.get("x-user-role")
+            # ── Strategy 1: Trust gateway-injected headers (production path) ──────
+            tenant_id = request.headers.get("x-tenant-id")
+            user_id = request.headers.get("x-user-id")
+            user_role = request.headers.get("x-user-role")
 
-        if tenant_id and user_id and user_role:
+            if tenant_id and user_id and user_role:
+                request.state.tenant_id = tenant_id
+                request.state.user_id = user_id
+                request.state.user_role = user_role
+                request.state.jwt_payload = {}
+
+                # Populate context vars for structured logging
+                tenant_id_ctx.set(tenant_id)
+
+                logger.debug(
+                    "auth_via_gateway_headers",
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    role=user_role,
+                )
+                return await call_next(request)
+
+            # ── Strategy 2: Parse Bearer token directly (dev / no-gateway path) ───
+            auth_header = request.headers.get("authorization", "")
+            if not auth_header.startswith("Bearer "):
+                raise TokenMissingError(
+                    "No authentication credentials provided. "
+                    "Expected either gateway-injected headers or an Authorization: Bearer header."
+                )
+
+            token = auth_header.removeprefix("Bearer ").strip()
+
+            # decode_token raises TokenExpiredError / TokenInvalidError on failure
+            payload = decode_token(token)
+
+            tenant_id = payload.get("tenant_id", "")
+            user_id = payload.get("user_id", "")
+            user_role = payload.get("role", "")
+
+            if not tenant_id:
+                raise TokenMissingError("JWT payload is missing 'tenant_id' claim.")
+
             request.state.tenant_id = tenant_id
             request.state.user_id = user_id
             request.state.user_role = user_role
-            request.state.jwt_payload = {}
+            request.state.jwt_payload = payload
 
-            # Populate context vars for structured logging
             tenant_id_ctx.set(tenant_id)
 
             logger.debug(
-                "auth_via_gateway_headers",
+                "auth_via_bearer_token",
                 tenant_id=tenant_id,
                 user_id=user_id,
                 role=user_role,
             )
+
             return await call_next(request)
 
-        # ── Strategy 2: Parse Bearer token directly (dev / no-gateway path) ───
-        auth_header = request.headers.get("authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise TokenMissingError(
-                "No authentication credentials provided. "
-                "Expected either gateway-injected headers or an Authorization: Bearer header."
+        except NeuralOpsError as exc:
+            return _error_response(
+                status_code=exc.status_code,
+                message=exc.message,
+                code=exc.code,
+                details=exc.details,
             )
-
-        token = auth_header.removeprefix("Bearer ").strip()
-
-        # decode_token raises TokenExpiredError / TokenInvalidError on failure
-        payload = decode_token(token)
-
-        tenant_id = payload.get("tenant_id", "")
-        user_id = payload.get("user_id", "")
-        user_role = payload.get("role", "")
-
-        if not tenant_id:
-            raise TokenMissingError("JWT payload is missing 'tenant_id' claim.")
-
-        request.state.tenant_id = tenant_id
-        request.state.user_id = user_id
-        request.state.user_role = user_role
-        request.state.jwt_payload = payload
-
-        tenant_id_ctx.set(tenant_id)
-
-        logger.debug(
-            "auth_via_bearer_token",
-            tenant_id=tenant_id,
-            user_id=user_id,
-            role=user_role,
-        )
-
-        return await call_next(request)

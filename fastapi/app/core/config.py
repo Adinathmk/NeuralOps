@@ -9,7 +9,7 @@ No secret is hard-coded here.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,7 +22,6 @@ class Settings(BaseSettings):
         env_file=".env.local",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        # Ignore extra keys that may exist in a shared .env
         extra="ignore",
     )
 
@@ -49,16 +48,13 @@ class Settings(BaseSettings):
     )
 
     # ── JWT (RS256 — PUBLIC KEY ONLY) ─────────────────────────────────────────
-    # Django holds the private key and signs tokens.
-    # FastAPI only verifies using the corresponding public key.
     JWT_PUBLIC_KEY: str = Field(
         ...,
         description="PEM-encoded RSA public key for RS256 JWT verification.",
     )
     JWT_ALGORITHM: str = Field(default="RS256")
 
-    # ── Tenant suspension Redis key pattern ──────────────────────────────────
-    # Redis key: tenant:{tenant_id}:suspended
+    # ── Tenant suspension Redis key pattern ───────────────────────────────────
     TENANT_SUSPENSION_REDIS_PREFIX: str = Field(default="tenant")
     TENANT_SUSPENSION_REDIS_SUFFIX: str = Field(default="suspended")
 
@@ -70,22 +66,41 @@ class Settings(BaseSettings):
     # ── Kafka ─────────────────────────────────────────────────────────────────
     KAFKA_BOOTSTRAP_SERVERS: str = Field(
         default="kafka:9092",
-        description=(
-            "Comma-separated Kafka broker addresses. "
-            "e.g. 'kafka:9092' or 'broker1:9092,broker2:9092'"
-        ),
+        description="Comma-separated Kafka broker addresses.",
     )
     KAFKA_CONFIG_GROUP_ID: str = Field(
         default="fastapi-config-sync-group",
-        description=(
-            "Kafka consumer group ID for the config-sync consumer. "
-            "Must be unique per service instance type. "
-            "Changing this causes the consumer to replay from the last committed offset "
-            "for that group — use a new value only intentionally."
-        ),
+        description="Kafka consumer group ID for the config-sync consumer.",
+    )
+
+    # ── AWS S3 / Object Storage ───────────────────────────────────────────────
+    AWS_ACCESS_KEY_ID: Optional[str] = Field(
+        default=None,
+        description="AWS access key ID for S3 operations.",
+    )
+    AWS_SECRET_ACCESS_KEY: Optional[str] = Field(
+        default=None,
+        description="AWS secret access key for S3 operations.",
+    )
+    AWS_REGION_NAME: str = Field(
+        default="us-east-1",
+        description="AWS region for S3 operations.",
+    )
+    AWS_S3_BUCKET_NAME: str = Field(
+        default="neuralops-artifacts",
+        description="S3 bucket where log context buffers and artifacts are stored.",
+    )
+    AWS_S3_SIGNED_URL_EXPIRY: int = Field(
+        default=900,
+        description="Pre-signed URL expiry in seconds (default: 15 minutes).",
+    )
+    AWS_S3_ENDPOINT_URL: Optional[str] = Field(
+        default=None,
+        description="Optional custom endpoint URL for S3 compatible APIs (e.g. MinIO).",
     )
 
     # ── Derived helpers ───────────────────────────────────────────────────────
+
     @field_validator("JWT_PUBLIC_KEY", mode="before")
     @classmethod
     def normalise_public_key(cls, v: str) -> str:
@@ -103,8 +118,8 @@ class Settings(BaseSettings):
     def tenant_config_cache_key(self, tenant_id: str) -> str:
         """
         Return the Redis key for a tenant's aggregated config cache.
-        Pattern: tenant:{tenant_id}:config  (TTL: 1 hour, set by the API layer)
-        Invalidated here after any snapshot upsert so the next API request rebuilds it.
+        Pattern: tenant:{tenant_id}:config  (TTL: 1 hour)
+        Invalidated by ConfigSyncConsumer after every snapshot upsert.
         """
         return f"tenant:{tenant_id}:config"
 

@@ -93,10 +93,20 @@ def configure_logging() -> None:
     root_logger.handlers = [handler]
     root_logger.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
 
-    # Quieten noisy third-party loggers in production
-    if not settings.DEBUG:
-        for noisy in ("uvicorn.access", "sqlalchemy.engine", "asyncpg"):
-            logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Quieten noisy third-party loggers
+    noisy_loggers = [
+        "uvicorn.access",
+        "sqlalchemy.engine",
+        "asyncpg",
+        "aiokafka",
+        "aiokafka.conn",
+        "aiokafka.consumer.group_coordinator",
+        "aiokafka.consumer.fetcher",
+    ]
+    for noisy in noisy_loggers:
+        logging.getLogger(noisy).setLevel(
+            logging.WARNING if not settings.DEBUG else logging.INFO
+        )
 
 
 def get_logger(name: str = __name__) -> structlog.BoundLogger:
