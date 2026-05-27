@@ -1,5 +1,5 @@
 """
-app/models/snapshots.py
+fastapi/app/models/snapshots.py
 
 Read-only snapshot tables in DB-2.
 
@@ -16,15 +16,21 @@ Tables defined here:
   - alert_rule_snapshots   (from config.alert_rules Kafka topic)
   - playbook_snapshots     (from config.playbooks Kafka topic)
 
+Phase 3 additions to TenantSnapshot:
+  - github_repo_url
+  - github_repo_owner
+  - github_repo_name
+  - encrypted_github_pat       (Fernet ciphertext — never plaintext)
+  - github_webhook_secret      (Fernet ciphertext)
+  - github_default_branch
+  - github_indexing_status
+  - github_last_indexed_commit
+
 Row-Level Security is enforced at the PostgreSQL layer for all tenant-
-scoped tables. The SQL DDL for the RLS policies is emitted via the
-`after_create` event listeners at the bottom of this module so that
-`alembic upgrade head` applies them automatically.
+scoped tables.
 
 Architecture reference:
-  NeuralOps Technical Documentation — Section 5 (Database Schema)
-  Snapshot staleness SLOs: tenant config ≤ 60s, alert rules ≤ 60s,
-  playbooks ≤ 120s.
+  NeuralOps Technical Documentation — Sections 5, 7, 17
 """
 
 from __future__ import annotations
@@ -58,6 +64,11 @@ class TenantSnapshot(Base):
 
     Upserted by the Kafka consumer in app/queue/kafka/consumers/config_sync.py
     whenever a config.tenants event arrives.
+
+    Phase 3 adds GitHub integration columns (all nullable — not every tenant
+    will have a connected repository).  The encrypted_github_pat column stores
+    the Fernet ciphertext that FastAPI decrypts at index-task time using the
+    shared FERNET_ENCRYPTION_KEY environment variable.
 
     The `is_suspended` flag in this table is the eventual-consistent copy.
     The *authoritative* suspension check is the Redis key
@@ -98,9 +109,6 @@ class TenantSnapshot(Base):
             "Always verify against the Redis key tenant:{id}:suspended first."
         ),
     )
-    # Monotonically-increasing counter from the source entity in DB-1.
-    # Consumers discard events whose source_version ≤ current snapshot value
-    # to prevent out-of-order Kafka redeliveries from overwriting newer data.
     source_version: Column = Column(
         BigInteger,
         nullable=True,
@@ -112,6 +120,57 @@ class TenantSnapshot(Base):
         onupdate=func.now(),
         nullable=False,
         comment="Timestamp of the last successful snapshot upsert.",
+    )
+
+    # ── Phase 3: GitHub Integration columns ───────────────────────────────────
+    # All nullable — only populated once a tenant connects a GitHub repository.
+
+    github_repo_url: Column = Column(
+        Text,
+        nullable=True,
+        comment="Full HTTPS clone URL of the connected repository.",
+    )
+    github_repo_owner: Column = Column(
+        String(255),
+        nullable=True,
+        comment="GitHub organisation or user name that owns the repository.",
+    )
+    github_repo_name: Column = Column(
+        String(255),
+        nullable=True,
+        comment="Repository name (without the owner prefix).",
+    )
+    encrypted_github_pat: Column = Column(
+        Text,
+        nullable=True,
+        comment=(
+            "Fernet-encrypted GitHub Personal Access Token. "
+            "Decrypt with the shared FERNET_ENCRYPTION_KEY at runtime. "
+            "NEVER log or expose this value."
+        ),
+    )
+    github_webhook_secret: Column = Column(
+        Text,
+        nullable=True,
+        comment=(
+            "Fernet-encrypted webhook signing secret. "
+            "Used to validate incoming push events from GitHub."
+        ),
+    )
+    github_default_branch: Column = Column(
+        String(255),
+        nullable=True,
+        comment="Branch that is indexed and monitored for push events.",
+    )
+    github_indexing_status: Column = Column(
+        String(20),
+        nullable=True,
+        comment="Current AST indexing lifecycle state: pending | indexing | indexed | failed.",
+    )
+    github_last_indexed_commit: Column = Column(
+        String(40),
+        nullable=True,
+        comment="SHA of the last successfully indexed commit.",
     )
 
     # ── Relationships ─────────────────────────────────────────────────────────
@@ -129,7 +188,8 @@ class TenantSnapshot(Base):
     def __repr__(self) -> str:  # pragma: no cover
         return (
             f"<TenantSnapshot tenant_id={self.tenant_id} "
-            f"plan={self.plan_tier} suspended={self.is_suspended}>"
+            f"plan={self.plan_tier} suspended={self.is_suspended} "
+            f"github_repo={self.github_repo_owner}/{self.github_repo_name}>"
         )
 
 
@@ -159,9 +219,7 @@ class AlertRuleSnapshot(Base):
         index=True,
     )
     confidence_threshold: Column = Column(
-        # Stored as a float — e.g. 0.85 means 85 % confidence required
-        # before an alert is dispatched.
-        String(16),   # keep as string to preserve precision across serialisation
+        String(16),
         nullable=True,
     )
     severity_filter: Column = Column(
@@ -241,15 +299,10 @@ class PlaybookSnapshot(Base):
         )
 
 
-# ── Row-Level Security DDL ────────────────────────────────────────────────────
+# ── Row-Level Security DDL ─────────────────────────────────────────────────────
 # These DDL statements are executed *after* SQLAlchemy creates each table
 # (or via Alembic migrations) to enforce tenant isolation at the database
-# engine level.  Even if the application layer forgets to filter by
-# tenant_id, the RLS policy will block the query.
-#
-# The tenant_rls middleware sets the session-level parameter
-#   `SET LOCAL app.tenant_id = '<uuid>'`
-# at the start of every request. The policies below read that parameter.
+# engine level.
 
 _RLS_TABLES = [
     ("tenant_snapshots", "tenant_id"),
@@ -259,10 +312,7 @@ _RLS_TABLES = [
 
 
 def _create_rls_policies(target, connection, **kwargs) -> None:
-    """
-    Emit RLS ENABLE and policy CREATE statements after table creation.
-    SQLAlchemy fires this via the `after_create` DDL event.
-    """
+    """Emit RLS ENABLE and policy CREATE statements after table creation."""
     table_name = target.name
     tenant_col = next(
         (col for t, col in _RLS_TABLES if t == table_name), None
@@ -270,7 +320,6 @@ def _create_rls_policies(target, connection, **kwargs) -> None:
     if not tenant_col:
         return
 
-    # Enable RLS on the table (idempotent — no-op if already enabled)
     connection.execute(
         text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;")
     )
@@ -279,12 +328,8 @@ def _create_rls_policies(target, connection, **kwargs) -> None:
     )
 
     policy_name = f"rls_{table_name}_tenant_isolation"
-
-    # Drop and recreate to make migrations idempotent
     connection.execute(
-        text(
-            f"DROP POLICY IF EXISTS {policy_name} ON {table_name};"
-        )
+        text(f"DROP POLICY IF EXISTS {policy_name} ON {table_name};")
     )
     connection.execute(
         text(
@@ -299,7 +344,6 @@ def _create_rls_policies(target, connection, **kwargs) -> None:
     )
 
 
-# Attach the DDL event listener to each snapshot table
 for _model in (TenantSnapshot, AlertRuleSnapshot, PlaybookSnapshot):
     event.listen(
         _model.__table__,

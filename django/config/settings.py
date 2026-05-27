@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'analytics',
     'alerts',
     'playbooks',
+    'integrations',
 ]
 
 # ============================================================================
@@ -387,3 +388,9 @@ AWS_S3_SIGNED_URL_EXPIRY = int(os.getenv('AWS_S3_SIGNED_URL_EXPIRY', 900))
 ELASTICSEARCH_URL = os.getenv('ELASTICSEARCH_URL', 'http://localhost:9200')
 ELASTICSEARCH_INDEX_LOGS = os.getenv('ELASTICSEARCH_INDEX_LOGS', 'logs')
 
+FERNET_ENCRYPTION_KEY = os.getenv("FERNET_ENCRYPTION_KEY")
+
+# NOTE: Required for the integrations app.
+# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Add the key to .env.docker as: FERNET_ENCRYPTION_KEY=<generated-key>
+ 

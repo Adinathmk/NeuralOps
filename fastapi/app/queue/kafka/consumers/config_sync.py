@@ -1,49 +1,43 @@
 """
-app/queue/kafka/consumers/config_sync.py
+fastapi/app/queue/kafka/consumers/config_sync.py
 
-Kafka consumer for configuration snapshot synchronisation (Phase 2, Part 1).
+Kafka consumer for configuration snapshot synchronisation.
 
-Architecture overview
----------------------
-Django (Service 1 / DB-1) owns the canonical copies of:
-  - Tenant configuration   → published to Kafka topic: config.tenants
-  - Alert rules            → published to Kafka topic: config.alert_rules
-  - Playbooks              → published to Kafka topic: config.playbooks
+Subscribes to:
+  - config.tenants      → upserts tenant_snapshots (including GitHub columns)
+  - config.alert_rules  → upserts alert_rule_snapshots
+  - config.playbooks    → upserts playbook_snapshots
 
-Configuration changes travel through the Transactional Outbox in DB-1.
-Debezium tails the DB-1 WAL and delivers outbox rows to Kafka via the
-Outbox Event Router transform, which strips the envelope and produces a
-raw JSON payload as the Kafka message value.
+Phase 3 additions
+-----------------
+_handle_tenant_event() now reads an optional nested `github_integration`
+block from the Kafka payload and maps it to the github_* columns on the
+TenantSnapshot row.  All other behaviour (staleness check, Redis L1 cache
+invalidation, idempotency) is unchanged.
 
-This consumer subscribes to all three topics, parses the events, and
-upserts the corresponding snapshot tables in DB-2 so that the FastAPI
-service can read tenant/alert-rule/playbook config locally without ever
-making a synchronous HTTP call to Django.
+Kafka message payload shape for a tenant.updated event with GitHub data:
 
-Idempotency & staleness protection
------------------------------------
-Every event payload includes a `source_version` integer that is
-monotonically incremented on the source entity in DB-1.
+{
+  "event_type": "tenant.updated",
+  "tenant": {
+    "id": "<uuid>",
+    "plan_tier": "pro",
+    "is_suspended": false,
+    "source_version": 42,
+    "github_integration": {
+      "repo_url": "https://github.com/my-org/my-repo",
+      "repo_owner": "my-org",
+      "repo_name": "my-repo",
+      "encrypted_pat": "gAAAAABm...",
+      "webhook_secret": "gAAAAABm...",
+      "default_branch": "main",
+      "indexing_status": "pending",
+      "last_indexed_commit": null
+    }
+  }
+}
 
-RULE: If the local DB-2 snapshot row already exists AND its
-`source_version >= the incoming event's source_version`, the event is
-a stale re-delivery (e.g. Kafka at-least-once) and MUST be discarded.
-Only events with a strictly higher `source_version` are applied.
-
-Redis L1 cache invalidation
------------------------------
-After every successful DB-2 commit, the Redis key
-`tenant:{tenant_id}:config` is deleted so that the next API request
-picks up the fresh snapshot from DB-2 and repopulates the 1-hour TTL
-cache.  We deliberately DELETE rather than re-populate here because the
-cache aggregation query is owned by the API layer (keeps concerns separate).
-
-Kafka topic: config.* topics use log compaction.
-A fresh FastAPI deployment replays the compacted topic from the
-beginning to rebuild snapshots without requiring Django to re-push
-all records.
-
-Architecture reference: NeuralOps Technical Documentation — Sections 5, 6, 7
+Architecture reference: NeuralOps Technical Documentation — Sections 5, 6, 7, 17
 """
 
 from __future__ import annotations
@@ -72,6 +66,43 @@ TOPIC_ALERT_RULES = "config.alert_rules"
 TOPIC_PLAYBOOKS = "config.playbooks"
 
 CONFIG_TOPICS = (TOPIC_TENANTS, TOPIC_ALERT_RULES, TOPIC_PLAYBOOKS)
+
+
+# ── GitHub field mapping ───────────────────────────────────────────────────────
+# Maps incoming Kafka payload keys → TenantSnapshot column names.
+# All values are nullable; missing keys in the payload leave the column unchanged.
+_GITHUB_FIELD_MAP: Dict[str, str] = {
+    "repo_url": "github_repo_url",
+    "repo_owner": "github_repo_owner",
+    "repo_name": "github_repo_name",
+    "encrypted_pat": "encrypted_github_pat",
+    "webhook_secret": "github_webhook_secret",
+    "default_branch": "github_default_branch",
+    "indexing_status": "github_indexing_status",
+    "last_indexed_commit": "github_last_indexed_commit",
+}
+
+
+def _apply_github_fields(
+    snapshot: TenantSnapshot,
+    github_data: Dict[str, Any],
+) -> None:
+    """
+    Apply the nested `github_integration` block from the Kafka payload to the
+    TenantSnapshot ORM instance.
+
+    Only keys present in `github_data` are written — missing keys in the
+    payload are treated as "no change" (they preserve the existing column
+    value).  Explicit null values in the payload WILL overwrite the column
+    (allowing a disconnect flow to clear the columns).
+
+    Args:
+        snapshot:    The TenantSnapshot instance to mutate (in-session).
+        github_data: Dict from payload["tenant"]["github_integration"].
+    """
+    for payload_key, column_name in _GITHUB_FIELD_MAP.items():
+        if payload_key in github_data:
+            setattr(snapshot, column_name, github_data[payload_key])
 
 
 # ── ConfigSyncConsumer ────────────────────────────────────────────────────────
@@ -142,7 +173,6 @@ class ConfigSyncConsumer:
             # Disable auto-commit so we control exactly when offsets are
             # committed: only AFTER the DB-2 transaction succeeds.
             enable_auto_commit=False,
-            # Decode message values as UTF-8 strings; keys may be None.
             value_deserializer=lambda raw: raw.decode("utf-8") if raw else None,
             key_deserializer=lambda raw: raw.decode("utf-8") if raw else None,
         )
@@ -153,6 +183,20 @@ class ConfigSyncConsumer:
         # unavailable at startup), wait and retry rather than dying.
         while self._running:
             try:
+                if self._consumer is None:
+                    self._consumer = AIOKafkaConsumer(
+                        *CONFIG_TOPICS,
+                        bootstrap_servers=self._settings.KAFKA_BOOTSTRAP_SERVERS,
+                        group_id=self._settings.KAFKA_CONFIG_GROUP_ID,
+                        # Replay the full compacted topic from the beginning when the
+                        # consumer group has no committed offset (fresh deployment).
+                        auto_offset_reset="earliest",
+                        # Disable auto-commit so we control exactly when offsets are
+                        # committed: only AFTER the DB-2 transaction succeeds.
+                        enable_auto_commit=False,
+                        value_deserializer=lambda raw: raw.decode("utf-8") if raw else None,
+                        key_deserializer=lambda raw: raw.decode("utf-8") if raw else None,
+                    )
                 await self._consumer.start()
                 logger.info(
                     "config_sync_consumer_started",
@@ -166,7 +210,6 @@ class ConfigSyncConsumer:
                     exc_info=True,
                 )
             except asyncio.CancelledError:
-                # Raised when the background task is cancelled during shutdown.
                 logger.info("config_sync_consumer_cancelled")
                 break
             except Exception as exc:
@@ -176,7 +219,6 @@ class ConfigSyncConsumer:
                     exc_info=True,
                 )
             finally:
-                # Always attempt to stop the consumer before retrying or exiting.
                 await self._safe_stop_consumer()
 
             if self._running:
@@ -189,10 +231,7 @@ class ConfigSyncConsumer:
         logger.info("config_sync_consumer_stopped")
 
     async def stop(self) -> None:
-        """
-        Signal the consumer loop to exit and wait for a clean shutdown.
-        Call this from the FastAPI lifespan shutdown block.
-        """
+        """Signal the consumer loop to exit and wait for a clean shutdown."""
         logger.info("config_sync_consumer_stopping")
         self._running = False
         await self._safe_stop_consumer()
@@ -206,20 +245,10 @@ class ConfigSyncConsumer:
         """
         Core message processing loop.
 
-        Iterates over incoming Kafka messages.  For each message:
+        For each message:
           1. Parse the JSON payload.
           2. Route to the appropriate handler based on topic.
           3. Commit the Kafka offset only after DB-2 is updated.
-
-        Any per-message error (bad JSON, unknown schema, DB constraint
-        violation) is caught and logged without crashing the loop — the
-        offset is NOT committed so the message will be retried on next start.
-
-        Note on offset commit strategy:
-        `enable_auto_commit=False` means we call `consumer.commit()` manually
-        after each successful DB write.  If the process crashes mid-write,
-        the message will be re-delivered (at-least-once semantics) and the
-        staleness check in each handler will discard the duplicate safely.
         """
         async for message in self._consumer:
             if not self._running:
@@ -238,7 +267,7 @@ class ConfigSyncConsumer:
                 },
             )
 
-            # ── 1. Parse JSON ─────────────────────────────────────────────────
+            # ── Parse JSON ────────────────────────────────────────────────────
             try:
                 payload: Dict[str, Any] = json.loads(raw_value)
             except (json.JSONDecodeError, TypeError) as exc:
@@ -251,12 +280,11 @@ class ConfigSyncConsumer:
                         "error": str(exc),
                     },
                 )
-                # Commit and skip — a permanently malformed message should not
-                # block the consumer indefinitely.
+                # Commit and skip — permanently malformed message.
                 await self._consumer.commit()
                 continue
 
-            # ── 2. Route to handler ───────────────────────────────────────────
+            # ── Route to handler ──────────────────────────────────────────────
             try:
                 if topic == TOPIC_TENANTS:
                     await self._handle_tenant_event(payload)
@@ -279,9 +307,7 @@ class ConfigSyncConsumer:
                         "payload_keys": list(payload.keys()),
                     },
                 )
-                # Do NOT commit — allow retry on restart in case it was a
-                # transient schema mismatch. If this persists, a DLQ alert
-                # (Phase 8) will catch it.
+                # Do NOT commit — allow retry on restart.
                 continue
             except Exception as exc:
                 logger.error(
@@ -293,10 +319,9 @@ class ConfigSyncConsumer:
                     },
                     exc_info=True,
                 )
-                # Do not commit; will be retried on restart.
                 continue
 
-            # ── 3. Commit offset (only after successful DB write) ─────────────
+            # ── Commit offset (only after successful DB write) ─────────────────
             await self._consumer.commit()
             logger.debug(
                 "config_sync_offset_committed",
@@ -313,26 +338,39 @@ class ConfigSyncConsumer:
         """
         Process a config.tenants event.
 
-        Expected payload shape (written by Django's write_outbox helper):
+        Core tenant fields and the optional nested github_integration block
+        are both handled here.
+
+        Expected payload shape:
         {
-            "event_type": "tenant.updated" | "tenant.created" | "tenant.suspended" | "tenant.reinstated",
+            "event_type": "tenant.updated" | "tenant.created" | ...,
             "tenant": {
                 "id": "<uuid>",
                 "plan_tier": "free" | "pro" | "enterprise",
                 "vector_namespace": "<string>",
                 "kafka_group_id": "<string>",
                 "is_suspended": false,
-                "source_version": <int>
+                "source_version": <int>,
+                "github_integration": {        ← OPTIONAL (Phase 3)
+                    "repo_url": "...",
+                    "repo_owner": "...",
+                    "repo_name": "...",
+                    "encrypted_pat": "gAAAAABm...",
+                    "webhook_secret": "gAAAAABm...",
+                    "default_branch": "main",
+                    "indexing_status": "pending",
+                    "last_indexed_commit": null
+                }
             }
         }
-
-        Deletion of a tenant is out-of-scope for this consumer (tenant
-        deletion is an admin-only super-admin action handled separately).
         """
         tenant_data: Dict[str, Any] = payload["tenant"]
 
         tenant_id = uuid.UUID(str(tenant_data["id"]))
         incoming_version: int = int(tenant_data["source_version"])
+
+        # Optional GitHub block — may be absent on non-integration events.
+        github_data: Optional[Dict[str, Any]] = tenant_data.get("github_integration")
 
         async with AsyncSessionLocal() as session:
             async with session.begin():
@@ -340,7 +378,10 @@ class ConfigSyncConsumer:
 
                 # ── Staleness check ───────────────────────────────────────────
                 if existing is not None:
-                    if existing.source_version is not None and existing.source_version >= incoming_version:
+                    if (
+                        existing.source_version is not None
+                        and existing.source_version >= incoming_version
+                    ):
                         logger.warning(
                             "config_sync_stale_tenant_event",
                             extra={
@@ -351,12 +392,31 @@ class ConfigSyncConsumer:
                         )
                         return  # Discard stale event
 
-                    # ── Update existing snapshot ──────────────────────────────
+                    # ── Update core tenant fields ─────────────────────────────
                     existing.plan_tier = tenant_data.get("plan_tier", existing.plan_tier)
-                    existing.vector_namespace = tenant_data.get("vector_namespace", existing.vector_namespace)
-                    existing.kafka_group_id = tenant_data.get("kafka_group_id", existing.kafka_group_id)
-                    existing.is_suspended = bool(tenant_data.get("is_suspended", existing.is_suspended))
+                    existing.vector_namespace = tenant_data.get(
+                        "vector_namespace", existing.vector_namespace
+                    )
+                    existing.kafka_group_id = tenant_data.get(
+                        "kafka_group_id", existing.kafka_group_id
+                    )
+                    existing.is_suspended = bool(
+                        tenant_data.get("is_suspended", existing.is_suspended)
+                    )
                     existing.source_version = incoming_version
+
+                    # ── Apply GitHub integration fields (Phase 3) ─────────────
+                    if github_data is not None:
+                        _apply_github_fields(existing, github_data)
+                        logger.info(
+                            "config_sync_tenant_github_updated",
+                            extra={
+                                "tenant_id": str(tenant_id),
+                                "repo": f"{github_data.get('repo_owner')}/{github_data.get('repo_name')}",
+                                "indexing_status": github_data.get("indexing_status"),
+                            },
+                        )
+
                     session.add(existing)
 
                     logger.info(
@@ -364,8 +424,10 @@ class ConfigSyncConsumer:
                         extra={
                             "tenant_id": str(tenant_id),
                             "source_version": incoming_version,
+                            "has_github_data": github_data is not None,
                         },
                     )
+
                 else:
                     # ── Create new snapshot ───────────────────────────────────
                     snapshot = TenantSnapshot(
@@ -376,6 +438,18 @@ class ConfigSyncConsumer:
                         is_suspended=bool(tenant_data.get("is_suspended", False)),
                         source_version=incoming_version,
                     )
+
+                    # Apply GitHub integration fields if present.
+                    if github_data is not None:
+                        _apply_github_fields(snapshot, github_data)
+                        logger.info(
+                            "config_sync_tenant_github_set_on_create",
+                            extra={
+                                "tenant_id": str(tenant_id),
+                                "repo": f"{github_data.get('repo_owner')}/{github_data.get('repo_name')}",
+                            },
+                        )
+
                     session.add(snapshot)
 
                     logger.info(
@@ -383,6 +457,7 @@ class ConfigSyncConsumer:
                         extra={
                             "tenant_id": str(tenant_id),
                             "source_version": incoming_version,
+                            "has_github_data": github_data is not None,
                         },
                     )
 
@@ -404,7 +479,7 @@ class ConfigSyncConsumer:
                 "recipient_ids": ["<uuid>", ...],
                 "enabled": true,
                 "source_version": <int>,
-                "deleted": false       ← present and true on deletion events
+                "deleted": false
             }
         }
         """
@@ -421,7 +496,10 @@ class ConfigSyncConsumer:
 
                 # ── Staleness check ───────────────────────────────────────────
                 if existing is not None:
-                    if existing.source_version is not None and existing.source_version >= incoming_version:
+                    if (
+                        existing.source_version is not None
+                        and existing.source_version >= incoming_version
+                    ):
                         logger.warning(
                             "config_sync_stale_alert_rule_event",
                             extra={
@@ -432,7 +510,6 @@ class ConfigSyncConsumer:
                         )
                         return
 
-                    # ── Delete ────────────────────────────────────────────────
                     if is_deleted:
                         await session.delete(existing)
                         logger.info(
@@ -443,7 +520,6 @@ class ConfigSyncConsumer:
                             },
                         )
                     else:
-                        # ── Update ────────────────────────────────────────────
                         existing.tenant_id = tenant_id
                         existing.confidence_threshold = rule_data.get(
                             "confidence_threshold", existing.confidence_threshold
@@ -454,7 +530,9 @@ class ConfigSyncConsumer:
                         existing.recipient_ids = rule_data.get(
                             "recipient_ids", existing.recipient_ids
                         )
-                        existing.enabled = bool(rule_data.get("enabled", existing.enabled))
+                        existing.enabled = bool(
+                            rule_data.get("enabled", existing.enabled)
+                        )
                         existing.source_version = incoming_version
                         session.add(existing)
 
@@ -468,14 +546,12 @@ class ConfigSyncConsumer:
                         )
                 else:
                     if is_deleted:
-                        # Nothing to delete; already absent.
                         logger.debug(
                             "config_sync_alert_rule_delete_noop",
                             extra={"rule_id": str(rule_id)},
                         )
                         return
 
-                    # ── Create ────────────────────────────────────────────────
                     snapshot = AlertRuleSnapshot(
                         rule_id=rule_id,
                         tenant_id=tenant_id,
@@ -496,7 +572,6 @@ class ConfigSyncConsumer:
                         },
                     )
 
-        # ── Redis L1 cache invalidation ───────────────────────────────────────
         await self._invalidate_tenant_cache(str(tenant_id))
 
     async def _handle_playbook_event(self, payload: Dict[str, Any]) -> None:
@@ -529,7 +604,10 @@ class ConfigSyncConsumer:
 
                 # ── Staleness check ───────────────────────────────────────────
                 if existing is not None:
-                    if existing.source_version is not None and existing.source_version >= incoming_version:
+                    if (
+                        existing.source_version is not None
+                        and existing.source_version >= incoming_version
+                    ):
                         logger.warning(
                             "config_sync_stale_playbook_event",
                             extra={
@@ -540,7 +618,6 @@ class ConfigSyncConsumer:
                         )
                         return
 
-                    # ── Delete ────────────────────────────────────────────────
                     if is_deleted:
                         await session.delete(existing)
                         logger.info(
@@ -551,7 +628,6 @@ class ConfigSyncConsumer:
                             },
                         )
                     else:
-                        # ── Update ────────────────────────────────────────────
                         existing.tenant_id = tenant_id
                         existing.error_pattern = playbook_data.get(
                             "error_pattern", existing.error_pattern
@@ -578,7 +654,6 @@ class ConfigSyncConsumer:
                         )
                         return
 
-                    # ── Create ────────────────────────────────────────────────
                     snapshot = PlaybookSnapshot(
                         playbook_id=playbook_id,
                         tenant_id=tenant_id,
@@ -597,7 +672,6 @@ class ConfigSyncConsumer:
                         },
                     )
 
-        # ── Redis L1 cache invalidation ───────────────────────────────────────
         await self._invalidate_tenant_cache(str(tenant_id))
 
     # ── Internal: DB query helpers ────────────────────────────────────────────
@@ -625,7 +699,9 @@ class ConfigSyncConsumer:
         session: AsyncSession, playbook_id: uuid.UUID
     ) -> Optional[PlaybookSnapshot]:
         result = await session.execute(
-            select(PlaybookSnapshot).where(PlaybookSnapshot.playbook_id == playbook_id)
+            select(PlaybookSnapshot).where(
+                PlaybookSnapshot.playbook_id == playbook_id
+            )
         )
         return result.scalar_one_or_none()
 
@@ -635,17 +711,14 @@ class ConfigSyncConsumer:
         """
         Delete the Redis L1 cache key for the given tenant's aggregated config.
 
-        Key: tenant:{tenant_id}:config
-        TTL: 1 hour (set by the API layer on next cache-miss read)
+        Key: tenant:{tenant_id}:config  (TTL: 1 hour, set by API layer)
 
-        We DELETE rather than re-populate because:
-          - Cache aggregation (alert rules + playbooks + tenant config) is
-            owned by the API dependency layer, not by this consumer.
-          - Avoids a second DB read inside the consumer hot path.
-          - Ensures the cache is always built from a freshly committed state.
+        We DELETE rather than re-populate because the cache aggregation query
+        is owned by the API dependency layer.  The next API request will
+        trigger a fresh DB-2 read and repopulate the cache.
 
         Redis errors are caught and logged; a cache invalidation failure
-        is non-fatal (the DB-2 snapshot is already updated and authoritative).
+        is non-fatal (DB-2 snapshot is already authoritative).
         """
         if not self._redis:
             return
