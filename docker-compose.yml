@@ -339,6 +339,7 @@ services:
       JWT_ALGORITHM: RS256
       TENANT_SUSPENSION_REDIS_PREFIX: tenant
       TENANT_SUSPENSION_REDIS_SUFFIX: suspended
+      CORS_ALLOWED_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
     volumes:
       # Hot-reload volume for local development — source changes reflect
       # immediately without requiring an image rebuild.

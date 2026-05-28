@@ -86,9 +86,9 @@ celery_app.conf.task_default_retry_delay = 5  # seconds
 celery_app.conf.task_reject_on_worker_lost = True
 celery_app.conf.task_acks_late = True
 
-# ── Task discovery ────────────────────────────────────────────────────────────
-# Celery will import every module under app/worker/tasks/ and register
-# any function decorated with @celery_app.task or @shared_task.
-# `force=True` ensures re-discovery even if the package was already imported
-# by the time this line executes (e.g. in test environments).
 celery_app.autodiscover_tasks(["app.worker"], force=True)
+
+# ── Explicit imports for task registration ────────────────────────────────────
+# Since the task module is named index_code.py rather than tasks.py,
+# we explicitly import it here to trigger registration with the Celery application.
+import app.worker.tasks.index_code

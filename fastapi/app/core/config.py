@@ -9,7 +9,7 @@ No secret is hard-coded here.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     TENANT_SUSPENSION_REDIS_SUFFIX: str = Field(default="suspended")
 
     # ── CORS ──────────────────────────────────────────────────────────────────
-    CORS_ALLOWED_ORIGINS: List[str] = Field(
+    CORS_ALLOWED_ORIGINS: Any = Field(
         default=["http://localhost:3000", "http://localhost:5173"],
     )
 
@@ -118,6 +118,12 @@ class Settings(BaseSettings):
         description="Optional custom endpoint URL for S3 compatible APIs (e.g. MinIO).",
     )
 
+    # ── Fernet Symmetric Encryption Key ─────────────────────────────────────────
+    FERNET_ENCRYPTION_KEY: Optional[str] = Field(
+        default=None,
+        description="Symmetric encryption key used for decrypting sensitive integrations credentials.",
+    )
+
     # ── Derived helpers ───────────────────────────────────────────────────────
 
     @field_validator("JWT_PUBLIC_KEY", mode="before")
@@ -125,6 +131,24 @@ class Settings(BaseSettings):
     def normalise_public_key(cls, v: str) -> str:
         """Replace literal \\n with real newlines so PEM blocks work correctly."""
         return v.replace("\\n", "\n")
+
+    @field_validator("CORS_ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: any) -> List[str]:
+        """Support both JSON list format and comma-separated string format in environment variables."""
+        if isinstance(v, str):
+            import json
+            v = v.strip()
+            if not v:
+                return []
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
+
 
     def tenant_suspension_key(self, tenant_id: str) -> str:
         """Return the Redis key for a tenant's suspension flag."""
