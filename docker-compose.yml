@@ -1,6 +1,9 @@
 # ============================================================
 # NeuralOps — Production Docker Compose
-# Services: PostgreSQL (x2), Redis, Django/Gunicorn, FastAPI/Uvicorn, Nginx
+# Services: PostgreSQL (x2), Redis, Django/Gunicorn, FastAPI/Uvicorn,
+#           Kong API Gateway, Kafka, Debezium, Elasticsearch,
+#           Celery Worker (Django), Celery Beat (Django),
+#           Celery Worker (FastAPI) ← Phase 3 addition, MinIO
 # ============================================================
 
 services:
@@ -27,7 +30,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-  
+
   # ── DB-2 (FastAPI Database) ──────────────────────────────────────────────────
   fastapi_db:
     image: postgres:16-alpine
@@ -101,31 +104,27 @@ services:
       start_period: 60s
 
   # ── Kong API Gateway (DB-less declarative mode) ─────────────────────────────
-  # Replaces Nginx. Handles JWT validation (RS256), rate limiting, and routing:
-  #   /api/v1/*, /ws/*, /health → FastAPI
-  #   everything else           → Django
   kong:
     image: kong:3.7-ubuntu
     container_name: neuralops_kong
     restart: unless-stopped
     environment:
-      KONG_DATABASE: "off"                          # DB-less declarative mode
+      KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /usr/local/kong/declarative/kong.yml
       KONG_PROXY_ACCESS_LOG: /dev/stdout
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_LISTEN: "0.0.0.0:8444"             # Admin API (internal only)
-      KONG_PROXY_LISTEN: "0.0.0.0:80"               # Public proxy port
+      KONG_ADMIN_LISTEN: "0.0.0.0:8444"
+      KONG_PROXY_LISTEN: "0.0.0.0:80"
       KONG_LOG_LEVEL: info
-      # --- Memory Optimizations ---
-      KONG_NGINX_WORKER_PROCESSES: "1"              # Prevent auto-scaling workers on multi-core host
-      KONG_MEM_CACHE_SIZE: "32m"                    # Reduce LMDB cache size from 128m
+      KONG_NGINX_WORKER_PROCESSES: "1"
+      KONG_MEM_CACHE_SIZE: "32m"
     volumes:
       - ./kong/kong.yml:/usr/local/kong/declarative/kong.yml:ro
     ports:
-      - "80:80"                                     # public traffic
-      - "127.0.0.1:8444:8444"                       # Kong Admin API (secure local bind)
+      - "80:80"
+      - "127.0.0.1:8444:8444"
     networks:
       - neuralops_network
     depends_on:
@@ -139,7 +138,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-
 
   # ── FastAPI / Uvicorn ───────────────────────────────────────────────────────
   fastapi:
@@ -157,6 +155,8 @@ services:
       DEBUG: "false"
       DATABASE_URL: postgresql+asyncpg://${FASTAPI_DB_USER:-neuralops_fastapi}:${FASTAPI_DB_PASSWORD:-fastapi_password}@fastapi_db:5432/${FASTAPI_DB_NAME:-neuralops_fastapi_db}
       REDIS_URL: redis://redis:6379/1
+      CELERY_BROKER_URL: redis://redis:6379/2
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
       JWT_ALGORITHM: RS256
       TENANT_SUSPENSION_REDIS_PREFIX: tenant
@@ -183,8 +183,7 @@ services:
     restart: unless-stopped
     env_file: .env.docker
     environment:
-      # KRaft mode — no Zookeeper
-      CLUSTER_ID: ${KAFKA_CLUSTER_ID}   # cp-kafka entrypoint requires CLUSTER_ID
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
@@ -193,18 +192,15 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      # Storage
       KAFKA_LOG_DIRS: /var/lib/kafka/data
-      # Replication (single node dev — all set to 1)
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_MIN_INSYNC_REPLICAS: 1
-      # Performance tuning for dev
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_LOG_RETENTION_HOURS: 168
-      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID} # fixed ID for dev stability
+      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID}
     volumes:
       - kafka_data:/var/lib/kafka/data
     networks:
@@ -215,9 +211,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-
-
-  
 
   # ── Debezium Connect ─────────────────────────────────────────────────────────
   debezium:
@@ -266,8 +259,8 @@ services:
       retries: 5
       start_period: 20s
 
-
-  # ── Celery Worker ──────────────────────────────────────────────────────────
+  # ── Celery Worker — Django (Core Management tasks) ─────────────────────────
+  # Broker: Redis db 0  |  Tasks: analytics, notifications, Stripe sync
   celery-worker:
     build:
       context: ./django
@@ -286,8 +279,7 @@ services:
       kafka:
         condition: service_healthy
 
-  # ── Celery Beat ──────────────────────────────────────────────────────────
-
+  # ── Celery Beat — Django (Periodic task scheduler) ─────────────────────────
   celery-beat:
     build:
       context: ./django
@@ -307,7 +299,57 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    
+
+  # ── Celery Worker — FastAPI (AI + Background Tasks) ─────────────────────────
+  # Broker: Redis db 2  |  Tasks: index_code, parse_log, run_agent (Phase 4+)
+  #
+  # Completely isolated from the Django Celery worker above:
+  #   - Django workers: Redis db 0  (CELERY_BROKER_URL=redis://redis:6379/0)
+  #   - FastAPI workers: Redis db 2 (CELERY_BROKER_URL=redis://redis:6379/2)
+  #
+  # This separation ensures:
+  #   1. Queue depth metrics are accurate per-service.
+  #   2. KEDA ScaledObjects can target the correct Redis key prefix.
+  #   3. A stalled FastAPI task queue cannot block Django tasks or vice-versa.
+  celery-worker-fastapi:
+    build:
+      context: ./fastapi
+      dockerfile: Dockerfile
+      target: production
+    container_name: neuralops_celery_worker_fastapi
+    restart: unless-stopped
+    command: >
+      celery -A app.worker.celery_app worker
+      --loglevel=${CELERY_LOG_LEVEL:-info}
+      --concurrency=4
+      --queues=celery
+    env_file: .env.docker
+    environment:
+      # Celery isolated to Redis db 2 — never conflicts with Django (db 0)
+      CELERY_BROKER_URL: "redis://redis:6379/2"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/2"
+      # FastAPI DB-2 connection for tasks that write to code_index / incidents
+      DATABASE_URL: postgresql+asyncpg://${FASTAPI_DB_USER:-neuralops_fastapi}:${FASTAPI_DB_PASSWORD:-fastapi_password}@fastapi_db:5432/${FASTAPI_DB_NAME:-neuralops_fastapi_db}
+      REDIS_URL: redis://redis:6379/1
+      APP_ENV: production
+      APP_NAME: neuralops-fastapi-worker
+      APP_VERSION: 1.0.0
+      DEBUG: "false"
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
+      JWT_ALGORITHM: RS256
+      TENANT_SUSPENSION_REDIS_PREFIX: tenant
+      TENANT_SUSPENSION_REDIS_SUFFIX: suspended
+    volumes:
+      # Hot-reload volume for local development — source changes reflect
+      # immediately without requiring an image rebuild.
+      - ./fastapi:/app
+    networks:
+      - neuralops_network
+    depends_on:
+      redis:
+        condition: service_healthy
+      fastapi_db:
+        condition: service_healthy
 
   # ── MinIO (Local S3 Mock Object Storage) ────────────────────────────────────
   minio:
@@ -315,8 +357,8 @@ services:
     container_name: neuralops_minio
     restart: unless-stopped
     ports:
-      - "9000:9000"       # S3 API Port
-      - "9001:9001"       # Console Web Dashboard Port
+      - "9000:9000"
+      - "9001:9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadminpassword

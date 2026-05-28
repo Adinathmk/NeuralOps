@@ -22,9 +22,14 @@ from alembic import context
 
 # ── Import our models so Alembic auto-detects schema changes ─────────────────
 # These imports side-effect populate Base.metadata.
+# IMPORTANT: every new model module MUST be imported here — Alembic can only
+# autogenerate migrations for tables whose metadata has been registered by
+# the time env.py runs.
 from app.database.base import Base
-import app.models.outbox  # noqa: F401
-import app.models.snapshots  # noqa: F401
+import app.models.outbox      # noqa: F401
+import app.models.snapshots   # noqa: F401
+import app.models.logs        # noqa: F401
+import app.models.code_index  # noqa: F401  ← Phase 3: CodeIndex / code_index table
 
 from app.core.config import get_settings
 
@@ -87,4 +92,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-

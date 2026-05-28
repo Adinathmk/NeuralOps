@@ -43,8 +43,27 @@ class Settings(BaseSettings):
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     REDIS_URL: str = Field(
-        default="redis://localhost:6379/1",
+        default="redis://redis:6379/1",
         description="Redis connection URL used for caching and suspension flags.",
+    )
+
+    # ── Celery (FastAPI worker — isolated on Redis db 2) ──────────────────────
+    # Django workers use Redis db 0.  FastAPI workers use Redis db 2.
+    # This hard-isolation prevents cross-service task routing and allows
+    # accurate per-service queue-depth metrics for KEDA autoscaling.
+    CELERY_BROKER_URL: str = Field(
+        default="redis://redis:6379/2",
+        description=(
+            "Celery broker URL for FastAPI background workers. "
+            "Intentionally isolated to Redis db 2 (Django uses db 0)."
+        ),
+    )
+    CELERY_RESULT_BACKEND: str = Field(
+        default="redis://redis:6379/2",
+        description=(
+            "Celery result backend URL for FastAPI background workers. "
+            "Matches CELERY_BROKER_URL — both on Redis db 2."
+        ),
     )
 
     # ── JWT (RS256 — PUBLIC KEY ONLY) ─────────────────────────────────────────

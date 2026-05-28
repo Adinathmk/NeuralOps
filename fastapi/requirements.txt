@@ -30,3 +30,15 @@ aiokafka==0.11.0
 # ── AWS S3 (async — Phase 2 log ingestion) ─────────────────────────────────────
 aioboto3==13.2.0
 botocore>=1.35.0
+
+# ── Task Queue / Celery ────────────────────────────────────────────────────────
+# Isolated to Redis db 2 — completely separate from Django workers (db 0).
+# The [redis] extra installs kombu + redis transport dependencies.
+celery[redis]==5.4.0
+
+# ── Multi-Language AST Parsing (Phase 3) ──────────────────────────────────────
+# tree-sitter core library plus language grammars for Python and Java.
+# C-bindings are compiled once during docker image build — no runtime overhead.
+tree-sitter==0.23.2
+tree-sitter-python==0.23.2
+tree-sitter-java==0.23.2
