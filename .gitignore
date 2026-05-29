@@ -1,47 +1,61 @@
-# Python
+# ============================================================
+# NeuralOps — Git Ignore Configuration
+# ============================================================
+
+# ── Python Cache & Compiled Files ────────────────────────────
 __pycache__/
 *.py[cod]
+*$py.class
 *.so
 .Python
-build/
-dist/
-*.egg-info/
-.installed.cfg
-*.egg
 
-# Virtual Environment
+# ── Virtual Environments ──────────────────────────────────────
 venv/
 env/
 ENV/
+fvenv/
+.venv/
+.env/
 
-# IDE
+# ── Nox Automation & Testing Cache ────────────────────────────
+.nox/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Application State, Statics & Logs ─────────────────────────
+logs/
+*.log
+staticfiles/
+mediafiles/
+media/
+django/staticfiles/
+django/mediafiles/
+django/logs/
+fastapi/htmlcov/
+django/htmlcov/
+
+# ── Databases (Local Development) ─────────────────────────────
+*.sqlite3
+*.db
+db.sqlite3
+
+# ── Environment Secrets (Never Commit Real Credentials) ────────
+.env
+.env.local
+.env*.local
+.env.docker
+
+# ── IDEs, Editors & OS Files ──────────────────────────────────
 .vscode/
 .idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 *.swp
 *.swo
 *~
 .DS_Store
-
-# Environment
-.env
-.env.local
-.env*.local
-
-# Logs
-*.log
-
-# Database
-*.sqlite3
-*.db
-EOF
-
-
-staticfiles/
-media/
-__pycache__/
-*.pyc
-venv/
-.env
-db.sqlite3
-# Docker env (never commit real secrets)
-.env.docker
+Thumbs.db
+desktop.ini

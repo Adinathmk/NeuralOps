@@ -36,6 +36,7 @@ logger = get_logger(__name__)
 
 # ── Standard error response builder ──────────────────────────────────────────
 
+
 def _error_response(
     status_code: int,
     message: str,
@@ -62,6 +63,7 @@ def _get_request_id(request: Request) -> Optional[str]:
 
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
+
 
 async def neuralops_exception_handler(
     request: Request, exc: NeuralOpsError
@@ -158,9 +160,7 @@ async def validation_exception_handler(
     )
 
 
-async def unhandled_exception_handler(
-    request: Request, exc: Exception
-) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
     Catch-all for any exception not handled by the above handlers.
     Logs the full traceback and returns a generic 500 response.
@@ -180,6 +180,7 @@ async def unhandled_exception_handler(
 
 
 # ── Registration ──────────────────────────────────────────────────────────────
+
 
 def register_exception_handlers(app: FastAPI) -> None:
     """

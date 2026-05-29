@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Public data contract
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SymbolInfo:
     """
@@ -89,11 +90,14 @@ def _load_python_language():
         try:
             import tree_sitter_python as tspython
             from tree_sitter import Language
+
             _python_language = Language(tspython.language())
             logger.debug("tree_sitter_python_language_loaded")
         except Exception as exc:
             logger.error("tree_sitter_python_load_failed", exc_info=True)
-            raise RuntimeError(f"Failed to load tree-sitter Python grammar: {exc}") from exc
+            raise RuntimeError(
+                f"Failed to load tree-sitter Python grammar: {exc}"
+            ) from exc
     return _python_language
 
 
@@ -104,11 +108,14 @@ def _load_java_language():
         try:
             import tree_sitter_java as tsjava
             from tree_sitter import Language
+
             _java_language = Language(tsjava.language())
             logger.debug("tree_sitter_java_language_loaded")
         except Exception as exc:
             logger.error("tree_sitter_java_load_failed", exc_info=True)
-            raise RuntimeError(f"Failed to load tree-sitter Java grammar: {exc}") from exc
+            raise RuntimeError(
+                f"Failed to load tree-sitter Java grammar: {exc}"
+            ) from exc
     return _java_language
 
 
@@ -116,9 +123,12 @@ def _load_java_language():
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _node_text(node, source_bytes: bytes) -> str:
     """Return the UTF-8 decoded text slice for a tree-sitter node."""
-    return source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    return source_bytes[node.start_byte : node.end_byte].decode(
+        "utf-8", errors="replace"
+    )
 
 
 def _get_name(node, source_bytes: bytes) -> Optional[str]:
@@ -221,14 +231,16 @@ def _extract_python_symbols(
                 _collect_calls_python(child, source_bytes, raw_calls)
                 filtered_calls = _filter_calls(raw_calls, external_roots)
 
-                symbols.append(SymbolInfo(
-                    symbol_name=name,
-                    chunk_type="class",
-                    start_line=child.start_point[0] + 1,
-                    end_line=child.end_point[0] + 1,
-                    calls=filtered_calls,
-                    imports=imports,
-                ))
+                symbols.append(
+                    SymbolInfo(
+                        symbol_name=name,
+                        chunk_type="class",
+                        start_line=child.start_point[0] + 1,
+                        end_line=child.end_point[0] + 1,
+                        calls=filtered_calls,
+                        imports=imports,
+                    )
+                )
                 # Recurse into the class body to find methods.
                 _visit_definitions(child, class_name=name)
 
@@ -240,14 +252,18 @@ def _extract_python_symbols(
                 _collect_calls_python(child, source_bytes, raw_calls)
                 filtered_calls = _filter_calls(raw_calls, external_roots)
 
-                symbols.append(SymbolInfo(
-                    symbol_name=qualified,
-                    chunk_type="function",
-                    start_line=child.start_point[0] + 1,
-                    end_line=child.end_point[0] + 1,
-                    calls=filtered_calls,
-                    imports=imports,
-                ))
+                symbols.append(
+                    SymbolInfo(
+                        symbol_name=qualified,
+                        chunk_type="function",
+                        start_line=child.start_point[0] + 1,
+                        end_line=child.end_point[0] + 1,
+                        calls=filtered_calls,
+                        imports=imports,
+                    )
+                )
+            else:
+                _visit_definitions(child, class_name=class_name)
 
     _visit_definitions(root)
     return symbols
@@ -336,14 +352,16 @@ def _extract_java_symbols(
                 _collect_calls_java(child, source_bytes, raw_calls)
                 filtered_calls = _filter_calls(raw_calls, external_roots)
 
-                symbols.append(SymbolInfo(
-                    symbol_name=name,
-                    chunk_type="class",
-                    start_line=child.start_point[0] + 1,
-                    end_line=child.end_point[0] + 1,
-                    calls=filtered_calls,
-                    imports=imports,
-                ))
+                symbols.append(
+                    SymbolInfo(
+                        symbol_name=name,
+                        chunk_type="class",
+                        start_line=child.start_point[0] + 1,
+                        end_line=child.end_point[0] + 1,
+                        calls=filtered_calls,
+                        imports=imports,
+                    )
+                )
                 # Recurse into class body for methods.
                 _visit(child, class_name=name)
 
@@ -355,14 +373,16 @@ def _extract_java_symbols(
                 _collect_calls_java(child, source_bytes, raw_calls)
                 filtered_calls = _filter_calls(raw_calls, external_roots)
 
-                symbols.append(SymbolInfo(
-                    symbol_name=qualified,
-                    chunk_type="function",
-                    start_line=child.start_point[0] + 1,
-                    end_line=child.end_point[0] + 1,
-                    calls=filtered_calls,
-                    imports=imports,
-                ))
+                symbols.append(
+                    SymbolInfo(
+                        symbol_name=qualified,
+                        chunk_type="function",
+                        start_line=child.start_point[0] + 1,
+                        end_line=child.end_point[0] + 1,
+                        calls=filtered_calls,
+                        imports=imports,
+                    )
+                )
             else:
                 # Continue descending (e.g. into block, program root).
                 _visit(child, class_name=class_name)
@@ -374,6 +394,7 @@ def _extract_java_symbols(
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
 
 def _filter_calls(
     raw_calls: List[str],
@@ -399,6 +420,7 @@ def _filter_calls(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 class ASTIndexer:
     """

@@ -61,6 +61,7 @@ _settings = get_settings()
 
 # ── S3 helpers ─────────────────────────────────────────────────────────────────
 
+
 def _build_s3_key(tenant_id: str, incident_id: UUID) -> str:
     """
     Construct the canonical S3 object key for a context buffer payload.
@@ -112,7 +113,9 @@ async def _upload_to_s3(
     )
 
     try:
-        async with session.client("s3", endpoint_url=_settings.AWS_S3_ENDPOINT_URL) as s3_client:
+        async with session.client(
+            "s3", endpoint_url=_settings.AWS_S3_ENDPOINT_URL
+        ) as s3_client:
             await s3_client.put_object(
                 Bucket=_settings.AWS_S3_BUCKET_NAME,
                 Key=s3_key,
@@ -159,13 +162,12 @@ async def _upload_to_s3(
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Object storage is temporarily unavailable. Please retry."
-            ),
+            detail=("Object storage is temporarily unavailable. Please retry."),
         ) from exc
 
 
 # ── Route ──────────────────────────────────────────────────────────────────────
+
 
 @router.post(
     "/ingest/logs",

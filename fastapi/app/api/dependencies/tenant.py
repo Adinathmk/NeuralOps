@@ -64,6 +64,7 @@ _redis_client: Optional[aioredis.Redis] = None
 
 # ── Redis client singleton ─────────────────────────────────────────────────────
 
+
 def get_redis() -> aioredis.Redis:
     """Return the module-level async Redis client, creating it on first call."""
     global _redis_client
@@ -79,6 +80,7 @@ def get_redis() -> aioredis.Redis:
 
 
 # ── Suspension check (Layer 1) ─────────────────────────────────────────────────
+
 
 async def _check_suspension_flag(tenant_id: str) -> None:
     """
@@ -220,6 +222,7 @@ async def _populate_cache(tenant_id: str, snapshot: TenantSnapshot) -> None:
 
 # ── Postgres snapshot lookup (Layer 2) ────────────────────────────────────────
 
+
 async def _get_tenant_snapshot(
     tenant_id: str,
     db: AsyncSession,
@@ -241,9 +244,7 @@ async def _get_tenant_snapshot(
     try:
         tenant_uuid = uuid.UUID(tenant_id)
     except ValueError as exc:
-        raise TenantNotFoundError(
-            f"'{tenant_id}' is not a valid tenant UUID."
-        ) from exc
+        raise TenantNotFoundError(f"'{tenant_id}' is not a valid tenant UUID.") from exc
 
     # ── Step 2: Redis L1 cache check ─────────────────────────────────────────
     cached = await _get_cached_snapshot(tenant_id)
@@ -299,6 +300,7 @@ async def _get_tenant_snapshot(
 
 
 # ── Main dependency ────────────────────────────────────────────────────────────
+
 
 async def get_validated_tenant(
     request: Request,

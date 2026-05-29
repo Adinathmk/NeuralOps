@@ -42,10 +42,9 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -60,6 +59,7 @@ router = APIRouter(tags=["webhooks"])
 # Decryption helper (local — does not depend on Django's encryption module)
 # ---------------------------------------------------------------------------
 
+
 def _decrypt_secret(cipher_text: str) -> str:
     """
     Fernet-decrypt a ciphertext using ``settings.FERNET_ENCRYPTION_KEY``.
@@ -69,12 +69,15 @@ def _decrypt_secret(cipher_text: str) -> str:
                      decryption fails (tampered or wrong key).
     """
     settings = get_settings()
-    raw_key = settings.FERNET_ENCRYPTION_KEY if hasattr(settings, "FERNET_ENCRYPTION_KEY") else None
+    raw_key = (
+        settings.FERNET_ENCRYPTION_KEY
+        if hasattr(settings, "FERNET_ENCRYPTION_KEY")
+        else None
+    )
 
     if not raw_key:
         raise ValueError(
-            "FERNET_ENCRYPTION_KEY is not configured. "
-            "Cannot decrypt webhook secret."
+            "FERNET_ENCRYPTION_KEY is not configured. " "Cannot decrypt webhook secret."
         )
     if not cipher_text:
         raise ValueError("cipher_text must not be empty.")
@@ -91,6 +94,7 @@ def _decrypt_secret(cipher_text: str) -> str:
 # ---------------------------------------------------------------------------
 # HMAC verification
 # ---------------------------------------------------------------------------
+
 
 def _verify_signature(
     raw_body: bytes,
@@ -116,7 +120,7 @@ def _verify_signature(
             detail="Malformed X-Hub-Signature-256 header (expected 'sha256=...').",
         )
 
-    received_hex = signature_header[len("sha256="):]
+    received_hex = signature_header[len("sha256=") :]
 
     expected = hmac.new(
         plain_secret.encode("utf-8"),
@@ -135,6 +139,7 @@ def _verify_signature(
 # Tenant lookup
 # ---------------------------------------------------------------------------
 
+
 async def _find_tenant_by_repo_url(
     repo_clone_url: str,
     db: AsyncSession,
@@ -149,9 +154,7 @@ async def _find_tenant_by_repo_url(
     normalised = repo_clone_url.rstrip("/").removesuffix(".git")
 
     result = await db.execute(
-        select(TenantSnapshot).where(
-            TenantSnapshot.github_repo_url.isnot(None)
-        )
+        select(TenantSnapshot).where(TenantSnapshot.github_repo_url.isnot(None))
     )
     snapshots = result.scalars().all()
 
@@ -166,6 +169,7 @@ async def _find_tenant_by_repo_url(
 # ---------------------------------------------------------------------------
 # File-list helpers
 # ---------------------------------------------------------------------------
+
 
 def _collect_changed_files(commits: List[Dict[str, Any]]) -> List[str]:
     """
@@ -200,6 +204,7 @@ def _collect_removed_files(commits: List[Dict[str, Any]]) -> List[str]:
 # Route
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/webhooks/github",
     status_code=status.HTTP_202_ACCEPTED,
@@ -218,7 +223,9 @@ def _collect_removed_files(commits: List[Dict[str, Any]]) -> List[str]:
 )
 async def receive_github_webhook(
     request: Request,
-    x_hub_signature_256: Optional[str] = Header(default=None, alias="x-hub-signature-256"),
+    x_hub_signature_256: Optional[str] = Header(
+        default=None, alias="x-hub-signature-256"
+    ),
     x_github_event: Optional[str] = Header(default=None, alias="x-github-event"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -265,11 +272,7 @@ async def receive_github_webhook(
     repo_info: Dict[str, Any] = payload.get("repository", {})
     # GitHub provides both html_url (https://github.com/org/repo) and
     # clone_url (https://github.com/org/repo.git).  We prefer clone_url.
-    clone_url: str = (
-        repo_info.get("clone_url")
-        or repo_info.get("html_url")
-        or ""
-    )
+    clone_url: str = repo_info.get("clone_url") or repo_info.get("html_url") or ""
 
     if not clone_url:
         raise HTTPException(
@@ -347,7 +350,9 @@ async def receive_github_webhook(
 
     # ── Step 7: Dispatch Celery task ──────────────────────────────────────────
     if changed_files or removed_files:
-        from app.worker.tasks.index_code import index_code  # local import avoids circular
+        from app.worker.tasks.index_code import (  # local import avoids circular
+            index_code,
+        )
 
         index_code.delay(
             tenant_id=str(tenant.tenant_id),

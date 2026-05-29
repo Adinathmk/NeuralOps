@@ -18,7 +18,12 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import app.models.code_index  # noqa: F401  ← Phase 3: CodeIndex / code_index table
+import app.models.logs  # noqa: F401
+import app.models.outbox  # noqa: F401
+import app.models.snapshots  # noqa: F401
 from alembic import context
+from app.core.config import get_settings
 
 # ── Import our models so Alembic auto-detects schema changes ─────────────────
 # These imports side-effect populate Base.metadata.
@@ -26,12 +31,6 @@ from alembic import context
 # autogenerate migrations for tables whose metadata has been registered by
 # the time env.py runs.
 from app.database.base import Base
-import app.models.outbox      # noqa: F401
-import app.models.snapshots   # noqa: F401
-import app.models.logs        # noqa: F401
-import app.models.code_index  # noqa: F401  ← Phase 3: CodeIndex / code_index table
-
-from app.core.config import get_settings
 
 # Alembic Config object (gives access to alembic.ini values)
 config = context.config
@@ -49,6 +48,7 @@ target_metadata = Base.metadata
 
 # ── Offline migrations ────────────────────────────────────────────────────────
 
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (generates SQL without DB connection)."""
     url = config.get_main_option("sqlalchemy.url")
@@ -63,6 +63,7 @@ def run_migrations_offline() -> None:
 
 
 # ── Online migrations ─────────────────────────────────────────────────────────
+
 
 def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)

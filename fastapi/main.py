@@ -35,24 +35,22 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# ── Routers ───────────────────────────────────────────────────────────────────
+from app.api.v1.health import router as health_router
+from app.api.v1.ingest import router as ingest_router  # ← Phase 2
+from app.api.v1.webhooks import router as webhooks_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.database.session import engine
-
-# ── Model imports (register with SQLAlchemy metadata before Alembic / queries) ─
-import app.models.outbox       # noqa: F401
-import app.models.snapshots    # noqa: F401
-import app.models.logs         # noqa: F401  ← Phase 2: IngestedLogMetadata
-import app.models.code_index   # noqa: F401  ← ADD  (registers CodeIndex with Base)
-
 from app.middleware.auth import JWTAuthMiddleware
 from app.middleware.error_handler import register_exception_handlers
 from app.middleware.tenant_rls import TenantRLSMiddleware
 
-# ── Routers ───────────────────────────────────────────────────────────────────
-from app.api.v1.health import router as health_router
-from app.api.v1.ingest import router as ingest_router   # ← Phase 2
-from app.api.v1.webhooks import router as webhooks_router 
+# ── Model imports (register with SQLAlchemy metadata before Alembic / queries) ─
+from app.models import code_index  # noqa: F401
+from app.models import logs  # noqa: F401
+from app.models import outbox  # noqa: F401
+from app.models import snapshots  # noqa: F401
 
 # ── Background consumers ──────────────────────────────────────────────────────
 from app.queue.kafka.consumers.config_sync import ConfigSyncConsumer
@@ -64,6 +62,7 @@ _config_sync_consumer = ConfigSyncConsumer()
 
 
 # ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -171,5 +170,5 @@ app.add_middleware(TenantRLSMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health_router)
-app.include_router(ingest_router, prefix="/api/v1")   # ← Phase 2 wired in
-app.include_router(webhooks_router, prefix="/api/v1")   
+app.include_router(ingest_router, prefix="/api/v1")  # ← Phase 2 wired in
+app.include_router(webhooks_router, prefix="/api/v1")

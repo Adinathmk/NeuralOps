@@ -195,3 +195,13 @@ class CacheManager:
 
 # Singleton instance
 cache_manager = CacheManager()
+
+
+def cache_tenant_config(tenant_id, **config_data):
+    """Module-level wrapper for cache_manager.cache_tenant_config."""
+    cache_manager.cache_tenant_config(tenant_id, config_data)
+
+
+def invalidate_tenant_config(tenant_id):
+    """Module-level wrapper for cache_manager.invalidate_tenant_config."""
+    cache_manager.invalidate_tenant_config(tenant_id)

@@ -20,8 +20,9 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0002"
 down_revision: Union[str, None] = "0001"
@@ -116,6 +117,10 @@ def downgrade() -> None:
         "DROP POLICY IF EXISTS rls_ingested_log_metadata_tenant_isolation "
         "ON ingested_log_metadata;"
     )
-    op.drop_index("ix_ingested_log_metadata_created_at", table_name="ingested_log_metadata")
-    op.drop_index("ix_ingested_log_metadata_tenant_id", table_name="ingested_log_metadata")
+    op.drop_index(
+        "ix_ingested_log_metadata_created_at", table_name="ingested_log_metadata"
+    )
+    op.drop_index(
+        "ix_ingested_log_metadata_tenant_id", table_name="ingested_log_metadata"
+    )
     op.drop_table("ingested_log_metadata")

@@ -7,21 +7,25 @@ Run this inside the FastAPI container:
 """
 
 import asyncio
-import json
 import hashlib
 import hmac
-import uuid
-import httpx
+import json
 import os
+import uuid
+
+import httpx
 from cryptography.fernet import Fernet
 from sqlalchemy import select
+
 from app.core.config import get_settings
 from app.database.session import AsyncSessionLocal
 from app.models.snapshots import TenantSnapshot
 
 # Raw configuration
 MOCK_TENANT_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
-MOCK_REPO_URL = "https://github.com/Adinathmk/ast-test-repo-For-neural-ops-code-indexing-"
+MOCK_REPO_URL = (
+    "https://github.com/Adinathmk/ast-test-repo-For-neural-ops-code-indexing-"
+)
 MOCK_WEBHOOK_SECRET = "my_webhook_secret_123"
 MOCK_PAT = os.getenv("GITHUB_PAT", "DUMMY_PAT_FOR_TESTING_1234567890")
 
@@ -77,9 +81,10 @@ async def setup_mock_tenant():
         await session.commit()
         print("✔ Mock tenant snapshot saved successfully!")
 
+
 async def trigger_webhook():
     print("\n--- Step 2: Sending Mock GitHub Push Event to Webhook Endpoint ---")
-    
+
     # Mock payload matching a standard GitHub push webhook
     payload = {
         "ref": "refs/heads/main",
@@ -88,33 +93,29 @@ async def trigger_webhook():
             "clone_url": MOCK_REPO_URL,
             "html_url": MOCK_REPO_URL,
             "name": "test-repo",
-            "owner": {
-                "name": "test-owner"
-            }
+            "owner": {"name": "test-owner"},
         },
         "commits": [
             {
                 "id": "abc123commitsha",
                 "added": ["app/main.py"],
                 "modified": ["README.md"],
-                "removed": ["old_file.py"]
+                "removed": ["old_file.py"],
             }
-        ]
+        ],
     }
 
     body_bytes = json.dumps(payload).encode("utf-8")
 
     # Generate HMAC-SHA256 signature
     signature = hmac.new(
-        MOCK_WEBHOOK_SECRET.encode("utf-8"),
-        body_bytes,
-        hashlib.sha256
+        MOCK_WEBHOOK_SECRET.encode("utf-8"), body_bytes, hashlib.sha256
     ).hexdigest()
 
     headers = {
         "Content-Type": "application/json",
         "X-GitHub-Event": "push",
-        "X-Hub-Signature-256": f"sha256={signature}"
+        "X-Hub-Signature-256": f"sha256={signature}",
     }
 
     # Post to localhost inside container
@@ -122,16 +123,17 @@ async def trigger_webhook():
         response = await client.post(
             "http://localhost:8001/api/v1/webhooks/github",
             content=body_bytes,
-            headers=headers
+            headers=headers,
         )
 
     print(f"Response Status Code: {response.status_code}")
     print(f"Response Body: {response.text}")
-    
+
     if response.status_code == 202:
         print("✔ Webhook successfully accepted (202)!")
     else:
         print("✘ Webhook failed!")
+
 
 async def verify_db_updates():
     print("\n--- Step 3: Verifying database updates from Celery task execution ---")
@@ -146,16 +148,23 @@ async def verify_db_updates():
 
         print(f"Final Tenant Indexing Status: {tenant.github_indexing_status}")
         print(f"Final Last Indexed Commit   : {tenant.github_last_indexed_commit}")
-        
-        if tenant.github_indexing_status in ("indexed", "failed") and tenant.github_last_indexed_commit == "abc123commitsha":
-            print("✔ Database state was successfully updated by Celery task! (Transitioned to indexed/failed as expected)")
+
+        if (
+            tenant.github_indexing_status in ("indexed", "failed")
+            and tenant.github_last_indexed_commit == "abc123commitsha"
+        ):
+            print(
+                "✔ Database state was successfully updated by Celery task! (Transitioned to indexed/failed as expected)"
+            )
         else:
             print("✘ Database state was NOT updated as expected.")
+
 
 async def main():
     await setup_mock_tenant()
     await trigger_webhook()
     await verify_db_updates()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

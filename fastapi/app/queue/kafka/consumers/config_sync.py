@@ -194,8 +194,12 @@ class ConfigSyncConsumer:
                         # Disable auto-commit so we control exactly when offsets are
                         # committed: only AFTER the DB-2 transaction succeeds.
                         enable_auto_commit=False,
-                        value_deserializer=lambda raw: raw.decode("utf-8") if raw else None,
-                        key_deserializer=lambda raw: raw.decode("utf-8") if raw else None,
+                        value_deserializer=lambda raw: (
+                            raw.decode("utf-8") if raw else None
+                        ),
+                        key_deserializer=lambda raw: (
+                            raw.decode("utf-8") if raw else None
+                        ),
                     )
                 await self._consumer.start()
                 logger.info(
@@ -393,7 +397,9 @@ class ConfigSyncConsumer:
                         return  # Discard stale event
 
                     # ── Update core tenant fields ─────────────────────────────
-                    existing.plan_tier = tenant_data.get("plan_tier", existing.plan_tier)
+                    existing.plan_tier = tenant_data.get(
+                        "plan_tier", existing.plan_tier
+                    )
                     existing.vector_namespace = tenant_data.get(
                         "vector_namespace", existing.vector_namespace
                     )
@@ -699,9 +705,7 @@ class ConfigSyncConsumer:
         session: AsyncSession, playbook_id: uuid.UUID
     ) -> Optional[PlaybookSnapshot]:
         result = await session.execute(
-            select(PlaybookSnapshot).where(
-                PlaybookSnapshot.playbook_id == playbook_id
-            )
+            select(PlaybookSnapshot).where(PlaybookSnapshot.playbook_id == playbook_id)
         )
         return result.scalar_one_or_none()
 

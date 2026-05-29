@@ -18,10 +18,7 @@ from jose import JWTError, jwt
 from jose.exceptions import ExpiredSignatureError
 
 from app.core.config import get_settings
-from app.core.exceptions import (
-    TokenExpiredError,
-    TokenInvalidError,
-)
+from app.core.exceptions import TokenExpiredError, TokenInvalidError
 
 # ---------------------------------------------------------------------------
 # Public helpers
@@ -46,7 +43,7 @@ def decode_token(token: str) -> Dict[str, Any]:
             algorithms=[settings.JWT_ALGORITHM],
             options={
                 "require_exp": True,
-                "require_sub": False,   # Django embeds user_id, not sub
+                "require_sub": False,  # Django embeds user_id, not sub
                 "verify_exp": True,
             },
         )

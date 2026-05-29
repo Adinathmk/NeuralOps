@@ -70,8 +70,8 @@ celery_app.conf.broker_connection_retry_on_startup = True
 # ── Time limits ───────────────────────────────────────────────────────────────
 # Hard kill at 5 minutes (matches Django worker config from Section 6).
 # SoftTimeLimitExceeded is raised at 4 minutes so tasks can clean up.
-celery_app.conf.task_time_limit = 300        # seconds — hard kill
-celery_app.conf.task_soft_time_limit = 240   # seconds — soft signal
+celery_app.conf.task_time_limit = 300  # seconds — hard kill
+celery_app.conf.task_soft_time_limit = 240  # seconds — soft signal
 
 # ── Retry policy defaults ─────────────────────────────────────────────────────
 # Individual task classes may override max_retries.  The default backoff

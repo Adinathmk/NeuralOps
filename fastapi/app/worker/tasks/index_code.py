@@ -88,6 +88,7 @@ _INDEXER = ASTIndexer()
 # Decryption helper
 # ---------------------------------------------------------------------------
 
+
 def _decrypt(cipher_text: str) -> str:
     """
     Fernet-decrypt *cipher_text* using the service's ``FERNET_ENCRYPTION_KEY``.
@@ -113,6 +114,7 @@ def _decrypt(cipher_text: str) -> str:
 # ---------------------------------------------------------------------------
 # S3 helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_s3_key(
     tenant_id: str,
@@ -165,6 +167,7 @@ async def _upload_file_to_s3(
 # Redis cache invalidation helper
 # ---------------------------------------------------------------------------
 
+
 async def _invalidate_redis_cache(s3_key: str) -> None:
     """
     Delete the Redis L1 file-content cache entry ``code:{s3_key}``.
@@ -200,6 +203,7 @@ async def _invalidate_redis_cache(s3_key: str) -> None:
 # ---------------------------------------------------------------------------
 # Database helpers — code_index CRUD
 # ---------------------------------------------------------------------------
+
 
 async def _delete_file_rows(
     session: AsyncSession,
@@ -255,6 +259,7 @@ async def _insert_symbols(
 # Tenant snapshot helpers
 # ---------------------------------------------------------------------------
 
+
 async def _get_tenant_snapshot(
     tenant_id: uuid.UUID,
 ) -> Optional[TenantSnapshot]:
@@ -299,6 +304,7 @@ async def _update_indexing_status(
 # ---------------------------------------------------------------------------
 # GitHub API helpers
 # ---------------------------------------------------------------------------
+
 
 def _github_headers(pat: str) -> Dict[str, str]:
     return {
@@ -396,6 +402,7 @@ async def _fetch_file_content(
 # Core async logic — initial indexing
 # ---------------------------------------------------------------------------
 
+
 async def _run_initial_index(
     tenant_id: uuid.UUID,
     repo_url: str,
@@ -444,14 +451,14 @@ async def _run_initial_index(
         # GitHub tarballs wrap files in a top-level directory like
         # ``{owner}-{repo}-{sha}/``.  Find that directory.
         extracted_dirs = [
-            d for d in tmp_dir.iterdir()
-            if d.is_dir() and d.name != "__MACOSX"
+            d for d in tmp_dir.iterdir() if d.is_dir() and d.name != "__MACOSX"
         ]
         repo_root = extracted_dirs[0] if extracted_dirs else tmp_dir
 
         # ── Walk files ────────────────────────────────────────────────────────
         all_files = [
-            p for p in repo_root.rglob("*")
+            p
+            for p in repo_root.rglob("*")
             if p.is_file() and p.suffix in SUPPORTED_EXTENSIONS
         ]
 
@@ -548,6 +555,7 @@ async def _run_initial_index(
 # Core async logic — incremental indexing
 # ---------------------------------------------------------------------------
 
+
 async def _run_incremental_index(
     tenant_id: uuid.UUID,
     repo_url: str,
@@ -610,7 +618,9 @@ async def _run_incremental_index(
 
         try:
             # Fetch file content from GitHub.
-            file_bytes = await _fetch_file_content(owner, repo, file_path, commit_sha, pat)
+            file_bytes = await _fetch_file_content(
+                owner, repo, file_path, commit_sha, pat
+            )
             if not file_bytes:
                 logger.warning(
                     "incremental_index_empty_file",
@@ -732,6 +742,7 @@ async def _run_incremental_index(
 # Entry-point dispatcher — runs the right coroutine based on is_initial
 # ---------------------------------------------------------------------------
 
+
 async def _run_index(
     tenant_id_str: str,
     repo_url: str,
@@ -810,6 +821,7 @@ async def _run_index(
 # Celery task
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(
     name="app.worker.tasks.index_code.index_code",
     bind=True,
@@ -824,10 +836,10 @@ async def _run_index(
         TimeoutError,
         OSError,
     ),
-    max_retries=10,         # code indexing tolerates longer delays
-    default_retry_delay=10, # seconds; Celery applies exponential backoff
-    soft_time_limit=540,    # 9 minutes soft limit (SoftTimeLimitExceeded)
-    time_limit=600,         # 10 minutes hard kill
+    max_retries=10,  # code indexing tolerates longer delays
+    default_retry_delay=10,  # seconds; Celery applies exponential backoff
+    soft_time_limit=540,  # 9 minutes soft limit (SoftTimeLimitExceeded)
+    time_limit=600,  # 10 minutes hard kill
 )
 def index_code(
     self,

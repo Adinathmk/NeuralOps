@@ -114,6 +114,7 @@ class OutboxEvent(Base):
 
 # ── Convenience helper ────────────────────────────────────────────────────────
 
+
 def write_outbox(
     session: Session,
     topic: str,

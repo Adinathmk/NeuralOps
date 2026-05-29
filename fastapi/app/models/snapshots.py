@@ -55,8 +55,8 @@ from sqlalchemy.sql import func
 
 from app.database.base import Base
 
-
 # ── TenantSnapshot ────────────────────────────────────────────────────────────
+
 
 class TenantSnapshot(Base):
     """
@@ -195,6 +195,7 @@ class TenantSnapshot(Base):
 
 # ── AlertRuleSnapshot ─────────────────────────────────────────────────────────
 
+
 class AlertRuleSnapshot(Base):
     """
     Local projection of alert rules owned by Django.
@@ -248,6 +249,7 @@ class AlertRuleSnapshot(Base):
 
 
 # ── PlaybookSnapshot ──────────────────────────────────────────────────────────
+
 
 class PlaybookSnapshot(Base):
     """
@@ -314,23 +316,15 @@ _RLS_TABLES = [
 def _create_rls_policies(target, connection, **kwargs) -> None:
     """Emit RLS ENABLE and policy CREATE statements after table creation."""
     table_name = target.name
-    tenant_col = next(
-        (col for t, col in _RLS_TABLES if t == table_name), None
-    )
+    tenant_col = next((col for t, col in _RLS_TABLES if t == table_name), None)
     if not tenant_col:
         return
 
-    connection.execute(
-        text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;")
-    )
-    connection.execute(
-        text(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY;")
-    )
+    connection.execute(text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;"))
+    connection.execute(text(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY;"))
 
     policy_name = f"rls_{table_name}_tenant_isolation"
-    connection.execute(
-        text(f"DROP POLICY IF EXISTS {policy_name} ON {table_name};")
-    )
+    connection.execute(text(f"DROP POLICY IF EXISTS {policy_name} ON {table_name};"))
     connection.execute(
         text(
             f"""

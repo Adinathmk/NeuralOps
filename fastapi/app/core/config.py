@@ -138,6 +138,7 @@ class Settings(BaseSettings):
         """Support both JSON list format and comma-separated string format in environment variables."""
         if isinstance(v, str):
             import json
+
             v = v.strip()
             if not v:
                 return []
@@ -148,7 +149,6 @@ class Settings(BaseSettings):
                     pass
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
-
 
     def tenant_suspension_key(self, tenant_id: str) -> str:
         """Return the Redis key for a tenant's suspension flag."""

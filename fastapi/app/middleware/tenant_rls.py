@@ -103,6 +103,7 @@ class TenantRLSMiddleware(BaseHTTPMiddleware):
 
 # ── Session-level RLS helper ──────────────────────────────────────────────────
 
+
 async def apply_tenant_rls_to_session(session, tenant_id: str) -> None:
     """
     Execute `SET LOCAL app.tenant_id = '<uuid>'` on the given async session.

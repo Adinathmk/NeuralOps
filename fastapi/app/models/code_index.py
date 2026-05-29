@@ -179,9 +179,7 @@ class CodeIndex(Base):
     end_line: Column = Column(
         Integer,
         nullable=False,
-        comment=(
-            "1-based line number where this symbol definition ends (inclusive)."
-        ),
+        comment=("1-based line number where this symbol definition ends (inclusive)."),
     )
 
     # ── Call-graph arrays ─────────────────────────────────────────────────────
@@ -311,21 +309,15 @@ def _create_rls_policies(target, connection, **kwargs) -> None:
     table_name: str = target.name  # "code_index"
 
     # Enable RLS — rows are now filtered for all roles including table owner.
-    connection.execute(
-        text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;")
-    )
+    connection.execute(text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;"))
     # FORCE RLS applies the policy even to the table owner, preventing
     # accidental cross-tenant reads from service account queries.
-    connection.execute(
-        text(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY;")
-    )
+    connection.execute(text(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY;"))
 
     policy_name = f"rls_{table_name}_tenant_isolation"
 
     # Drop any pre-existing policy (idempotent: safe to re-run).
-    connection.execute(
-        text(f"DROP POLICY IF EXISTS {policy_name} ON {table_name};")
-    )
+    connection.execute(text(f"DROP POLICY IF EXISTS {policy_name} ON {table_name};"))
 
     # Create the permissive SELECT/INSERT/UPDATE/DELETE policy.
     # The second argument `true` to current_setting() means "missing_ok" —

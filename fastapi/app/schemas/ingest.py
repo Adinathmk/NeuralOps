@@ -21,8 +21,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
 # ── Request ────────────────────────────────────────────────────────────────────
+
 
 class LogIngestRequest(BaseModel):
     """
@@ -116,6 +116,7 @@ class LogIngestRequest(BaseModel):
 
 
 # ── Response ───────────────────────────────────────────────────────────────────
+
 
 class LogIngestResponse(BaseModel):
     """

@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-
 # ── Base ─────────────────────────────────────────────────────────────────────
+
 
 class NeuralOpsError(Exception):
     """
@@ -52,6 +52,7 @@ class NeuralOpsError(Exception):
 
 # ── Authentication & Authorisation ───────────────────────────────────────────
 
+
 class TokenMissingError(NeuralOpsError):
     message = "Authentication token is missing."
     code = "TOKEN_MISSING"
@@ -78,6 +79,7 @@ class PermissionDeniedError(NeuralOpsError):
 
 # ── Tenant ───────────────────────────────────────────────────────────────────
 
+
 class TenantNotFoundError(NeuralOpsError):
     message = "Tenant not found."
     code = "TENANT_NOT_FOUND"
@@ -96,12 +98,14 @@ class TenantConfigStaleError(NeuralOpsError):
     Ingest continues on stale / missing data per the architecture SLO,
     but callers may choose to surface this as a warning.
     """
+
     message = "Tenant configuration snapshot is unavailable or stale."
     code = "TENANT_CONFIG_STALE"
     status_code = 503
 
 
 # ── Database ─────────────────────────────────────────────────────────────────
+
 
 class DatabaseError(NeuralOpsError):
     message = "A database error occurred."
@@ -111,6 +115,7 @@ class DatabaseError(NeuralOpsError):
 
 # ── Validation ───────────────────────────────────────────────────────────────
 
+
 class ValidationError(NeuralOpsError):
     message = "Request validation failed."
     code = "VALIDATION_ERROR"
@@ -118,6 +123,7 @@ class ValidationError(NeuralOpsError):
 
 
 # ── Not Found ────────────────────────────────────────────────────────────────
+
 
 class NotFoundError(NeuralOpsError):
     message = "The requested resource was not found."
