@@ -6,12 +6,14 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('tenants', '0002_rls_policies'),
+        ("tenants", "0002_rls_policies"),
     ]
 
     operations = [
         migrations.AddIndex(
-            model_name='tenantconfiguration',
-            index=models.Index(fields=['tenant'], name='tenant_conf_tenant__216c25_idx'),
+            model_name="tenantconfiguration",
+            index=models.Index(
+                fields=["tenant"], name="tenant_conf_tenant__216c25_idx"
+            ),
         ),
     ]

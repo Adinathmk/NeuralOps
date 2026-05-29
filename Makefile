@@ -105,6 +105,16 @@ superuser:
 test:
 	docker compose --env-file .env.docker exec django python manage.py test
 
+# ── Nox static analysis & testing ────────────────────────────
+nox-lint:
+	docker compose --env-file .env.docker exec django nox -s lint
+
+nox-format:
+	docker compose --env-file .env.docker exec django nox -s format
+
+nox-test:
+	docker compose --env-file .env.docker exec django nox -s tests
+
 # ── FastAPI management ───────────────────────────────────────
 fastapi-shell:
 	docker compose --env-file .env.docker exec fastapi bash

@@ -1,6 +1,6 @@
 def extract_error_message(error):
 
-    if hasattr(error, 'detail'):
+    if hasattr(error, "detail"):
 
         # DRF list errors
         if isinstance(error.detail, list):

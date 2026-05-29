@@ -1,12 +1,12 @@
 import logging
 
+from core.utils.errors import extract_error_message
 from rest_framework.exceptions import ValidationError
 
 from ..authentication import JWTAuthentication
-from ..models import User, MFAVerificationToken, TOTPDevice
-from .oauth_providers import GoogleOAuthService, GitHubOAuthService
+from ..models import MFAVerificationToken, TOTPDevice, User
 from .oauth_handlers import EngineerOAuthHandler, OwnerOAuthHandler
-from core.utils.errors import extract_error_message
+from .oauth_providers import GitHubOAuthService, GoogleOAuthService
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +33,20 @@ class OAuthServiceLayer:
             logger.info(f"MFA verification required for {user.email}")
 
             return {
-                'requires_mfa': True,
-                'mfa_token': mfa_token_obj.token,
+                "requires_mfa": True,
+                "mfa_token": mfa_token_obj.token,
             }
 
         except TOTPDevice.DoesNotExist:
             # MFA not enabled — return access tokens directly
-            access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
+            access_token, refresh_token = JWTAuthentication.generate_tokens(
+                user, request
+            )
             return {
-                'requires_mfa': False,
-                'user': user,
-                'access_token': access_token,
-                'refresh_token': refresh_token,
+                "requires_mfa": False,
+                "user": user,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
             }
 
     @staticmethod
@@ -59,8 +61,8 @@ class OAuthServiceLayer:
         """
         # Get user info from Google
         user_info = GoogleOAuthService.get_user_info(access_token)
-        user_info['provider'] = 'google'
-        email = user_info['email']
+        user_info["provider"] = "google"
+        email = user_info["email"]
 
         # Route to appropriate handler
         if invitation:
@@ -81,20 +83,17 @@ class OAuthServiceLayer:
                     "Please contact your administrator."
                 )
 
-            if existing_user.role == 'owner':
+            if existing_user.role == "owner":
                 logger.info(f"Owner OAuth login attempt - {email}")
                 user = OwnerOAuthHandler.process_oauth_login(user_info)
                 log_message = f"Owner {user.email} signed in via Google OAuth"
             else:
                 logger.info(f"Engineer OAuth login attempt - {email}")
                 user = EngineerOAuthHandler.process_oauth_login(user_info)
-                log_message = (
-                    f"Engineer {user.email} signed in "
-                    f"via Google OAuth"
-                )
+                log_message = f"Engineer {user.email} signed in " f"via Google OAuth"
 
         result = OAuthServiceLayer._finalise_oauth_login(user, request)
-        result['log_message'] = log_message
+        result["log_message"] = log_message
         return result
 
     @staticmethod
@@ -108,7 +107,7 @@ class OAuthServiceLayer:
         """
         # Get user info from GitHub
         user_info = GitHubOAuthService.get_user_info(access_token)
-        user_info['provider'] = 'github'
+        user_info["provider"] = "github"
 
         # Route to appropriate handler
         if invitation:
@@ -126,5 +125,5 @@ class OAuthServiceLayer:
             log_message = f"Owner {user.email} signed in via GitHub OAuth"
 
         result = OAuthServiceLayer._finalise_oauth_login(user, request)
-        result['log_message'] = log_message
+        result["log_message"] = log_message
         return result

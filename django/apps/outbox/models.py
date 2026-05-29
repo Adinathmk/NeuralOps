@@ -1,5 +1,7 @@
 import uuid
+
 from django.db import models
+
 
 class OutboxEvent(models.Model):
     event_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -10,30 +12,21 @@ class OutboxEvent(models.Model):
     published = models.BooleanField(default=False)
 
     class Meta:
-        db_table = 'outbox'
-        indexes = [models.Index(fields=['published', 'created_at'])]
+        db_table = "outbox"
+        indexes = [models.Index(fields=["published", "created_at"])]
+
 
 class ProcessedEvent(models.Model):
 
     event_id = models.UUIDField(primary_key=True)
 
-    consumer_group = models.CharField(
-        max_length=128
-    )
+    consumer_group = models.CharField(max_length=128)
 
-    topic = models.CharField(
-        max_length=256
-    )
+    topic = models.CharField(max_length=256)
 
-    processed_at = models.DateTimeField(
-        auto_now_add=True
-    )
+    processed_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "processed_events"
 
-        indexes = [
-            models.Index(
-                fields=["consumer_group", "topic"]
-            )
-        ]
+        indexes = [models.Index(fields=["consumer_group", "topic"])]

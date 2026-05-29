@@ -1,17 +1,17 @@
 import logging
+from datetime import timedelta
 
+from core.exceptions import NotFoundException
+from core.quotas import QuotaService
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
-from datetime import timedelta
+from tenants.models import Tenant
 
 from ..authentication import JWTAuthentication
-from ..models import User, UserInvitation, AuditLog
 from ..email import email_service
+from ..models import AuditLog, User, UserInvitation
 from ..serializers import UserSerializer
-from core.quotas import QuotaService
-from core.exceptions import NotFoundException
-from tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +32,14 @@ class InvitationService:
         try:
             tenant = Tenant.objects.get(id=tenant_id)
         except Tenant.DoesNotExist:
-            raise NotFoundException('Tenant not found')
+            raise NotFoundException("Tenant not found")
 
         QuotaService.check_user_limit(tenant)
 
         try:
             # Check if user already exists in tenant
             User.objects.get(email=email, tenant=tenant)
-            return None, f'User {email} already exists in {tenant.name}'
+            return None, f"User {email} already exists in {tenant.name}"
         except User.DoesNotExist:
             pass
 
@@ -47,16 +47,16 @@ class InvitationService:
         invitation, created = UserInvitation.objects.get_or_create(
             tenant=tenant,
             email=email,
-            status='pending',
+            status="pending",
             defaults={
-                'invited_by': inviter,
-                'role': role,
-            }
+                "invited_by": inviter,
+                "role": role,
+            },
         )
 
         # If invitation already existed but was expired, reset it
-        if not created and invitation.status == 'expired':
-            invitation.status = 'pending'
+        if not created and invitation.status == "expired":
+            invitation.status = "pending"
             invitation.expires_at = timezone.now() + timedelta(days=7)
             invitation.invited_by = inviter
             invitation.role = role
@@ -67,16 +67,14 @@ class InvitationService:
             email_service.send_invitation_email(invitation, frontend_url)
         except Exception as e:
             logger.error(f"Failed to send invitation email: {str(e)}")
-            return None, 'email_failed'
+            return None, "email_failed"
 
-        logger.info(
-            f"Admin {inviter.email} invited {email} to {tenant.name} as {role}"
-        )
+        logger.info(f"Admin {inviter.email} invited {email} to {tenant.name} as {role}")
 
         AuditLog.log(
-            action='USER_INVITED',
+            action="USER_INVITED",
             user=inviter,
-            resource_type='UserInvitation',
+            resource_type="UserInvitation",
             resource_id=str(invitation.id),
             description=f"Invited {email} as {role} to {tenant.name}",
         )
@@ -90,15 +88,15 @@ class InvitationService:
         Returns (invitation, error_code) where error_code is None on success.
         """
         if not token:
-            return None, 'missing_token'
+            return None, "missing_token"
 
         try:
             invitation = UserInvitation.objects.get(token=token)
         except UserInvitation.DoesNotExist:
-            return None, 'not_found'
+            return None, "not_found"
 
         if not invitation.is_valid():
-            return None, 'expired'
+            return None, "expired"
 
         return invitation, None
 
@@ -122,7 +120,7 @@ class InvitationService:
                 last_name=last_name,
                 role=invitation.role,
                 is_staff=False,
-                email_verified=True  # Email is verified via invitation
+                email_verified=True,  # Email is verified via invitation
             )
 
             # Mark invitation as accepted
@@ -136,8 +134,7 @@ class InvitationService:
 
             # Generate tokens
             access_token, refresh_token = JWTAuthentication.generate_tokens(
-                user,
-                request
+                user, request
             )
 
             logger.info(
@@ -146,7 +143,7 @@ class InvitationService:
             )
 
             AuditLog.log(
-                action='USER_CREATED',
+                action="USER_CREATED",
                 user=user,
                 description=(
                     f"Engineer joined tenant '{invitation.tenant.name}' "
@@ -164,20 +161,19 @@ class InvitationService:
         filtered by status, ordered by most recent first.
         """
         invitations = UserInvitation.objects.filter(
-            tenant_id=tenant_id,
-            status=status
-        ).order_by('-created_at')
+            tenant_id=tenant_id, status=status
+        ).order_by("-created_at")
 
         return [
             {
-                'id': str(inv.id),
-                'email': inv.email,
-                'role': inv.role,
-                'status': inv.status,
-                'invited_by': inv.invited_by.email if inv.invited_by else None,
-                'created_at': inv.created_at.isoformat(),
-                'expires_at': inv.expires_at.isoformat(),
-                'accepted_at': inv.accepted_at.isoformat() if inv.accepted_at else None,
+                "id": str(inv.id),
+                "email": inv.email,
+                "role": inv.role,
+                "status": inv.status,
+                "invited_by": inv.invited_by.email if inv.invited_by else None,
+                "created_at": inv.created_at.isoformat(),
+                "expires_at": inv.expires_at.isoformat(),
+                "accepted_at": inv.accepted_at.isoformat() if inv.accepted_at else None,
             }
             for inv in invitations
         ]
@@ -191,23 +187,22 @@ class InvitationService:
         """
         try:
             invitation = UserInvitation.objects.get(
-                id=invitation_id,
-                tenant_id=tenant_id
+                id=invitation_id, tenant_id=tenant_id
             )
         except UserInvitation.DoesNotExist:
-            raise NotFoundException('Invitation not found')
+            raise NotFoundException("Invitation not found")
 
-        if invitation.status != 'pending':
-            return None, f'Cannot cancel invitation with status: {invitation.status}'
+        if invitation.status != "pending":
+            return None, f"Cannot cancel invitation with status: {invitation.status}"
 
         invitation.cancel()
         logger.info(f"Invitation {invitation_id} cancelled")
 
         AuditLog.log(
-            action='USER_INVITE_CANCELLED',
+            action="USER_INVITE_CANCELLED",
             tenant=invitation.tenant,
             user_email=invitation.email,
-            resource_type='UserInvitation',
+            resource_type="UserInvitation",
             resource_id=str(invitation.id),
             description=f"Invitation to {invitation.email} cancelled",
         )
@@ -225,14 +220,13 @@ class InvitationService:
         """
         try:
             invitation = UserInvitation.objects.get(
-                id=invitation_id,
-                tenant_id=tenant_id
+                id=invitation_id, tenant_id=tenant_id
             )
         except UserInvitation.DoesNotExist:
-            raise NotFoundException('Invitation not found')
+            raise NotFoundException("Invitation not found")
 
-        if invitation.status != 'pending':
-            return False, f'Cannot resend invitation with status: {invitation.status}'
+        if invitation.status != "pending":
+            return False, f"Cannot resend invitation with status: {invitation.status}"
 
         # Check if invitation expired — reset expiration
         if not invitation.is_valid():
@@ -243,15 +237,15 @@ class InvitationService:
             email_service.send_invitation_reminder_email(invitation, frontend_url)
         except Exception as e:
             logger.error(f"Failed to resend invitation: {str(e)}")
-            return False, 'Failed to resend invitation'
+            return False, "Failed to resend invitation"
 
         logger.info(f"Invitation {invitation_id} resent to {invitation.email}")
 
         AuditLog.log(
-            action='USER_INVITE_RESENT',
+            action="USER_INVITE_RESENT",
             tenant=invitation.tenant,
             user_email=invitation.email,
-            resource_type='UserInvitation',
+            resource_type="UserInvitation",
             resource_id=str(invitation.id),
             description=f"Invitation resent to {invitation.email}",
         )

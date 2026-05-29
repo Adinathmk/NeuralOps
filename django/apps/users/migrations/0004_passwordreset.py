@@ -10,25 +10,67 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('users', '0003_user_email_verified_emailverification'),
+        ("users", "0003_user_email_verified_emailverification"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='PasswordReset',
+            name="PasswordReset",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('token', models.CharField(default=users.models.generate_token, max_length=255, unique=True)),
-                ('status', models.CharField(choices=[('pending', 'Pending'), ('used', 'Used'), ('expired', 'Expired')], default='pending', max_length=20)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('expires_at', models.DateTimeField(default=users.models.get_expiry_time)),
-                ('used_at', models.DateTimeField(blank=True, null=True)),
-                ('ip_address', models.GenericIPAddressField(blank=True, null=True)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='password_resets', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "token",
+                    models.CharField(
+                        default=users.models.generate_token, max_length=255, unique=True
+                    ),
+                ),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("pending", "Pending"),
+                            ("used", "Used"),
+                            ("expired", "Expired"),
+                        ],
+                        default="pending",
+                        max_length=20,
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "expires_at",
+                    models.DateTimeField(default=users.models.get_expiry_time),
+                ),
+                ("used_at", models.DateTimeField(blank=True, null=True)),
+                ("ip_address", models.GenericIPAddressField(blank=True, null=True)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="password_resets",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'db_table': 'password_resets',
-                'indexes': [models.Index(fields=['token'], name='password_re_token_fb23e2_idx'), models.Index(fields=['user', 'status'], name='password_re_user_id_33d231_idx'), models.Index(fields=['expires_at'], name='password_re_expires_d36310_idx')],
+                "db_table": "password_resets",
+                "indexes": [
+                    models.Index(fields=["token"], name="password_re_token_fb23e2_idx"),
+                    models.Index(
+                        fields=["user", "status"], name="password_re_user_id_33d231_idx"
+                    ),
+                    models.Index(
+                        fields=["expires_at"], name="password_re_expires_d36310_idx"
+                    ),
+                ],
             },
         ),
     ]

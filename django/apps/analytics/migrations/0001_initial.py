@@ -9,28 +9,42 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('tenants', '0003_tenantconfiguration_tenant_conf_tenant__216c25_idx'),
+        ("tenants", "0003_tenantconfiguration_tenant_conf_tenant__216c25_idx"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='IncidentSnapshot',
+            name="IncidentSnapshot",
             fields=[
-                ('incident_id', models.UUIDField(primary_key=True, serialize=False)),
-                ('status', models.CharField(max_length=32)),
-                ('severity', models.CharField(max_length=32)),
-                ('confidence_score', models.FloatField(null=True)),
-                ('error_type', models.CharField(blank=True, max_length=255)),
-                ('service_name', models.CharField(blank=True, max_length=255)),
-                ('assigned_user_id', models.UUIDField(blank=True, null=True)),
-                ('source_version', models.BigIntegerField(default=0)),
-                ('synced_at', models.DateTimeField(auto_now=True)),
-                ('created_at', models.DateTimeField()),
-                ('tenant', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='tenants.tenant')),
+                ("incident_id", models.UUIDField(primary_key=True, serialize=False)),
+                ("status", models.CharField(max_length=32)),
+                ("severity", models.CharField(max_length=32)),
+                ("confidence_score", models.FloatField(null=True)),
+                ("error_type", models.CharField(blank=True, max_length=255)),
+                ("service_name", models.CharField(blank=True, max_length=255)),
+                ("assigned_user_id", models.UUIDField(blank=True, null=True)),
+                ("source_version", models.BigIntegerField(default=0)),
+                ("synced_at", models.DateTimeField(auto_now=True)),
+                ("created_at", models.DateTimeField()),
+                (
+                    "tenant",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, to="tenants.tenant"
+                    ),
+                ),
             ],
             options={
-                'db_table': 'incident_snapshots',
-                'indexes': [models.Index(fields=['tenant', 'status'], name='incident_sn_tenant__ec503c_idx'), models.Index(fields=['tenant', 'created_at'], name='incident_sn_tenant__122c3a_idx')],
+                "db_table": "incident_snapshots",
+                "indexes": [
+                    models.Index(
+                        fields=["tenant", "status"],
+                        name="incident_sn_tenant__ec503c_idx",
+                    ),
+                    models.Index(
+                        fields=["tenant", "created_at"],
+                        name="incident_sn_tenant__122c3a_idx",
+                    ),
+                ],
             },
         ),
     ]

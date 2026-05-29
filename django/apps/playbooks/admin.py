@@ -1,4 +1,5 @@
 from django.contrib import admin
+
 from .models import Playbook
 
 
@@ -20,7 +21,10 @@ class PlaybookAdmin(admin.ModelAdmin):
     fieldsets = (
         ("Identity", {"fields": ("id", "tenant")}),
         ("Pattern & Instructions", {"fields": ("error_pattern", "instructions")}),
-        ("Versioning & Timestamps", {"fields": ("source_version", "created_at", "updated_at")}),
+        (
+            "Versioning & Timestamps",
+            {"fields": ("source_version", "created_at", "updated_at")},
+        ),
     )
 
     @admin.display(description="Error Pattern (preview)")

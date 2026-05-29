@@ -10,29 +10,73 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('users', '0002_usersession'),
+        ("users", "0002_usersession"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='user',
-            name='email_verified',
-            field=models.BooleanField(default=False, help_text='Email has been verified'),
+            model_name="user",
+            name="email_verified",
+            field=models.BooleanField(
+                default=False, help_text="Email has been verified"
+            ),
         ),
         migrations.CreateModel(
-            name='EmailVerification',
+            name="EmailVerification",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('token', models.CharField(default=users.models.generate_token, max_length=255, unique=True)),
-                ('status', models.CharField(choices=[('pending', 'Pending'), ('verified', 'Verified'), ('expired', 'Expired')], default='pending', max_length=20)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('expires_at', models.DateTimeField(default=users.models.get_expiry_time)),
-                ('verified_at', models.DateTimeField(blank=True, null=True)),
-                ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='email_verification', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "token",
+                    models.CharField(
+                        default=users.models.generate_token, max_length=255, unique=True
+                    ),
+                ),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("pending", "Pending"),
+                            ("verified", "Verified"),
+                            ("expired", "Expired"),
+                        ],
+                        default="pending",
+                        max_length=20,
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "expires_at",
+                    models.DateTimeField(default=users.models.get_expiry_time),
+                ),
+                ("verified_at", models.DateTimeField(blank=True, null=True)),
+                (
+                    "user",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="email_verification",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'db_table': 'email_verifications',
-                'indexes': [models.Index(fields=['token'], name='email_verif_token_403404_idx'), models.Index(fields=['user', 'status'], name='email_verif_user_id_f1041a_idx'), models.Index(fields=['expires_at'], name='email_verif_expires_fdd67c_idx')],
+                "db_table": "email_verifications",
+                "indexes": [
+                    models.Index(fields=["token"], name="email_verif_token_403404_idx"),
+                    models.Index(
+                        fields=["user", "status"], name="email_verif_user_id_f1041a_idx"
+                    ),
+                    models.Index(
+                        fields=["expires_at"], name="email_verif_expires_fdd67c_idx"
+                    ),
+                ],
             },
         ),
     ]

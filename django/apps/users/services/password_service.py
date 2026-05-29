@@ -3,8 +3,8 @@ import logging
 from django.conf import settings
 
 from ..authentication import JWTAuthentication
-from ..models import User, PasswordReset, UserSession, AuditLog
 from ..email import email_service
+from ..models import AuditLog, PasswordReset, User, UserSession
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +33,12 @@ class PasswordService:
             ip_address = JWTAuthentication._get_client_ip(request)
 
             # Create new reset token
-            reset = PasswordReset.objects.create(
-                user=user,
-                ip_address=ip_address
-            )
+            reset = PasswordReset.objects.create(user=user, ip_address=ip_address)
 
             # Send password reset email
             try:
                 email_service.send_password_reset_email(
-                    user=user,
-                    reset_token=reset.token,
-                    frontend_url=frontend_url
+                    user=user, reset_token=reset.token, frontend_url=frontend_url
                 )
             except Exception as e:
                 logger.error(
@@ -53,18 +48,16 @@ class PasswordService:
             logger.info(f"Password reset requested for {email}")
 
             AuditLog.log(
-                action='PASSWORD_RESET_REQUESTED',
+                action="PASSWORD_RESET_REQUESTED",
                 user=user,
-                resource_type='PasswordReset',
+                resource_type="PasswordReset",
                 resource_id=str(reset.id),
                 ip_address=ip_address,
             )
 
         except User.DoesNotExist:
             # IMPORTANT: Do NOT reveal whether email exists
-            logger.warning(
-                f"Password reset requested for non-existent email: {email}"
-            )
+            logger.warning(f"Password reset requested for non-existent email: {email}")
 
     @staticmethod
     def reset_password(reset_obj, new_password):
@@ -96,9 +89,9 @@ class PasswordService:
         logger.info(f"Password reset for user {user.email}")
 
         AuditLog.log(
-            action='PASSWORD_RESET_COMPLETED',
+            action="PASSWORD_RESET_COMPLETED",
             user=user,
-            description='Password reset via email link',
+            description="Password reset via email link",
         )
 
     @staticmethod
@@ -113,7 +106,7 @@ class PasswordService:
         """
         # Verify current password
         if not user.check_password(current_password):
-            return False, 'Current password is incorrect'
+            return False, "Current password is incorrect"
 
         # Update password
         user.set_password(new_password)
@@ -131,9 +124,9 @@ class PasswordService:
         logger.info(f"Password changed for user {user.email}")
 
         AuditLog.log(
-            action='PASSWORD_RESET_COMPLETED',
+            action="PASSWORD_RESET_COMPLETED",
             user=user,
-            description='Password changed by authenticated user',
+            description="Password changed by authenticated user",
         )
 
         return True, None

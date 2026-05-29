@@ -9,68 +9,93 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('tenants', '0001_initial'),
-        ('users', '0005_oauthaccount'),
+        ("tenants", "0001_initial"),
+        ("users", "0005_oauthaccount"),
     ]
 
     operations = [
         migrations.AlterUniqueTogether(
-            name='userinvitation',
+            name="userinvitation",
             unique_together=set(),
         ),
         migrations.AddField(
-            model_name='userinvitation',
-            name='accepted_at',
+            model_name="userinvitation",
+            name="accepted_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='userinvitation',
-            name='cancelled_at',
+            model_name="userinvitation",
+            name="cancelled_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='userinvitation',
-            name='email_resent_count',
+            model_name="userinvitation",
+            name="email_resent_count",
             field=models.IntegerField(default=0),
         ),
         migrations.AddField(
-            model_name='userinvitation',
-            name='email_sent_at',
+            model_name="userinvitation",
+            name="email_sent_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AlterField(
-            model_name='userinvitation',
-            name='invited_by',
-            field=models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='invitations_sent', to=settings.AUTH_USER_MODEL),
+            model_name="userinvitation",
+            name="invited_by",
+            field=models.ForeignKey(
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="invitations_sent",
+                to=settings.AUTH_USER_MODEL,
+            ),
         ),
         migrations.AlterField(
-            model_name='userinvitation',
-            name='status',
-            field=models.CharField(choices=[('pending', 'Pending'), ('accepted', 'Accepted'), ('expired', 'Expired'), ('cancelled', 'Cancelled')], default='pending', max_length=20),
+            model_name="userinvitation",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("pending", "Pending"),
+                    ("accepted", "Accepted"),
+                    ("expired", "Expired"),
+                    ("cancelled", "Cancelled"),
+                ],
+                default="pending",
+                max_length=20,
+            ),
         ),
         migrations.AlterField(
-            model_name='userinvitation',
-            name='token',
-            field=models.CharField(db_index=True, default=users.models.generate_token, max_length=255, unique=True),
+            model_name="userinvitation",
+            name="token",
+            field=models.CharField(
+                db_index=True,
+                default=users.models.generate_token,
+                max_length=255,
+                unique=True,
+            ),
         ),
         migrations.AlterUniqueTogether(
-            name='userinvitation',
-            unique_together={('tenant', 'email', 'status')},
+            name="userinvitation",
+            unique_together={("tenant", "email", "status")},
         ),
         migrations.AddIndex(
-            model_name='userinvitation',
-            index=models.Index(fields=['token'], name='user_invita_token_59cb54_idx'),
+            model_name="userinvitation",
+            index=models.Index(fields=["token"], name="user_invita_token_59cb54_idx"),
         ),
         migrations.AddIndex(
-            model_name='userinvitation',
-            index=models.Index(fields=['tenant', 'status'], name='user_invita_tenant__8a6758_idx'),
+            model_name="userinvitation",
+            index=models.Index(
+                fields=["tenant", "status"], name="user_invita_tenant__8a6758_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='userinvitation',
-            index=models.Index(fields=['expires_at'], name='user_invita_expires_26d966_idx'),
+            model_name="userinvitation",
+            index=models.Index(
+                fields=["expires_at"], name="user_invita_expires_26d966_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='userinvitation',
-            index=models.Index(fields=['email', 'status'], name='user_invita_email_698bcc_idx'),
+            model_name="userinvitation",
+            index=models.Index(
+                fields=["email", "status"], name="user_invita_email_698bcc_idx"
+            ),
         ),
     ]

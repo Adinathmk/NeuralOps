@@ -1,14 +1,14 @@
-import logging
 import base64
+import logging
 from io import BytesIO
 
 import qrcode
-from django.db import transaction
 from django.contrib.auth.hashers import check_password
+from django.db import transaction
 
 from ..authentication import JWTAuthentication
-from ..models import MFAVerificationToken, TOTPDevice, BackupCode, AuditLog
 from ..cache import cache_manager
+from ..models import AuditLog, BackupCode, MFAVerificationToken, TOTPDevice
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,11 @@ class MFAService:
         """
         # Check if MFA already enabled
         existing_device = TOTPDevice.objects.filter(
-            user=user,
-            is_confirmed=True
+            user=user, is_confirmed=True
         ).exists()
 
         if existing_device:
-            return None, 'already_enabled'
+            return None, "already_enabled"
 
         # Delete existing unconfirmed device
         TOTPDevice.objects.filter(user=user, is_confirmed=False).delete()
@@ -43,9 +42,7 @@ class MFAService:
 
         # Create device
         device = TOTPDevice.objects.create(
-            user=user,
-            secret_key=secret,
-            is_confirmed=False
+            user=user, secret_key=secret, is_confirmed=False
         )
 
         # Generate QR setup URL
@@ -56,28 +53,23 @@ class MFAService:
         qr.add_data(qr_url)
         qr.make()
 
-        img = qr.make_image(
-            fill_color="black",
-            back_color="white"
-        )
+        img = qr.make_image(fill_color="black", back_color="white")
 
         img_bytes = BytesIO()
         img.save(img_bytes)
 
-        img_base64 = base64.b64encode(
-            img_bytes.getvalue()
-        ).decode()
+        img_base64 = base64.b64encode(img_bytes.getvalue()).decode()
 
         logger.info(f"MFA setup started for {user.email}")
 
         return {
-            'secret': secret,
-            'qr_code': f'data:image/png;base64,{img_base64}',
-            'setup_url': qr_url,
-            'message': (
-                'Scan QR code with Google Authenticator, '
-                'Authy, or Microsoft Authenticator'
-            )
+            "secret": secret,
+            "qr_code": f"data:image/png;base64,{img_base64}",
+            "setup_url": qr_url,
+            "message": (
+                "Scan QR code with Google Authenticator, "
+                "Authy, or Microsoft Authenticator"
+            ),
         }, None
 
     @staticmethod
@@ -94,12 +86,12 @@ class MFAService:
         try:
             device = TOTPDevice.objects.get(user=user, is_confirmed=False)
         except TOTPDevice.DoesNotExist:
-            return None, 'setup_required'
+            return None, "setup_required"
 
         # Verify code
         if not device.verify_token(code):
             logger.warning(f"Invalid MFA code for {user.email}")
-            return None, 'invalid_code'
+            return None, "invalid_code"
 
         try:
             with transaction.atomic():
@@ -115,25 +107,22 @@ class MFAService:
 
                 for code in codes:
                     code_hash = BackupCode.hash_code(code)
-                    BackupCode.objects.create(
-                        user=user,
-                        code_hash=code_hash
-                    )
+                    BackupCode.objects.create(user=user, code_hash=code_hash)
                     backup_codes.append(code)
 
                 logger.info(f"MFA confirmed for {user.email}")
 
                 AuditLog.log(
-                    action='MFA_SETUP',
+                    action="MFA_SETUP",
                     user=user,
-                    description='MFA TOTP device confirmed and activated',
+                    description="MFA TOTP device confirmed and activated",
                 )
 
                 return backup_codes, None
 
         except Exception as e:
             logger.error(f"MFA confirmation error: {str(e)}")
-            return None, 'mfa_error'
+            return None, "mfa_error"
 
     @staticmethod
     def verify_token(mfa_token, code, request):
@@ -151,11 +140,11 @@ class MFAService:
             mfa_token_obj = MFAVerificationToken.objects.get(token=mfa_token)
         except MFAVerificationToken.DoesNotExist:
             logger.warning(f"Invalid MFA token used")
-            return None, 'invalid_token'
+            return None, "invalid_token"
 
         if not mfa_token_obj.is_valid():
             mfa_token_obj.delete()
-            return None, 'token_expired'
+            return None, "token_expired"
 
         user = mfa_token_obj.user
 
@@ -165,7 +154,7 @@ class MFAService:
             # Lock MFA verification for 15 minutes
             cache_manager.lock_mfa_verification(user.email, 15)
             logger.warning(f"MFA verification rate limited for {user.email}")
-            return None, 'rate_limited'
+            return None, "rate_limited"
 
         # Try TOTP code first
         device = TOTPDevice.objects.get(user=user)
@@ -175,21 +164,23 @@ class MFAService:
             cache_manager.reset_mfa_attempts(user.email)
             mfa_token_obj.delete()
 
-            access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
+            access_token, refresh_token = JWTAuthentication.generate_tokens(
+                user, request
+            )
 
             logger.info(f"MFA verification success for {user.email}")
 
             AuditLog.log(
-                action='MFA_VERIFIED',
+                action="MFA_VERIFIED",
                 user=user,
-                description='MFA verified via TOTP',
+                description="MFA verified via TOTP",
                 ip_address=JWTAuthentication._get_client_ip(request),
             )
 
             return {
-                'user': user,
-                'access_token': access_token,
-                'refresh_token': refresh_token,
+                "user": user,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
             }, None
 
         # Try backup code
@@ -201,28 +192,30 @@ class MFAService:
             cache_manager.reset_mfa_attempts(user.email)
             mfa_token_obj.delete()
 
-            access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
+            access_token, refresh_token = JWTAuthentication.generate_tokens(
+                user, request
+            )
 
             logger.warning(f"Backup code used by {user.email}")
 
             AuditLog.log(
-                action='MFA_VERIFIED',
+                action="MFA_VERIFIED",
                 user=user,
-                description='MFA verified via backup code',
+                description="MFA verified via backup code",
                 ip_address=JWTAuthentication._get_client_ip(request),
             )
 
             return {
-                'user': user,
-                'access_token': access_token,
-                'refresh_token': refresh_token,
-                'used_backup_code': True,
+                "user": user,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "used_backup_code": True,
             }, None
 
         # Invalid code
         cache_manager.increment_mfa_attempts(user.email)
         logger.warning(f"Invalid MFA code for {user.email}")
-        return None, 'invalid_code'
+        return None, "invalid_code"
 
     @staticmethod
     def disable(user, password, code):
@@ -240,21 +233,21 @@ class MFAService:
             logger.warning(
                 f"Password verification failed for MFA disable - {user.email}"
             )
-            return False, 'wrong_password'
+            return False, "wrong_password"
 
         # Get confirmed device
         try:
             device = TOTPDevice.objects.get(user=user, is_confirmed=True)
         except TOTPDevice.DoesNotExist:
-            return False, 'mfa_not_enabled'
+            return False, "mfa_not_enabled"
 
         if not code:
-            return False, 'code_required'
+            return False, "code_required"
 
         # Verify code
         if not device.verify_token(code):
             logger.warning(f"Invalid MFA code during disable - {user.email}")
-            return False, 'invalid_code'
+            return False, "invalid_code"
 
         # Disable MFA
         try:
@@ -265,13 +258,13 @@ class MFAService:
                 logger.info(f"MFA disabled for {user.email}")
 
                 AuditLog.log(
-                    action='MFA_DISABLED',
+                    action="MFA_DISABLED",
                     user=user,
-                    description='MFA disabled by user',
+                    description="MFA disabled by user",
                 )
 
                 return True, None
 
         except Exception as e:
             logger.error(f"MFA disable error: {str(e)}")
-            return False, 'mfa_error'
+            return False, "mfa_error"

@@ -45,7 +45,7 @@ class GitHubIntegrationSerializer(serializers.ModelSerializer):
     # ── Write-only credential inputs ──────────────────────────────────────────
     pat = serializers.CharField(
         write_only=True,
-        required=False,   # Optional on PATCH; enforced in validate() for POST
+        required=False,  # Optional on PATCH; enforced in validate() for POST
         allow_blank=False,
         style={"input_type": "password"},
         help_text=(
@@ -55,7 +55,7 @@ class GitHubIntegrationSerializer(serializers.ModelSerializer):
         ),
     )
     webhook_secret_input = serializers.CharField(
-        source="webhook_secret",   # maps to model field — overridden in create/update
+        source="webhook_secret",  # maps to model field — overridden in create/update
         write_only=True,
         required=False,
         allow_blank=False,

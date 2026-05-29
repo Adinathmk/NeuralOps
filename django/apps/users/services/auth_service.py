@@ -1,16 +1,21 @@
 import logging
+
+from core.exceptions import ValidationException
+from core.responses import APIResponse
 from django.conf import settings
 from django.utils import timezone
 
 from ..authentication import JWTAuthentication
-from ..models import (
-    User, AuditLog, EmailVerification,
-    MFAVerificationToken, TOTPDevice, UserSession
-)
-from ..email import email_service
 from ..cache import cache_manager
-from core.responses import APIResponse
-from core.exceptions import ValidationException
+from ..email import email_service
+from ..models import (
+    AuditLog,
+    EmailVerification,
+    MFAVerificationToken,
+    TOTPDevice,
+    User,
+    UserSession,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +34,18 @@ class AuthService:
 
         # Audit: new owner account + new tenant
         AuditLog.log(
-            action='TENANT_CREATED',
+            action="TENANT_CREATED",
             user=user,
-            resource_type='Tenant',
-            resource_id=str(user.tenant.id) if user.tenant else '',
-            description=f"Tenant '{user.tenant.name}' created" if user.tenant else 'Tenant created',
+            resource_type="Tenant",
+            resource_id=str(user.tenant.id) if user.tenant else "",
+            description=(
+                f"Tenant '{user.tenant.name}' created"
+                if user.tenant
+                else "Tenant created"
+            ),
         )
         AuditLog.log(
-            action='USER_CREATED',
+            action="USER_CREATED",
             user=user,
             description=f"Owner account registered",
         )
@@ -45,7 +54,7 @@ class AuthService:
             email_service.send_verification_email(
                 user=user,
                 verification_token=verification.token,
-                frontend_url=frontend_url
+                frontend_url=frontend_url,
             )
         except Exception as e:
             logger.error(f"Failed to send verification email: {str(e)}")
@@ -65,14 +74,16 @@ class AuthService:
             logger.info(f"MFA verification required for {user.email}")
 
             return APIResponse.success(
-                message='MFA required. Please verify with authenticator app.',
+                message="MFA required. Please verify with authenticator app.",
                 mfa_token=mfa_token_obj.token,
-                requires_mfa=True
+                requires_mfa=True,
             )
 
         except TOTPDevice.DoesNotExist:
             # MFA not enabled — return access tokens directly
-            access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
+            access_token, refresh_token = JWTAuthentication.generate_tokens(
+                user, request
+            )
 
             logger.info(
                 f"User {user.email} logged in from "
@@ -80,17 +91,18 @@ class AuthService:
             )
 
             AuditLog.log(
-                action='LOGIN',
+                action="LOGIN",
                 user=user,
                 ip_address=JWTAuthentication._get_client_ip(request),
             )
 
             from ..serializers import UserSerializer
+
             return APIResponse.success(
                 data=UserSerializer(user).data,
-                message='Login successful.',
+                message="Login successful.",
                 access_token=access_token,
-                refresh_token=refresh_token
+                refresh_token=refresh_token,
             )
 
     @staticmethod
@@ -110,7 +122,7 @@ class AuthService:
                     email_service.send_verification_email(
                         user=user,
                         verification_token=verification.token,
-                        frontend_url=frontend_url
+                        frontend_url=frontend_url,
                     )
                 except Exception as e:
                     logger.error(f"Failed to resend verification email: {str(e)}")
@@ -128,12 +140,14 @@ class AuthService:
         failed_count = cache_manager.increment_failed_login(email)
 
         if failed_count >= 3:
-            logger.warning(f"Multiple failed login attempts for {email}: {failed_count}")
+            logger.warning(
+                f"Multiple failed login attempts for {email}: {failed_count}"
+            )
 
         first_error = next(iter(serializer.errors.values()))[0]
 
         AuditLog.log(
-            action='LOGIN_FAILED',
+            action="LOGIN_FAILED",
             user_email=email,
             success=False,
             description=f"error: {first_error}",
@@ -143,8 +157,8 @@ class AuthService:
         return APIResponse.error(
             message=first_error,
             status_code=401,
-            code='auth_error',
-            errors=serializer.errors
+            code="auth_error",
+            errors=serializer.errors,
         )
 
     @staticmethod
@@ -155,7 +169,7 @@ class AuthService:
         Returns (access_token, refresh_token).
         """
         payload = JWTAuthentication.verify_token(refresh_token_str)
-        user = User.objects.get(id=payload['user_id'])
+        user = User.objects.get(id=payload["user_id"])
         access_token, refresh_token = JWTAuthentication.generate_tokens(user)
         return access_token, refresh_token
 
@@ -165,13 +179,13 @@ class AuthService:
         Blocklists the JWT's JTI, revokes the session record,
         and creates an AuditLog entry.
         """
-        jti = request.auth.get('jti')
+        jti = request.auth.get("jti")
 
         if not jti:
-            raise ValidationException('Invalid token format')
+            raise ValidationException("Invalid token format")
 
         # Add token to revocation blocklist
-        exp_time = request.auth.get('exp')
+        exp_time = request.auth.get("exp")
         if exp_time:
             remaining_seconds = int(exp_time - timezone.now().timestamp())
             if remaining_seconds > 0:
@@ -187,9 +201,8 @@ class AuthService:
         logger.info(f"User {request.user_email} logged out")
 
         AuditLog.objects.create(
-            action='LOGOUT',
+            action="LOGOUT",
             user_email=request.user_email,
             tenant_id=request.tenant_id,
             ip_address=JWTAuthentication._get_client_ip(request),
         )
-

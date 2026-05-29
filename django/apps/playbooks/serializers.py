@@ -1,5 +1,7 @@
 import re
+
 from rest_framework import serializers
+
 from .models import Playbook
 
 
@@ -15,7 +17,13 @@ class PlaybookSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "tenant", "source_version", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "tenant",
+            "source_version",
+            "created_at",
+            "updated_at",
+        ]
 
     def validate_error_pattern(self, value):
         """Ensure error_pattern is a compilable regular expression."""

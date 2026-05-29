@@ -9,31 +9,69 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('tenants', '0001_initial'),
-        ('users', '0001_initial'),
+        ("tenants", "0001_initial"),
+        ("users", "0001_initial"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='UserSession',
+            name="UserSession",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('session_id', models.CharField(db_index=True, max_length=255, unique=True)),
-                ('device_name', models.CharField(blank=True, max_length=255)),
-                ('ip_address', models.GenericIPAddressField()),
-                ('user_agent', models.TextField(blank=True)),
-                ('is_active', models.BooleanField(default=True)),
-                ('is_revoked', models.BooleanField(default=False)),
-                ('revoked_at', models.DateTimeField(blank=True, null=True)),
-                ('last_activity_at', models.DateTimeField(auto_now=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('expires_at', models.DateTimeField()),
-                ('tenant', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='sessions', to='tenants.tenant')),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='sessions', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "session_id",
+                    models.CharField(db_index=True, max_length=255, unique=True),
+                ),
+                ("device_name", models.CharField(blank=True, max_length=255)),
+                ("ip_address", models.GenericIPAddressField()),
+                ("user_agent", models.TextField(blank=True)),
+                ("is_active", models.BooleanField(default=True)),
+                ("is_revoked", models.BooleanField(default=False)),
+                ("revoked_at", models.DateTimeField(blank=True, null=True)),
+                ("last_activity_at", models.DateTimeField(auto_now=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("expires_at", models.DateTimeField()),
+                (
+                    "tenant",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="sessions",
+                        to="tenants.tenant",
+                    ),
+                ),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="sessions",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'db_table': 'user_sessions',
-                'indexes': [models.Index(fields=['user', 'is_active'], name='user_sessio_user_id_bb1b83_idx'), models.Index(fields=['session_id'], name='user_sessio_session_e62ba3_idx'), models.Index(fields=['expires_at'], name='user_sessio_expires_66ae96_idx')],
+                "db_table": "user_sessions",
+                "indexes": [
+                    models.Index(
+                        fields=["user", "is_active"],
+                        name="user_sessio_user_id_bb1b83_idx",
+                    ),
+                    models.Index(
+                        fields=["session_id"], name="user_sessio_session_e62ba3_idx"
+                    ),
+                    models.Index(
+                        fields=["expires_at"], name="user_sessio_expires_66ae96_idx"
+                    ),
+                ],
             },
         ),
     ]

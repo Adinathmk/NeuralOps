@@ -8,18 +8,53 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('users', '0008_alter_user_unique_together'),
+        ("users", "0008_alter_user_unique_together"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='auditlog',
-            name='user',
-            field=models.ForeignKey(blank=True, help_text='FK to the user at time of event; preserved even if email changes.', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='audit_logs', to=settings.AUTH_USER_MODEL),
+            model_name="auditlog",
+            name="user",
+            field=models.ForeignKey(
+                blank=True,
+                help_text="FK to the user at time of event; preserved even if email changes.",
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="audit_logs",
+                to=settings.AUTH_USER_MODEL,
+            ),
         ),
         migrations.AlterField(
-            model_name='auditlog',
-            name='action',
-            field=models.CharField(choices=[('USER_CREATED', 'User Created'), ('USER_UPDATED', 'User Updated'), ('USER_DELETED', 'User Deleted'), ('ROLE_CHANGED', 'Role Changed'), ('API_KEY_CREATED', 'API Key Created'), ('API_KEY_REVOKED', 'API Key Revoked'), ('USER_INVITED', 'User Invited'), ('USER_INVITE_ACCEPTED', 'User Invite Accepted'), ('USER_INVITE_CANCELLED', 'User Invite Cancelled'), ('USER_INVITE_RESENT', 'User Invite Resent'), ('LOGIN', 'Login'), ('LOGIN_FAILED', 'Login Failed'), ('LOGOUT', 'Logout'), ('TOKEN_REVOKED', 'Token Revoked'), ('PASSWORD_RESET_REQUESTED', 'Password Reset Requested'), ('PASSWORD_RESET_COMPLETED', 'Password Reset Completed'), ('EMAIL_VERIFIED', 'Email Verified'), ('MFA_SETUP', 'MFA Setup'), ('MFA_VERIFIED', 'MFA Verified'), ('MFA_DISABLED', 'MFA Disabled'), ('TENANT_CREATED', 'Tenant Created'), ('TENANT_SUSPENDED', 'Tenant Suspended'), ('TENANT_REACTIVATED', 'Tenant Reactivated'), ('TENANT_CONFIG_UPDATED', 'Tenant Config Updated')], max_length=50),
+            model_name="auditlog",
+            name="action",
+            field=models.CharField(
+                choices=[
+                    ("USER_CREATED", "User Created"),
+                    ("USER_UPDATED", "User Updated"),
+                    ("USER_DELETED", "User Deleted"),
+                    ("ROLE_CHANGED", "Role Changed"),
+                    ("API_KEY_CREATED", "API Key Created"),
+                    ("API_KEY_REVOKED", "API Key Revoked"),
+                    ("USER_INVITED", "User Invited"),
+                    ("USER_INVITE_ACCEPTED", "User Invite Accepted"),
+                    ("USER_INVITE_CANCELLED", "User Invite Cancelled"),
+                    ("USER_INVITE_RESENT", "User Invite Resent"),
+                    ("LOGIN", "Login"),
+                    ("LOGIN_FAILED", "Login Failed"),
+                    ("LOGOUT", "Logout"),
+                    ("TOKEN_REVOKED", "Token Revoked"),
+                    ("PASSWORD_RESET_REQUESTED", "Password Reset Requested"),
+                    ("PASSWORD_RESET_COMPLETED", "Password Reset Completed"),
+                    ("EMAIL_VERIFIED", "Email Verified"),
+                    ("MFA_SETUP", "MFA Setup"),
+                    ("MFA_VERIFIED", "MFA Verified"),
+                    ("MFA_DISABLED", "MFA Disabled"),
+                    ("TENANT_CREATED", "Tenant Created"),
+                    ("TENANT_SUSPENDED", "Tenant Suspended"),
+                    ("TENANT_REACTIVATED", "Tenant Reactivated"),
+                    ("TENANT_CONFIG_UPDATED", "Tenant Config Updated"),
+                ],
+                max_length=50,
+            ),
         ),
     ]

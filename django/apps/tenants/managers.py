@@ -16,8 +16,9 @@ without scoping first):
 """
 
 import threading
+
+from django.contrib.auth.models import BaseUserManager
 from django.db import models
-from django.contrib.auth.models import  BaseUserManager
 
 # ---------------------------------------------------------------------------
 # Thread-local storage for the current tenant context.
@@ -46,6 +47,7 @@ def clear_current_tenant():
 # ---------------------------------------------------------------------------
 # Queryset
 # ---------------------------------------------------------------------------
+
 
 class TenantQuerySet(models.QuerySet):
     """
@@ -80,6 +82,7 @@ class TenantQuerySet(models.QuerySet):
 # Manager
 # ---------------------------------------------------------------------------
 
+
 class TenantManager(models.Manager):
     """
     Default manager that uses TenantQuerySet.
@@ -110,45 +113,41 @@ class TenantManager(models.Manager):
         return TenantQuerySet(self.model, using=self._db)
 
 
-
-
-
-
 class UserManager(BaseUserManager):
     """Custom user manager for multi-tenant User model."""
-    
+
     def create_user(self, email, password, tenant=None, **extra_fields):
         """Create a regular user (requires tenant)."""
         if not email:
-            raise ValueError('Email is required')
-        
-        if not tenant and not extra_fields.get('is_superuser'):
-            raise ValueError('Tenant is required for regular users')
-        
+            raise ValueError("Email is required")
+
+        if not tenant and not extra_fields.get("is_superuser"):
+            raise ValueError("Tenant is required for regular users")
+
         email = self.normalize_email(email)
-        
+
         # Check email uniqueness per tenant (or globally if no tenant)
         if tenant and self.filter(email=email, tenant=tenant).exists():
-            raise ValueError(f'User with email {email} already exists in this tenant')
-        
+            raise ValueError(f"User with email {email} already exists in this tenant")
+
         user = self.model(email=email, tenant=tenant, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
-        
+
         return user
-    
+
     def create_superuser(self, email, password, **extra_fields):
         """Create a platform superuser (no tenant required)."""
-        extra_fields.setdefault('is_staff', True)
-        extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('is_superadmin', True)
-        extra_fields.setdefault('role', 'owner')
-        
-        if extra_fields.get('is_staff') is not True:
-            raise ValueError('Superuser must have is_staff=True')
-        
-        if extra_fields.get('is_superuser') is not True:
-            raise ValueError('Superuser must have is_superuser=True')
-        
+        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_superuser", True)
+        extra_fields.setdefault("is_superadmin", True)
+        extra_fields.setdefault("role", "owner")
+
+        if extra_fields.get("is_staff") is not True:
+            raise ValueError("Superuser must have is_staff=True")
+
+        if extra_fields.get("is_superuser") is not True:
+            raise ValueError("Superuser must have is_superuser=True")
+
         # Platform superusers don't need a tenant
         return self.create_user(email, password, tenant=None, **extra_fields)

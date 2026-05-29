@@ -24,13 +24,12 @@ from __future__ import annotations
 
 import logging
 
-from django.db import transaction
-from rest_framework.views import APIView
-from drf_spectacular.utils import extend_schema
-
 from core.permissions import IsTenantAdmin
 from core.responses import APIResponse
+from django.db import transaction
+from drf_spectacular.utils import extend_schema
 from outbox.mixins import write_outbox
+from rest_framework.views import APIView
 from users.models import AuditLog
 
 from .models import GitHubIntegration
@@ -87,7 +86,7 @@ class GitHubIntegrationView(APIView):
     @extend_schema(
         summary="Retrieve GitHub Integration",
         description="Returns the current repository connection metadata and indexing status for the authenticated tenant (credentials are excluded).",
-        responses={200: GitHubIntegrationStatusSerializer}
+        responses={200: GitHubIntegrationStatusSerializer},
     )
     def get(self, request) -> APIResponse:
         """
@@ -122,8 +121,8 @@ class GitHubIntegrationView(APIView):
         request=GitHubIntegrationSerializer,
         responses={
             200: GitHubIntegrationStatusSerializer,
-            201: GitHubIntegrationStatusSerializer
-        }
+            201: GitHubIntegrationStatusSerializer,
+        },
     )
     def post(self, request) -> APIResponse:
         """
@@ -154,7 +153,7 @@ class GitHubIntegrationView(APIView):
         serializer = GitHubIntegrationSerializer(
             instance=existing,
             data=request.data,
-            partial=not is_create,   # Full validation on create; partial on update
+            partial=not is_create,  # Full validation on create; partial on update
         )
 
         if not serializer.is_valid():

@@ -1,4 +1,5 @@
 import uuid
+
 from django.db import models
 from tenants.models import Tenant
 
@@ -47,7 +48,9 @@ class AlertRule(models.Model):
             )
             # Refresh from the expression result so the instance is accurate.
             self.source_version = (
-                AlertRule.objects.filter(pk=self.pk).values_list("source_version", flat=True).get()
+                AlertRule.objects.filter(pk=self.pk)
+                .values_list("source_version", flat=True)
+                .get()
             )
         super().save(*args, **kwargs)
 

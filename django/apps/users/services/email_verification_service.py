@@ -3,8 +3,8 @@ import logging
 from django.conf import settings
 
 from ..authentication import JWTAuthentication
-from ..models import User, EmailVerification, AuditLog
 from ..email import email_service
+from ..models import AuditLog, EmailVerification, User
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +35,9 @@ class EmailVerificationService:
         access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
 
         AuditLog.log(
-            action='EMAIL_VERIFIED',
+            action="EMAIL_VERIFIED",
             user=user,
-            resource_type='EmailVerification',
+            resource_type="EmailVerification",
             resource_id=str(verification_obj.id),
             ip_address=JWTAuthentication._get_client_ip(request),
         )
@@ -45,7 +45,6 @@ class EmailVerificationService:
         logger.info(f"Email verified for user {user.email}")
 
         return user, access_token, refresh_token
-
 
     @staticmethod
     def resend_verification(email):
@@ -77,12 +76,10 @@ class EmailVerificationService:
                 email_service.send_verification_email(
                     user=user,
                     verification_token=verification.token,
-                    frontend_url=frontend_url
+                    frontend_url=frontend_url,
                 )
             except Exception as e:
-                logger.error(
-                    f"Failed to send verification email to {email}: {str(e)}"
-                )
+                logger.error(f"Failed to send verification email to {email}: {str(e)}")
 
             logger.info(f"Verification email resent to {email}")
 

@@ -10,50 +10,112 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('users', '0006_alter_userinvitation_unique_together_and_more'),
+        ("users", "0006_alter_userinvitation_unique_together_and_more"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='MFAVerificationToken',
+            name="MFAVerificationToken",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('token', models.CharField(db_index=True, default=users.models.generate_mfa_token, max_length=255, unique=True)),
-                ('expires_at', models.DateTimeField(default=users.models.mfa_token_expiry)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='mfa_tokens', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "token",
+                    models.CharField(
+                        db_index=True,
+                        default=users.models.generate_mfa_token,
+                        max_length=255,
+                        unique=True,
+                    ),
+                ),
+                (
+                    "expires_at",
+                    models.DateTimeField(default=users.models.mfa_token_expiry),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="mfa_tokens",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'db_table': 'mfa_verification_tokens',
+                "db_table": "mfa_verification_tokens",
             },
         ),
         migrations.CreateModel(
-            name='TOTPDevice',
+            name="TOTPDevice",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('secret_key', models.CharField(max_length=255)),
-                ('is_confirmed', models.BooleanField(default=False, help_text='True = MFA is active, user must use TOTP on login')),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('confirmed_at', models.DateTimeField(blank=True, null=True)),
-                ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='totp_device', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                ("secret_key", models.CharField(max_length=255)),
+                (
+                    "is_confirmed",
+                    models.BooleanField(
+                        default=False,
+                        help_text="True = MFA is active, user must use TOTP on login",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("confirmed_at", models.DateTimeField(blank=True, null=True)),
+                (
+                    "user",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="totp_device",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'db_table': 'totp_devices',
+                "db_table": "totp_devices",
             },
         ),
         migrations.CreateModel(
-            name='BackupCode',
+            name="BackupCode",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('code_hash', models.CharField(max_length=255)),
-                ('is_used', models.BooleanField(default=False)),
-                ('used_at', models.DateTimeField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='backup_codes', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                ("code_hash", models.CharField(max_length=255)),
+                ("is_used", models.BooleanField(default=False)),
+                ("used_at", models.DateTimeField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="backup_codes",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'db_table': 'backup_codes',
-                'unique_together': {('user', 'code_hash')},
+                "db_table": "backup_codes",
+                "unique_together": {("user", "code_hash")},
             },
         ),
     ]

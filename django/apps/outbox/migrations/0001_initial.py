@@ -8,36 +8,53 @@ class Migration(migrations.Migration):
 
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='OutboxEvent',
+            name="OutboxEvent",
             fields=[
-                ('event_id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('topic', models.CharField(max_length=256)),
-                ('key', models.CharField(max_length=256)),
-                ('payload', models.JSONField()),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('published', models.BooleanField(default=False)),
+                (
+                    "event_id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                ("topic", models.CharField(max_length=256)),
+                ("key", models.CharField(max_length=256)),
+                ("payload", models.JSONField()),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("published", models.BooleanField(default=False)),
             ],
             options={
-                'db_table': 'outbox',
-                'indexes': [models.Index(fields=['published', 'created_at'], name='outbox_publish_eda034_idx')],
+                "db_table": "outbox",
+                "indexes": [
+                    models.Index(
+                        fields=["published", "created_at"],
+                        name="outbox_publish_eda034_idx",
+                    )
+                ],
             },
         ),
         migrations.CreateModel(
-            name='ProcessedEvent',
+            name="ProcessedEvent",
             fields=[
-                ('event_id', models.UUIDField(primary_key=True, serialize=False)),
-                ('consumer_group', models.CharField(max_length=128)),
-                ('topic', models.CharField(max_length=256)),
-                ('processed_at', models.DateTimeField(auto_now_add=True)),
+                ("event_id", models.UUIDField(primary_key=True, serialize=False)),
+                ("consumer_group", models.CharField(max_length=128)),
+                ("topic", models.CharField(max_length=256)),
+                ("processed_at", models.DateTimeField(auto_now_add=True)),
             ],
             options={
-                'db_table': 'processed_events',
-                'indexes': [models.Index(fields=['consumer_group', 'topic'], name='processed_e_consume_cb0d69_idx')],
+                "db_table": "processed_events",
+                "indexes": [
+                    models.Index(
+                        fields=["consumer_group", "topic"],
+                        name="processed_e_consume_cb0d69_idx",
+                    )
+                ],
             },
         ),
     ]

@@ -1,8 +1,9 @@
+import logging
+
+import jwt
 from django.conf import settings
 from django.db import connection
 from django.http import JsonResponse
-import jwt
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -37,19 +38,19 @@ class TenantMiddleware:
         #
         # In local development or direct service access,
         # we fall back to JWT decoding below.
-        gateway_tenant_id = request.META.get('HTTP_X_TENANT_ID')
-        gateway_user_id = request.META.get('HTTP_X_USER_ID')
-        gateway_user_role = request.META.get('HTTP_X_USER_ROLE')
+        gateway_tenant_id = request.META.get("HTTP_X_TENANT_ID")
+        gateway_user_id = request.META.get("HTTP_X_USER_ID")
+        gateway_user_role = request.META.get("HTTP_X_USER_ROLE")
 
         if gateway_user_id and gateway_tenant_id:
             # Gateway already validated the token
             request.tenant_id = gateway_tenant_id
             request.user_id = gateway_user_id
             request.user_role = gateway_user_role
-            request.user_email = request.META.get('HTTP_X_USER_EMAIL', '')
+            request.user_email = request.META.get("HTTP_X_USER_EMAIL", "")
 
             request.is_superadmin = (
-                request.META.get('HTTP_X_IS_SUPERADMIN', 'false').lower() == 'true'
+                request.META.get("HTTP_X_IS_SUPERADMIN", "false").lower() == "true"
             )
 
             logger.debug(
@@ -63,18 +64,18 @@ class TenantMiddleware:
             # ─────────────────────────────────────────
             # No gateway headers → decode JWT directly
             # ─────────────────────────────────────────
-            auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+            auth_header = request.META.get("HTTP_AUTHORIZATION", "")
 
-            if auth_header.startswith('Bearer '):
+            if auth_header.startswith("Bearer "):
                 try:
-                    token = auth_header.split(' ')[1]
+                    token = auth_header.split(" ")[1]
                     payload = self._verify_jwt_token(token)
 
-                    request.tenant_id = payload.get('tenant_id')
-                    request.user_id = payload.get('user_id')
-                    request.user_email = payload.get('email')
-                    request.user_role = payload.get('role')
-                    request.is_superadmin = payload.get('is_superadmin', False)
+                    request.tenant_id = payload.get("tenant_id")
+                    request.user_id = payload.get("user_id")
+                    request.user_email = payload.get("email")
+                    request.user_role = payload.get("role")
+                    request.is_superadmin = payload.get("is_superadmin", False)
 
                     logger.debug(
                         f"Tenant context: "
@@ -102,23 +103,20 @@ class TenantMiddleware:
         # Since these views are strictly controlled and don't expose
         # tenant data, we bypass RLS for them.
         UNRESTRICTED_PATHS = [
-            '/api/auth/login',
-            '/api/auth/register',
-            '/api/auth/forgot-password',
-            '/api/auth/reset-password',
-            '/api/auth/verify-email',
-            '/api/auth/resend-verification',
-            '/api/auth/refresh-token',
-            '/api/auth/google/callback',
-            '/api/auth/github/callback',
-            '/api/auth/mfa/',
-            '/api/invitations/'
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/auth/forgot-password",
+            "/api/auth/reset-password",
+            "/api/auth/verify-email",
+            "/api/auth/resend-verification",
+            "/api/auth/refresh-token",
+            "/api/auth/google/callback",
+            "/api/auth/github/callback",
+            "/api/auth/mfa/",
+            "/api/invitations/",
         ]
 
-        is_unrestricted = any(
-            request.path.startswith(p)
-            for p in UNRESTRICTED_PATHS
-        )
+        is_unrestricted = any(request.path.startswith(p) for p in UNRESTRICTED_PATHS)
 
         # ─────────────────────────────────────────────
         # Tenant Suspension Check
@@ -126,22 +124,18 @@ class TenantMiddleware:
         # Fast O(1) Redis EXISTS — runs before any view or DB query.
         # Skipped for auth/unrestricted paths and superadmins.
 
-        if (
-            request.tenant_id
-            and not is_unrestricted
-            and not request.is_superadmin
-        ):
+        if request.tenant_id and not is_unrestricted and not request.is_superadmin:
             from users.cache import cache_manager
 
-            suspended_key = f'tenant:{request.tenant_id}:suspended'
+            suspended_key = f"tenant:{request.tenant_id}:suspended"
 
             try:
                 if cache_manager.redis_client.exists(suspended_key):
                     return JsonResponse(
                         {
-                            'success': False,
-                            'message': 'Your organization account is suspended.',
-                            'code': 'tenant_suspended',
+                            "success": False,
+                            "message": "Your organization account is suspended.",
+                            "code": "tenant_suspended",
                         },
                         status=403,
                     )
@@ -156,35 +150,25 @@ class TenantMiddleware:
                 if is_unrestricted or request.is_superadmin:
                     # Auth endpoint or platform admin:
                     # explicit RLS bypass
-                    cursor.execute(
-                        "SELECT set_config('app.bypass_rls', 'on', false)"
-                    )
+                    cursor.execute("SELECT set_config('app.bypass_rls', 'on', false)")
 
-                    cursor.execute(
-                        "SELECT set_config('app.current_tenant', '', false)"
-                    )
+                    cursor.execute("SELECT set_config('app.current_tenant', '', false)")
 
                 elif request.tenant_id:
                     # Normal tenant: strict isolation
-                    cursor.execute(
-                        "SELECT set_config('app.bypass_rls', 'off', false)"
-                    )
+                    cursor.execute("SELECT set_config('app.bypass_rls', 'off', false)")
 
                     cursor.execute(
                         "SELECT set_config('app.current_tenant', %s, false)",
-                        [str(request.tenant_id)]
+                        [str(request.tenant_id)],
                     )
 
                 else:
                     # Unauthenticated / invalid:
                     # fail closed
-                    cursor.execute(
-                        "SELECT set_config('app.bypass_rls', 'off', false)"
-                    )
+                    cursor.execute("SELECT set_config('app.bypass_rls', 'off', false)")
 
-                    cursor.execute(
-                        "SELECT set_config('app.current_tenant', '', false)"
-                    )
+                    cursor.execute("SELECT set_config('app.current_tenant', '', false)")
 
             # Process request
             response = self.get_response(request)
@@ -222,14 +206,10 @@ class TenantMiddleware:
         algorithm = settings.JWT_ALGORITHM
 
         try:
-            return jwt.decode(
-                token,
-                public_key,
-                algorithms=[algorithm]
-            )
+            return jwt.decode(token, public_key, algorithms=[algorithm])
 
         except jwt.ExpiredSignatureError:
-            raise jwt.ExpiredSignatureError('Token has expired')
+            raise jwt.ExpiredSignatureError("Token has expired")
 
         except jwt.InvalidTokenError as e:
-            raise jwt.InvalidTokenError(f'Invalid token: {str(e)}')
+            raise jwt.InvalidTokenError(f"Invalid token: {str(e)}")

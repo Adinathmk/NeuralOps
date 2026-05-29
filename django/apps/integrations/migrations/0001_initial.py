@@ -3,6 +3,7 @@ django/apps/integrations/migrations/0001_initial.py
 
 Creates the github_integrations table and enables Row-Level Security.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -126,11 +127,12 @@ class Migration(migrations.Migration):
                 "db_table": "github_integrations",
                 "indexes": [
                     models.Index(fields=["tenant"], name="gh_integ_tenant_idx"),
-                    models.Index(fields=["indexing_status"], name="gh_integ_status_idx"),
+                    models.Index(
+                        fields=["indexing_status"], name="gh_integ_status_idx"
+                    ),
                 ],
             },
         ),
-
         # ── Enable Row-Level Security ──────────────────────────────────────────
         migrations.RunSQL(
             sql="""

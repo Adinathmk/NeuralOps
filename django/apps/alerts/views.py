@@ -1,12 +1,12 @@
 import logging
-from django.db import transaction
-from rest_framework import viewsets, status
-from rest_framework.exceptions import NotFound, PermissionDenied
-from drf_spectacular.utils import extend_schema_view, extend_schema
 
 from core.permissions import IsTenantAdmin
 from core.responses import APIResponse
+from django.db import transaction
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from outbox.mixins import write_outbox
+from rest_framework import status, viewsets
+from rest_framework.exceptions import NotFound, PermissionDenied
 
 from .models import AlertRule
 from .serializers import AlertRuleSerializer
@@ -17,10 +17,22 @@ logger = logging.getLogger(__name__)
 @extend_schema_view(
     list=extend_schema(summary="List Alert Rules"),
     retrieve=extend_schema(summary="Retrieve Alert Rule"),
-    create=extend_schema(summary="Create Alert Rule", request=AlertRuleSerializer, responses={201: AlertRuleSerializer}),
-    update=extend_schema(summary="Update Alert Rule", request=AlertRuleSerializer, responses={200: AlertRuleSerializer}),
-    partial_update=extend_schema(summary="Partial Update Alert Rule", request=AlertRuleSerializer, responses={200: AlertRuleSerializer}),
-    destroy=extend_schema(summary="Delete Alert Rule")
+    create=extend_schema(
+        summary="Create Alert Rule",
+        request=AlertRuleSerializer,
+        responses={201: AlertRuleSerializer},
+    ),
+    update=extend_schema(
+        summary="Update Alert Rule",
+        request=AlertRuleSerializer,
+        responses={200: AlertRuleSerializer},
+    ),
+    partial_update=extend_schema(
+        summary="Partial Update Alert Rule",
+        request=AlertRuleSerializer,
+        responses={200: AlertRuleSerializer},
+    ),
+    destroy=extend_schema(summary="Delete Alert Rule"),
 )
 class AlertRuleViewSet(viewsets.ViewSet):
     """
@@ -81,7 +93,9 @@ class AlertRuleViewSet(viewsets.ViewSet):
         tenant_id = self._get_tenant_id(request)
         rule = self._get_rule_or_404(pk, tenant_id)
         serializer = AlertRuleSerializer(rule)
-        return APIResponse.success(data=serializer.data, message="Alert rule retrieved.")
+        return APIResponse.success(
+            data=serializer.data, message="Alert rule retrieved."
+        )
 
     # ── Create ────────────────────────────────────────────────────────────────
 
@@ -107,7 +121,10 @@ class AlertRuleViewSet(viewsets.ViewSet):
                 source_version=rule.source_version,
             )
 
-        logger.info("alert_rule_created", extra={"rule_id": str(rule.id), "tenant_id": str(tenant_id)})
+        logger.info(
+            "alert_rule_created",
+            extra={"rule_id": str(rule.id), "tenant_id": str(tenant_id)},
+        )
         return APIResponse.success(
             data=AlertRuleSerializer(rule).data,
             message="Alert rule created.",
@@ -147,8 +164,13 @@ class AlertRuleViewSet(viewsets.ViewSet):
                 source_version=rule.source_version,
             )
 
-        logger.info("alert_rule_updated", extra={"rule_id": str(rule.id), "tenant_id": str(tenant_id)})
-        return APIResponse.success(data=AlertRuleSerializer(rule).data, message="Alert rule updated.")
+        logger.info(
+            "alert_rule_updated",
+            extra={"rule_id": str(rule.id), "tenant_id": str(tenant_id)},
+        )
+        return APIResponse.success(
+            data=AlertRuleSerializer(rule).data, message="Alert rule updated."
+        )
 
     # ── Destroy ───────────────────────────────────────────────────────────────
 
@@ -177,5 +199,8 @@ class AlertRuleViewSet(viewsets.ViewSet):
                 source_version=source_version,
             )
 
-        logger.info("alert_rule_deleted", extra={"rule_id": rule_id, "tenant_id": str(tenant_id)})
+        logger.info(
+            "alert_rule_deleted",
+            extra={"rule_id": rule_id, "tenant_id": str(tenant_id)},
+        )
         return APIResponse.success(message="Alert rule deleted.")

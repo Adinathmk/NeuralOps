@@ -9,29 +9,69 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('users', '0004_passwordreset'),
+        ("users", "0004_passwordreset"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='OAuthAccount',
+            name="OAuthAccount",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('provider', models.CharField(choices=[('google', 'Google'), ('github', 'GitHub')], max_length=20)),
-                ('provider_user_id', models.CharField(max_length=255)),
-                ('provider_email', models.EmailField(max_length=254)),
-                ('provider_name', models.CharField(blank=True, max_length=255)),
-                ('provider_picture_url', models.URLField(blank=True)),
-                ('access_token', models.TextField(blank=True, help_text='Encrypted OAuth access token')),
-                ('refresh_token', models.TextField(blank=True, help_text='Encrypted OAuth refresh token')),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('last_used_at', models.DateTimeField(auto_now=True)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='oauth_accounts', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "provider",
+                    models.CharField(
+                        choices=[("google", "Google"), ("github", "GitHub")],
+                        max_length=20,
+                    ),
+                ),
+                ("provider_user_id", models.CharField(max_length=255)),
+                ("provider_email", models.EmailField(max_length=254)),
+                ("provider_name", models.CharField(blank=True, max_length=255)),
+                ("provider_picture_url", models.URLField(blank=True)),
+                (
+                    "access_token",
+                    models.TextField(
+                        blank=True, help_text="Encrypted OAuth access token"
+                    ),
+                ),
+                (
+                    "refresh_token",
+                    models.TextField(
+                        blank=True, help_text="Encrypted OAuth refresh token"
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("last_used_at", models.DateTimeField(auto_now=True)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="oauth_accounts",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'db_table': 'oauth_accounts',
-                'indexes': [models.Index(fields=['user', 'provider'], name='oauth_accou_user_id_cd9694_idx'), models.Index(fields=['provider', 'provider_user_id'], name='oauth_accou_provide_b9f40c_idx')],
-                'unique_together': {('provider', 'provider_user_id')},
+                "db_table": "oauth_accounts",
+                "indexes": [
+                    models.Index(
+                        fields=["user", "provider"],
+                        name="oauth_accou_user_id_cd9694_idx",
+                    ),
+                    models.Index(
+                        fields=["provider", "provider_user_id"],
+                        name="oauth_accou_provide_b9f40c_idx",
+                    ),
+                ],
+                "unique_together": {("provider", "provider_user_id")},
             },
         ),
     ]

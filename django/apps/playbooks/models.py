@@ -1,4 +1,5 @@
 import uuid
+
 from django.db import models
 from tenants.models import Tenant
 
@@ -37,7 +38,9 @@ class Playbook(models.Model):
                 source_version=models.F("source_version") + 1
             )
             self.source_version = (
-                Playbook.objects.filter(pk=self.pk).values_list("source_version", flat=True).get()
+                Playbook.objects.filter(pk=self.pk)
+                .values_list("source_version", flat=True)
+                .get()
             )
         super().save(*args, **kwargs)
 

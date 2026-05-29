@@ -1,4 +1,5 @@
 from django.contrib import admin
+
 from .models import AlertRule
 
 
@@ -31,5 +32,8 @@ class AlertRuleAdmin(admin.ModelAdmin):
                 )
             },
         ),
-        ("Versioning & Timestamps", {"fields": ("source_version", "created_at", "updated_at")}),
+        (
+            "Versioning & Timestamps",
+            {"fields": ("source_version", "created_at", "updated_at")},
+        ),
     )

@@ -1,14 +1,15 @@
 from django.db import migrations
 
+
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('users', '0009_auditlog_user_alter_auditlog_action'),
+        ("users", "0009_auditlog_user_alter_auditlog_action"),
     ]
 
     operations = [
         migrations.RunSQL(
-            sql='''
+            sql="""
                 -- API Keys
                 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
                 ALTER TABLE api_keys FORCE ROW LEVEL SECURITY;
@@ -58,8 +59,8 @@ class Migration(migrations.Migration):
                 ) WITH CHECK (
                     current_setting('app.bypass_rls', true) = 'on' OR tenant_id::text = current_setting('app.current_tenant', true)
                 );
-            ''',
-            reverse_sql='''
+            """,
+            reverse_sql="""
                 DROP POLICY IF EXISTS tenant_isolation_policy ON api_keys;
                 ALTER TABLE api_keys DISABLE ROW LEVEL SECURITY;
 
@@ -74,6 +75,6 @@ class Migration(migrations.Migration):
 
                 DROP POLICY IF EXISTS tenant_isolation_policy ON user_invitations;
                 ALTER TABLE user_invitations DISABLE ROW LEVEL SECURITY;
-            '''
+            """,
         )
     ]

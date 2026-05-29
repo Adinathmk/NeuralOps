@@ -8,23 +8,40 @@ class Migration(migrations.Migration):
 
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='SuperAdminAuditLog',
+            name="SuperAdminAuditLog",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('actor_user_id', models.UUIDField()),
-                ('action', models.CharField(choices=[('tenant_suspended', 'Tenant Suspended'), ('tenant_reinstated', 'Tenant Reinstated'), ('tenant_viewed', 'Tenant Viewed')], max_length=50)),
-                ('target_tenant_id', models.UUIDField(blank=True, null=True)),
-                ('notes', models.TextField(blank=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                ("actor_user_id", models.UUIDField()),
+                (
+                    "action",
+                    models.CharField(
+                        choices=[
+                            ("tenant_suspended", "Tenant Suspended"),
+                            ("tenant_reinstated", "Tenant Reinstated"),
+                            ("tenant_viewed", "Tenant Viewed"),
+                        ],
+                        max_length=50,
+                    ),
+                ),
+                ("target_tenant_id", models.UUIDField(blank=True, null=True)),
+                ("notes", models.TextField(blank=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
             ],
             options={
-                'db_table': 'superadmin_audit_logs',
-                'ordering': ['-created_at'],
+                "db_table": "superadmin_audit_logs",
+                "ordering": ["-created_at"],
             },
         ),
     ]

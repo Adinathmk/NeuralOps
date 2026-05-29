@@ -13,19 +13,20 @@ Add more dimensions (e.g., max pipelines, max alert rules) as your product grows
 """
 
 from dataclasses import dataclass
-from rest_framework.exceptions import PermissionDenied
 
+from rest_framework.exceptions import PermissionDenied
 
 # ---------------------------------------------------------------------------
 # Plan definitions
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class PlanQuota:
-    max_users: int          # -1 = unlimited
-    max_api_keys: int       # -1 = unlimited
+    max_users: int  # -1 = unlimited
+    max_api_keys: int  # -1 = unlimited
     max_retention_days: int
-    rate_limit: str         # DRF throttle rate format (e.g. '100/minute')
+    rate_limit: str  # DRF throttle rate format (e.g. '100/minute')
 
 
 PLAN_QUOTAS: dict[str, PlanQuota] = {
@@ -33,28 +34,29 @@ PLAN_QUOTAS: dict[str, PlanQuota] = {
         max_users=3,
         max_api_keys=2,
         max_retention_days=30,
-        rate_limit='100/minute',
+        rate_limit="100/minute",
     ),
     "pro": PlanQuota(
         max_users=25,
         max_api_keys=10,
         max_retention_days=90,
-        rate_limit='500/minute',
+        rate_limit="500/minute",
     ),
     "enterprise": PlanQuota(
-        max_users=-1,       # unlimited
-        max_api_keys=-1,    # unlimited
+        max_users=-1,  # unlimited
+        max_api_keys=-1,  # unlimited
         max_retention_days=365,
-        rate_limit='2000/minute',
+        rate_limit="2000/minute",
     ),
 }
 
-_DEFAULT_QUOTA = PLAN_QUOTAS["free"]   # safe fallback for unknown plan tiers
+_DEFAULT_QUOTA = PLAN_QUOTAS["free"]  # safe fallback for unknown plan tiers
 
 
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
+
 
 class QuotaService:
     """
@@ -86,15 +88,13 @@ class QuotaService:
 
         Call in InviteEngineerView before creating the UserInvitation.
         """
-        from users.models import User   # local import to avoid circular deps
+        from users.models import User  # local import to avoid circular deps
 
         quota = QuotaService._get_quota(tenant)
         if quota.max_users == -1:
             return  # unlimited
 
-        current_count = User.objects.filter(
-            tenant=tenant, is_active=True
-        ).count()
+        current_count = User.objects.filter(tenant=tenant, is_active=True).count()
 
         if current_count >= quota.max_users:
             raise PermissionDenied(
@@ -115,15 +115,13 @@ class QuotaService:
 
         Call in APIKeyCreateView before creating the key.
         """
-        from users.models import APIKey   # adjust import path if needed
+        from users.models import APIKey  # adjust import path if needed
 
         quota = QuotaService._get_quota(tenant)
         if quota.max_api_keys == -1:
             return  # unlimited
 
-        current_count = APIKey.objects.filter(
-            tenant=tenant, is_active=True
-        ).count()
+        current_count = APIKey.objects.filter(tenant=tenant, is_active=True).count()
 
         if current_count >= quota.max_api_keys:
             raise PermissionDenied(
@@ -160,7 +158,7 @@ class QuotaService:
         """
         Return current usage vs limits. Useful for a billing/usage endpoint.
         """
-        from users.models import User, APIKey
+        from users.models import APIKey, User
 
         quota = QuotaService._get_quota(tenant)
 
@@ -170,7 +168,7 @@ class QuotaService:
         def fmt(current, maximum):
             return {
                 "current": current,
-                "limit": maximum if maximum != -1 else None,   # None = unlimited
+                "limit": maximum if maximum != -1 else None,  # None = unlimited
                 "at_limit": maximum != -1 and current >= maximum,
             }
 

@@ -6,21 +6,23 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('tenants', '0003_tenantconfiguration_tenant_conf_tenant__216c25_idx'),
-        ('users', '0010_rls_policies'),
+        ("tenants", "0003_tenantconfiguration_tenant_conf_tenant__216c25_idx"),
+        ("users", "0010_rls_policies"),
     ]
 
     operations = [
         migrations.AddIndex(
-            model_name='apikey',
-            index=models.Index(fields=['tenant'], name='api_keys_tenant__54d768_idx'),
+            model_name="apikey",
+            index=models.Index(fields=["tenant"], name="api_keys_tenant__54d768_idx"),
         ),
         migrations.AddIndex(
-            model_name='auditlog',
-            index=models.Index(fields=['tenant'], name='audit_logs_tenant__e4709b_idx'),
+            model_name="auditlog",
+            index=models.Index(fields=["tenant"], name="audit_logs_tenant__e4709b_idx"),
         ),
         migrations.AddIndex(
-            model_name='usersession',
-            index=models.Index(fields=['tenant'], name='user_sessio_tenant__21e332_idx'),
+            model_name="usersession",
+            index=models.Index(
+                fields=["tenant"], name="user_sessio_tenant__21e332_idx"
+            ),
         ),
     ]

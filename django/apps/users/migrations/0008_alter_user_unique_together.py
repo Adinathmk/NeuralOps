@@ -6,12 +6,12 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('users', '0007_mfaverificationtoken_totpdevice_backupcode'),
+        ("users", "0007_mfaverificationtoken_totpdevice_backupcode"),
     ]
 
     operations = [
         migrations.AlterUniqueTogether(
-            name='user',
+            name="user",
             unique_together=set(),
         ),
     ]
