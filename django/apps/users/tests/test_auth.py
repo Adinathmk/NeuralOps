@@ -24,7 +24,7 @@ class TestRegisterView:
             "tenant_name": "New Company Inc",
         }
 
-        response = api_client.post("/api/auth/register", data, format="json")
+        response = api_client.post("/api/v1/auth/register", data, format="json")
 
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["success"] is True
@@ -51,7 +51,7 @@ class TestRegisterView:
             "tenant_name": "Test Co",
         }
 
-        response = api_client.post("/api/auth/register", data, format="json")
+        response = api_client.post("/api/v1/auth/register", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "password" in response.data["errors"]
@@ -65,7 +65,7 @@ class TestRegisterView:
             "tenant_name": "Test Co",
         }
 
-        response = api_client.post("/api/auth/register", data, format="json")
+        response = api_client.post("/api/v1/auth/register", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -78,7 +78,7 @@ class TestRegisterView:
             "tenant_name": "Other Company",
         }
 
-        response = api_client.post("/api/auth/register", data, format="json")
+        response = api_client.post("/api/v1/auth/register", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -88,7 +88,7 @@ class TestRegisterView:
             "email": "owner@test.com",
         }
 
-        response = api_client.post("/api/auth/register", data, format="json")
+        response = api_client.post("/api/v1/auth/register", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -104,7 +104,7 @@ class TestLoginView:
             "password": "TestPass123!",
         }
 
-        response = api_client.post("/api/auth/login", data, format="json")
+        response = api_client.post("/api/v1/auth/login", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
@@ -119,7 +119,7 @@ class TestLoginView:
             "password": "WrongPassword123!",
         }
 
-        response = api_client.post("/api/auth/login", data, format="json")
+        response = api_client.post("/api/v1/auth/login", data, format="json")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -130,7 +130,7 @@ class TestLoginView:
             "password": "TestPass123!",
         }
 
-        response = api_client.post("/api/auth/login", data, format="json")
+        response = api_client.post("/api/v1/auth/login", data, format="json")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -141,7 +141,7 @@ class TestLoginView:
             "password": "TestPass123!",
         }
 
-        response = api_client.post("/api/auth/login", data, format="json")
+        response = api_client.post("/api/v1/auth/login", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -156,14 +156,14 @@ class TestLogoutView:
 
     def test_logout_success(self, owner_client, owner_user):
         """Test successful logout."""
-        response = owner_client.post("/api/auth/logout", format="json")
+        response = owner_client.post("/api/v1/auth/logout", format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
 
     def test_logout_requires_auth(self, api_client):
         """Test logout requires authentication."""
-        response = api_client.post("/api/auth/logout", format="json")
+        response = api_client.post("/api/v1/auth/logout", format="json")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -174,14 +174,14 @@ class TestMeView:
 
     def test_get_current_user(self, owner_client, owner_user):
         """Test getting current user info."""
-        response = owner_client.get("/api/auth/me")
+        response = owner_client.get("/api/v1/auth/me")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["data"]["email"] == owner_user.email
 
     def test_me_requires_auth(self, api_client):
         """Test me endpoint requires authentication."""
-        response = api_client.get("/api/auth/me")
+        response = api_client.get("/api/v1/auth/me")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -192,14 +192,14 @@ class TestSessionListView:
 
     def test_list_sessions(self, owner_client, user_session):
         """Test listing user sessions."""
-        response = owner_client.get("/api/auth/sessions")
+        response = owner_client.get("/api/v1/auth/sessions")
 
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data) > 0
 
     def test_sessions_requires_auth(self, api_client):
         """Test sessions endpoint requires authentication."""
-        response = api_client.get("/api/auth/sessions")
+        response = api_client.get("/api/v1/auth/sessions")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -211,7 +211,7 @@ class TestRevokeSessionView:
     def test_revoke_session(self, owner_client, user_session):
         """Test revoking a session."""
         response = owner_client.post(
-            f"/api/auth/sessions/{user_session.id}/revoke", format="json"
+            f"/api/v1/auth/sessions/{user_session.id}/revoke", format="json"
         )
 
         assert response.status_code == status.HTTP_200_OK

@@ -35,7 +35,7 @@ class TestGoogleOAuthCallback:
             "code": "google-auth-code-xyz",
         }
 
-        response = api_client.post("/api/auth/google/callback", data, format="json")
+        response = api_client.post("/api/v1/auth/google/callback", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data["code"] == "auth_error"
@@ -61,7 +61,7 @@ class TestGoogleOAuthCallback:
             "code": "google-auth-code-xyz",
         }
 
-        response = api_client.post("/api/auth/google/callback", data, format="json")
+        response = api_client.post("/api/v1/auth/google/callback", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["data"]["email"] == user.email
@@ -85,7 +85,7 @@ class TestGoogleOAuthCallback:
             "invite_token": invitation.token,
         }
 
-        response = api_client.post("/api/auth/google/callback", data, format="json")
+        response = api_client.post("/api/v1/auth/google/callback", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -107,7 +107,7 @@ class TestGoogleOAuthCallback:
             "code": "invalid-code",
         }
 
-        response = api_client.post("/api/auth/google/callback", data, format="json")
+        response = api_client.post("/api/v1/auth/google/callback", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -118,7 +118,7 @@ class TestGoogleOAuthCallback:
             "invite_token": "invalid-invite-token",
         }
 
-        response = api_client.post("/api/auth/google/callback", data, format="json")
+        response = api_client.post("/api/v1/auth/google/callback", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -145,7 +145,7 @@ class TestGitHubOAuthCallback:
             "code": "github-auth-code-xyz",
         }
 
-        response = api_client.post("/api/auth/github/callback", data, format="json")
+        response = api_client.post("/api/v1/auth/github/callback", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data["code"] == "auth_error"
@@ -181,7 +181,7 @@ class TestGitHubOAuthCallback:
             "code": "github-auth-code-xyz",
         }
 
-        response = api_client.post("/api/auth/github/callback", data, format="json")
+        response = api_client.post("/api/v1/auth/github/callback", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["data"]["email"] == user.email
@@ -205,7 +205,7 @@ class TestGitHubOAuthCallback:
             "invite_token": invitation.token,
         }
 
-        response = api_client.post("/api/auth/github/callback", data, format="json")
+        response = api_client.post("/api/v1/auth/github/callback", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -223,6 +223,6 @@ class TestGitHubOAuthCallback:
             "code": "invalid-code",
         }
 
-        response = api_client.post("/api/auth/github/callback", data, format="json")
+        response = api_client.post("/api/v1/auth/github/callback", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST

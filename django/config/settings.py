@@ -165,7 +165,7 @@ AUTH_PASSWORD_VALIDATORS = [
 REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "core.exception_handler.custom_exception_handler",
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "users.authentication.JWTAuthentication",
+        "users.authentication.GatewayAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",

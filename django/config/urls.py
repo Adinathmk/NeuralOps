@@ -10,21 +10,28 @@ from drf_spectacular.views import (
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("api/", include("users.urls")),
-    path("api/tenant/", include("tenants.urls")),
-    path("api/alerts/", include("alerts.urls")),
-    path("api/playbooks/", include("playbooks.urls")),
-    path("api/integrations/", include("integrations.urls")),
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
-        "api/schema/swagger-ui/",
-        SpectacularSwaggerView.as_view(url_name="schema"),
-        name="swagger-ui",
-    ),
-    path(
-        "api/schema/redoc/",
-        SpectacularRedocView.as_view(url_name="schema"),
-        name="redoc",
+        "api/v1/",
+        include(
+            [
+                path("", include("users.urls")),
+                path("tenant/", include("tenants.urls")),
+                path("alerts/", include("alerts.urls")),
+                path("playbooks/", include("playbooks.urls")),
+                path("integrations/", include("integrations.urls")),
+                path("schema/", SpectacularAPIView.as_view(), name="schema"),
+                path(
+                    "schema/swagger-ui/",
+                    SpectacularSwaggerView.as_view(url_name="schema"),
+                    name="swagger-ui",
+                ),
+                path(
+                    "schema/redoc/",
+                    SpectacularRedocView.as_view(url_name="schema"),
+                    name="redoc",
+                ),
+            ]
+        ),
     ),
 ]
 

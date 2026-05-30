@@ -1,13 +1,6 @@
 # ============================================================
 # NeuralOps — Kong Declarative Configuration (DB-less mode)
 # ============================================================
-# Kong applies rate limiting and routes:
-#   /api/v1/*, /ws/*, /health  → FastAPI (port 8001)
-#   everything else            → Django  (port 8000)
-#
-# JWT validation is applied specifically to protected routes.
-# ============================================================
-
 _format_version: "3.0"
 _transform: true
 
@@ -36,11 +29,35 @@ services:
     routes:
       - name: auth-routes
         paths:
-          - /api/auth
+          - /api/v1/auth
         strip_path: false
         preserve_host: true
         protocols: [http, https]
-        # PUBLIC: No JWT validation required.
+        # PUBLIC: No JWT validation required at gateway (Django handles internally).
+
+      - name: invitations-routes
+        paths:
+          - /api/v1/invitations
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        # PUBLIC: Required for invitees accepting invites. Django secures private sub-paths.
+
+      - name: tenant-routes
+        paths:
+          - /api/v1/tenant
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
 
       - name: admin-routes
         paths:
@@ -58,9 +75,9 @@ services:
               add:
                 headers: ["X-Gateway-Validated: true"]
 
-      - name: tenants-routes
+      - name: alerts-routes
         paths:
-          - /api/tenants
+          - /api/v1/alerts
         strip_path: false
         preserve_host: true
         protocols: [http, https]
@@ -74,9 +91,9 @@ services:
               add:
                 headers: ["X-Gateway-Validated: true"]
 
-      - name: users-routes
+      - name: playbooks-routes
         paths:
-          - /api/users
+          - /api/v1/playbooks
         strip_path: false
         preserve_host: true
         protocols: [http, https]
@@ -90,9 +107,9 @@ services:
               add:
                 headers: ["X-Gateway-Validated: true"]
 
-      - name: billing-routes
+      - name: integrations-routes
         paths:
-          - /api/billing
+          - /api/v1/integrations
         strip_path: false
         preserve_host: true
         protocols: [http, https]
@@ -106,21 +123,13 @@ services:
               add:
                 headers: ["X-Gateway-Validated: true"]
 
-      - name: collaboration-routes
+      - name: schema-routes
         paths:
-          - /api/collaboration
+          - /api/v1/schema
         strip_path: false
         preserve_host: true
         protocols: [http, https]
-        plugins:
-          - name: jwt
-            config:
-              claims_to_verify: [exp]
-              key_claim_name: iss
-          - name: request-transformer
-            config:
-              add:
-                headers: ["X-Gateway-Validated: true"]
+        # PUBLIC: Django Spectacular API schema & Swagger/Redoc UI.
 
       - name: static-routes
         paths:
@@ -136,14 +145,21 @@ services:
         preserve_host: true
         protocols: [http, https]
 
-      # Django admin panel (Swagger, DRF browsable API, Django admin)
       - name: django-admin-panel
         paths:
           - /admin
         strip_path: false
         preserve_host: true
         protocols: [http, https]
-        # PUBLIC/Session Auth
+        # PUBLIC/Session Auth (Django handles internally).
+
+      - name: django-health-route
+        paths:
+          - /api/v1/health
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        # PUBLIC: Required for direct platform or gateway-based health monitoring.
 
   # ── FastAPI AI + Real-time Service ─────────────────────────────────────────
   - name: fastapi-service
@@ -154,9 +170,9 @@ services:
     read_timeout: 120000
     write_timeout: 120000
     routes:
-      - name: api-v1-routes
+      - name: fastapi-protected-routes
         paths:
-          - /api/v1
+          - /api/v1/ingest
         strip_path: false
         preserve_host: true
         protocols: [http, https]
@@ -169,6 +185,14 @@ services:
             config:
               add:
                 headers: ["X-Gateway-Validated: true"]
+
+      - name: fastapi-public-webhooks
+        paths:
+          - /api/v1/webhooks
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        # PUBLIC: Required for unauthenticated GitHub webhooks. FastAPI verifies cryptographically.
 
       - name: websocket-routes
         paths:
@@ -200,7 +224,7 @@ services:
 consumers:
   - username: neuralops-app
     jwt_secrets:
-      - key: neuralops-jwt-key          # matches the "iss" claim in Django-issued JWTs
+      - key: neuralops-jwt-key
         algorithm: RS256
         rsa_public_key: |
           -----BEGIN PUBLIC KEY-----
@@ -218,7 +242,7 @@ plugins:
   # ── Rate Limiting ─────────────────────────────────────────────────────────
   - name: rate-limiting
     config:
-      minute: 60
+      minute: 3000
       policy: local
       hide_client_headers: false
       fault_tolerant: true
@@ -244,12 +268,15 @@ plugins:
         - Content-Type
         - Date
         - Authorization
+        - X-Requested-With
+        - X-Request-ID
+        - X-Gateway-Validated
       exposed_headers:
         - X-Auth-Token
       credentials: true
       max_age: 3600
 
-  # ── JWT Claims Injection (FastAPI Strategy 1) ─────────────────────────────
+  # ── JWT Claims Injection (Enhanced pre-function) ─────────────────────────────
   - name: pre-function
     config:
       access:
@@ -272,6 +299,8 @@ plugins:
                   if payload.tenant_id then kong.service.request.set_header("x-tenant-id", payload.tenant_id) end
                   if payload.user_id then kong.service.request.set_header("x-user-id", payload.user_id) end
                   if payload.role then kong.service.request.set_header("x-user-role", payload.role) end
+                  if payload.email then kong.service.request.set_header("x-user-email", payload.email) end
+                  if payload.is_superadmin ~= nil then kong.service.request.set_header("x-is-superadmin", tostring(payload.is_superadmin)) end
                 end
               end
             end

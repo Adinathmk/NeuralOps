@@ -103,17 +103,17 @@ class TenantMiddleware:
         # Since these views are strictly controlled and don't expose
         # tenant data, we bypass RLS for them.
         UNRESTRICTED_PATHS = [
-            "/api/auth/login",
-            "/api/auth/register",
-            "/api/auth/forgot-password",
-            "/api/auth/reset-password",
-            "/api/auth/verify-email",
-            "/api/auth/resend-verification",
-            "/api/auth/refresh-token",
-            "/api/auth/google/callback",
-            "/api/auth/github/callback",
-            "/api/auth/mfa/",
-            "/api/invitations/",
+            "/api/v1/auth/login",
+            "/api/v1/auth/register",
+            "/api/v1/auth/forgot-password",
+            "/api/v1/auth/reset-password",
+            "/api/v1/auth/verify-email",
+            "/api/v1/auth/resend-verification",
+            "/api/v1/auth/refresh-token",
+            "/api/v1/auth/google/callback",
+            "/api/v1/auth/github/callback",
+            "/api/v1/auth/mfa/",
+            "/api/v1/invitations/",
         ]
 
         is_unrestricted = any(request.path.startswith(p) for p in UNRESTRICTED_PATHS)

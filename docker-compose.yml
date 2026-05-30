@@ -97,7 +97,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -120,6 +120,7 @@ services:
       KONG_LOG_LEVEL: info
       KONG_NGINX_WORKER_PROCESSES: "1"
       KONG_MEM_CACHE_SIZE: "32m"
+      KONG_UNTRUSTED_LUA: "on"
     volumes:
       - ./kong/kong.yml:/usr/local/kong/declarative/kong.yml:ro
     ports:

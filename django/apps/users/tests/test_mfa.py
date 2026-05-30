@@ -19,7 +19,7 @@ class TestSetupMFAView:
 
     def test_setup_mfa_success(self, owner_client, owner_user):
         """Test successful MFA setup."""
-        response = owner_client.get("/api/auth/mfa/setup")
+        response = owner_client.get("/api/v1/auth/mfa/setup")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
@@ -32,7 +32,7 @@ class TestSetupMFAView:
         """Test that setup creates TOTP device."""
         from users.models import TOTPDevice
 
-        response = owner_client.get("/api/auth/mfa/setup")
+        response = owner_client.get("/api/v1/auth/mfa/setup")
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -50,7 +50,7 @@ class TestSetupMFAView:
         )
 
         # Setup MFA again
-        response = owner_client.get("/api/auth/mfa/setup")
+        response = owner_client.get("/api/v1/auth/mfa/setup")
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -59,7 +59,7 @@ class TestSetupMFAView:
 
     def test_setup_mfa_requires_auth(self, api_client):
         """Test setup requires authentication."""
-        response = api_client.get("/api/auth/mfa/setup")
+        response = api_client.get("/api/v1/auth/mfa/setup")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -73,7 +73,7 @@ class TestConfirmMFAView:
         from users.models import BackupCode, TOTPDevice
 
         # Setup MFA first
-        owner_client.get("/api/auth/mfa/setup")
+        owner_client.get("/api/v1/auth/mfa/setup")
 
         # Get device and generate valid code
         device = TOTPDevice.objects.get(user=owner_user)
@@ -82,7 +82,7 @@ class TestConfirmMFAView:
 
         # Confirm MFA
         response = owner_client.post(
-            "/api/auth/mfa/confirm", {"code": code}, format="json"
+            "/api/v1/auth/mfa/confirm", {"code": code}, format="json"
         )
 
         assert response.status_code == status.HTTP_200_OK
@@ -102,11 +102,11 @@ class TestConfirmMFAView:
 
         """Test confirmation fails with invalid code."""
         # Setup MFA first
-        owner_client.get("/api/auth/mfa/setup")
+        owner_client.get("/api/v1/auth/mfa/setup")
 
         # Try invalid code
         response = owner_client.post(
-            "/api/auth/mfa/confirm", {"code": "000000"}, format="json"
+            "/api/v1/auth/mfa/confirm", {"code": "000000"}, format="json"
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -119,11 +119,11 @@ class TestConfirmMFAView:
     def test_confirm_mfa_invalid_format(self, owner_client):
         """Test confirmation fails with invalid code format."""
         # Setup MFA first
-        owner_client.get("/api/auth/mfa/setup")
+        owner_client.get("/api/v1/auth/mfa/setup")
 
         # Try non-numeric code
         response = owner_client.post(
-            "/api/auth/mfa/confirm", {"code": "abcdef"}, format="json"
+            "/api/v1/auth/mfa/confirm", {"code": "abcdef"}, format="json"
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -132,7 +132,7 @@ class TestConfirmMFAView:
         """Test confirmation fails if setup not started."""
         # Try to confirm without setup
         response = owner_client.post(
-            "/api/auth/mfa/confirm", {"code": "123456"}, format="json"
+            "/api/v1/auth/mfa/confirm", {"code": "123456"}, format="json"
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -141,7 +141,7 @@ class TestConfirmMFAView:
     def test_confirm_mfa_requires_auth(self, api_client):
         """Test confirmation requires authentication."""
         response = api_client.post(
-            "/api/auth/mfa/confirm", {"code": "123456"}, format="json"
+            "/api/v1/auth/mfa/confirm", {"code": "123456"}, format="json"
         )
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -151,12 +151,12 @@ class TestConfirmMFAView:
         from users.models import BackupCode, TOTPDevice
 
         # Setup and confirm
-        owner_client.get("/api/auth/mfa/setup")
+        owner_client.get("/api/v1/auth/mfa/setup")
         device = TOTPDevice.objects.get(user=owner_user)
         totp = pyotp.TOTP(device.secret_key)
 
         response = owner_client.post(
-            "/api/auth/mfa/confirm", {"code": totp.now()}, format="json"
+            "/api/v1/auth/mfa/confirm", {"code": totp.now()}, format="json"
         )
 
         # Check backup codes
@@ -200,7 +200,7 @@ class TestVerifyMFATokenView:
 
         # Verify token
         response = api_client.post(
-            "/api/auth/mfa/verify",
+            "/api/v1/auth/mfa/verify",
             {"mfa_token": mfa_token.token, "code": code},
             format="json",
         )
@@ -226,7 +226,7 @@ class TestVerifyMFATokenView:
 
         # Try invalid code
         response = api_client.post(
-            "/api/auth/mfa/verify",
+            "/api/v1/auth/mfa/verify",
             {"mfa_token": mfa_token.token, "code": "000000"},
             format="json",
         )
@@ -237,7 +237,7 @@ class TestVerifyMFATokenView:
     def test_verify_mfa_token_invalid_token(self, api_client):
         """Test verification fails with invalid token."""
         response = api_client.post(
-            "/api/auth/mfa/verify",
+            "/api/v1/auth/mfa/verify",
             {"mfa_token": "invalid-token", "code": "123456"},
             format="json",
         )
@@ -258,7 +258,7 @@ class TestVerifyMFATokenView:
         )
 
         response = api_client.post(
-            "/api/auth/mfa/verify",
+            "/api/v1/auth/mfa/verify",
             {"mfa_token": mfa_token.token, "code": "123456"},
             format="json",
         )
@@ -290,7 +290,7 @@ class TestVerifyMFATokenView:
 
         # Verify using the plain-text backup code string
         response = api_client.post(
-            "/api/auth/mfa/verify",
+            "/api/v1/auth/mfa/verify",
             {"mfa_token": mfa_token.token, "code": backup_code},
             format="json",
         )
@@ -318,7 +318,7 @@ class TestVerifyMFATokenView:
         for i in range(5):
             mfa_token = MFAVerificationToken.objects.create(user=owner_user)
             api_client.post(
-                "/api/auth/mfa/verify",
+                "/api/v1/auth/mfa/verify",
                 {"mfa_token": mfa_token.token, "code": "000000"},
                 format="json",
             )
@@ -326,7 +326,7 @@ class TestVerifyMFATokenView:
         # 6th attempt should be rate limited
         mfa_token = MFAVerificationToken.objects.create(user=owner_user)
         response = api_client.post(
-            "/api/auth/mfa/verify",
+            "/api/v1/auth/mfa/verify",
             {"mfa_token": mfa_token.token, "code": "000000"},
             format="json",
         )
@@ -356,7 +356,7 @@ class TestDisableMFAView:
 
         # Disable MFA
         response = owner_client.post(
-            "/api/auth/mfa/disable",
+            "/api/v1/auth/mfa/disable",
             {"password": "TestPass123!", "code": code},
             format="json",
         )
@@ -383,7 +383,7 @@ class TestDisableMFAView:
 
         # Try wrong password
         response = owner_client.post(
-            "/api/auth/mfa/disable",
+            "/api/v1/auth/mfa/disable",
             {"password": "WrongPassword123!", "code": totp.now()},
             format="json",
         )
@@ -402,7 +402,7 @@ class TestDisableMFAView:
 
         # Try wrong code
         response = owner_client.post(
-            "/api/auth/mfa/disable",
+            "/api/v1/auth/mfa/disable",
             {"password": "TestPass123!", "code": "000000"},
             format="json",
         )
@@ -413,7 +413,7 @@ class TestDisableMFAView:
     def test_disable_mfa_not_enabled(self, owner_client):
         """Test disable fails if MFA not enabled."""
         response = owner_client.post(
-            "/api/auth/mfa/disable",
+            "/api/v1/auth/mfa/disable",
             {"password": "TestPass123!", "code": "123456"},
             format="json",
         )
@@ -432,7 +432,7 @@ class TestDisableMFAView:
 
         # Try without code
         response = owner_client.post(
-            "/api/auth/mfa/disable",
+            "/api/v1/auth/mfa/disable",
             {
                 "password": "TestPass123!",
             },
@@ -445,7 +445,7 @@ class TestDisableMFAView:
     def test_disable_mfa_requires_auth(self, api_client):
         """Test disable requires authentication."""
         response = api_client.post(
-            "/api/auth/mfa/disable",
+            "/api/v1/auth/mfa/disable",
             {"password": "TestPass123!", "code": "123456"},
             format="json",
         )
@@ -468,7 +468,7 @@ class TestLoginWithMFA:
 
         # Login
         response = api_client.post(
-            "/api/auth/login",
+            "/api/v1/auth/login",
             {
                 "email": owner_user.email,
                 "password": "TestPass123!",
@@ -487,7 +487,7 @@ class TestLoginWithMFA:
         """Test login returns tokens when MFA not enabled."""
         # Login without MFA setup
         response = api_client.post(
-            "/api/auth/login",
+            "/api/v1/auth/login",
             {
                 "email": owner_user.email,
                 "password": "TestPass123!",

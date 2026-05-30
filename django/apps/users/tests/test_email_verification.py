@@ -18,7 +18,7 @@ class TestVerifyEmailView:
             "token": email_verification.token,
         }
 
-        response = api_client.post("/api/auth/verify-email", data, format="json")
+        response = api_client.post("/api/v1/auth/verify-email", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
@@ -37,7 +37,7 @@ class TestVerifyEmailView:
             "token": "invalid-token-xyz",
         }
 
-        response = api_client.post("/api/auth/verify-email", data, format="json")
+        response = api_client.post("/api/v1/auth/verify-email", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -53,7 +53,7 @@ class TestVerifyEmailView:
             "token": email_verification.token,
         }
 
-        response = api_client.post("/api/auth/verify-email", data, format="json")
+        response = api_client.post("/api/v1/auth/verify-email", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -71,7 +71,7 @@ class TestVerifyEmailView:
             "token": email_verification.token,
         }
 
-        response = api_client.post("/api/auth/verify-email", data, format="json")
+        response = api_client.post("/api/v1/auth/verify-email", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -86,7 +86,7 @@ class TestResendVerificationEmailView:
             "email": unverified_user.email,
         }
 
-        response = api_client.post("/api/auth/resend-verification", data, format="json")
+        response = api_client.post("/api/v1/auth/resend-verification", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
@@ -97,7 +97,7 @@ class TestResendVerificationEmailView:
             "email": "nonexistent@example.com",
         }
 
-        response = api_client.post("/api/auth/resend-verification", data, format="json")
+        response = api_client.post("/api/v1/auth/resend-verification", data, format="json")
 
         # Should not reveal if email exists
         assert response.status_code == status.HTTP_200_OK
@@ -108,6 +108,6 @@ class TestResendVerificationEmailView:
             "email": owner_user.email,
         }
 
-        response = api_client.post("/api/auth/resend-verification", data, format="json")
+        response = api_client.post("/api/v1/auth/resend-verification", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST

@@ -16,7 +16,7 @@ class TestAlertRuleAPI:
 
     @pytest.fixture(autouse=True)
     def setup_url(self):
-        self.list_url = "/api/alerts/alert-rules/"
+        self.list_url = "/api/v1/alerts/alert-rules/"
 
     def get_detail_url(self, rule_id):
         return f"{self.list_url}{rule_id}/"

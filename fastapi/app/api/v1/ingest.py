@@ -44,6 +44,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies.rate_limit import rate_limit_dependency
 from app.api.dependencies.tenant import get_validated_tenant
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -173,6 +174,7 @@ async def _upload_to_s3(
     "/ingest/logs",
     response_model=LogIngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(rate_limit_dependency)],
     summary="Ingest SDK log context buffer",
     description=(
         "Accepts the NeuralOps SDK's circular context-log buffer after an "

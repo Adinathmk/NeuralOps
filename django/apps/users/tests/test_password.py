@@ -18,7 +18,7 @@ class TestForgotPasswordView:
             "email": owner_user.email,
         }
 
-        response = api_client.post("/api/auth/forgot-password", data, format="json")
+        response = api_client.post("/api/v1/auth/forgot-password", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
@@ -33,7 +33,7 @@ class TestForgotPasswordView:
             "email": "nonexistent@example.com",
         }
 
-        response = api_client.post("/api/auth/forgot-password", data, format="json")
+        response = api_client.post("/api/v1/auth/forgot-password", data, format="json")
 
         # Should return success to prevent email enumeration
         assert response.status_code == status.HTTP_200_OK
@@ -51,7 +51,7 @@ class TestResetPasswordView:
             "new_password_confirm": "NewSecurePass123!",
         }
 
-        response = api_client.post("/api/auth/reset-password", data, format="json")
+        response = api_client.post("/api/v1/auth/reset-password", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
@@ -68,7 +68,7 @@ class TestResetPasswordView:
             "new_password_confirm": "NewSecurePass123!",
         }
 
-        response = api_client.post("/api/auth/reset-password", data, format="json")
+        response = api_client.post("/api/v1/auth/reset-password", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -80,7 +80,7 @@ class TestResetPasswordView:
             "new_password_confirm": "DifferentPass123!",
         }
 
-        response = api_client.post("/api/auth/reset-password", data, format="json")
+        response = api_client.post("/api/v1/auth/reset-password", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -92,7 +92,7 @@ class TestResetPasswordView:
             "new_password_confirm": "weak",
         }
 
-        response = api_client.post("/api/auth/reset-password", data, format="json")
+        response = api_client.post("/api/v1/auth/reset-password", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -108,7 +108,7 @@ class TestResetPasswordView:
             "new_password_confirm": "NewSecurePass123!",
         }
 
-        response = api_client.post("/api/auth/reset-password", data, format="json")
+        response = api_client.post("/api/v1/auth/reset-password", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -125,7 +125,7 @@ class TestChangePasswordView:
             "new_password_confirm": "NewSecurePass123!",
         }
 
-        response = owner_client.post("/api/auth/change-password", data, format="json")
+        response = owner_client.post("/api/v1/auth/change-password", data, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
@@ -142,7 +142,7 @@ class TestChangePasswordView:
             "new_password_confirm": "NewSecurePass123!",
         }
 
-        response = owner_client.post("/api/auth/change-password", data, format="json")
+        response = owner_client.post("/api/v1/auth/change-password", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -154,7 +154,7 @@ class TestChangePasswordView:
             "new_password_confirm": "DifferentPass123!",
         }
 
-        response = owner_client.post("/api/auth/change-password", data, format="json")
+        response = owner_client.post("/api/v1/auth/change-password", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -166,6 +166,6 @@ class TestChangePasswordView:
             "new_password_confirm": "NewSecurePass123!",
         }
 
-        response = api_client.post("/api/auth/change-password", data, format="json")
+        response = api_client.post("/api/v1/auth/change-password", data, format="json")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED

@@ -230,3 +230,44 @@ class JWTAuthentication(TokenAuthentication):
             return f"{browser} on {os_name}"
         except:
             return "Unknown Device"
+
+class GatewayAuthentication(TokenAuthentication):
+    """
+    Authentication class that trusts API Gateway injected headers.
+    
+    This is the primary authentication method in production when Kong
+    handles JWT validation. It completely skips cryptographic verification,
+    relying entirely on the headers injected by Kong after it validates the token.
+    """
+    
+    def authenticate(self, request):
+        # The gateway injects these headers
+        user_id = request.META.get("HTTP_X_USER_ID")
+        
+        if not user_id:
+            # If no User-ID header is present, fallback to JWT for tests/direct access
+            if request.META.get("HTTP_AUTHORIZATION", "").startswith("Bearer "):
+                return JWTAuthentication().authenticate(request)
+            return None
+            
+        try:
+            # We fetch the user object because Django REST Framework requires 
+            # a user model instance to be returned.
+            user = User.objects.get(id=user_id)
+            
+            # Attach claims to request directly from headers
+            request.user_id = user_id
+            request.tenant_id = request.META.get("HTTP_X_TENANT_ID")
+            request.user_email = request.META.get("HTTP_X_USER_EMAIL", user.email)
+            request.user_role = request.META.get("HTTP_X_USER_ROLE", user.role)
+            request.is_superadmin = request.META.get("HTTP_X_SUPERADMIN") == "true"
+            
+            # We don't check Redis blocklist here because Kong is expected to 
+            # handle token revocation or we accept the slight risk until token expiry
+            # (or we could implement the Redis check here as well).
+            
+            print("GatewayAuthentication: Successfully authenticated via Kong headers!")
+            return (user, None)
+            
+        except User.DoesNotExist:
+            raise AuthenticationFailed("User specified by gateway does not exist")

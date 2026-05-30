@@ -15,7 +15,7 @@ class TestTenantConfigAPI:
 
     @pytest.fixture(autouse=True)
     def setup_url(self):
-        self.url = "/api/tenant/config/"
+        self.url = "/api/v1/tenant/config/"
 
     # ── 1. Retrieval (GET) Tests ──────────────────────────────────────────────
 

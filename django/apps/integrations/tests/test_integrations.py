@@ -16,7 +16,7 @@ class TestGitHubIntegrationAPI:
 
     @pytest.fixture(autouse=True)
     def setup_url(self):
-        self.url = "/api/integrations/github/"
+        self.url = "/api/v1/integrations/github/"
 
     # ── 1. Retrieval (GET) Tests ──────────────────────────────────────────────
 

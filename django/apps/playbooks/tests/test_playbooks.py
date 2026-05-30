@@ -16,7 +16,7 @@ class TestPlaybookAPI:
     @pytest.fixture(autouse=True)
     def setup_url(self):
         # Retrieve URLs based on router naming: api/playbooks/playbooks/
-        self.list_url = "/api/playbooks/playbooks/"
+        self.list_url = "/api/v1/playbooks/playbooks/"
 
     def get_detail_url(self, playbook_id):
         return f"{self.list_url}{playbook_id}/"

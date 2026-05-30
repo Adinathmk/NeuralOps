@@ -60,23 +60,7 @@ from app.models.snapshots import TenantSnapshot
 logger = get_logger(__name__)
 
 _settings = get_settings()
-_redis_client: Optional[aioredis.Redis] = None
-
-# ── Redis client singleton ─────────────────────────────────────────────────────
-
-
-def get_redis() -> aioredis.Redis:
-    """Return the module-level async Redis client, creating it on first call."""
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = aioredis.from_url(
-            _settings.REDIS_URL,
-            encoding="utf-8",
-            decode_responses=True,
-            socket_connect_timeout=2,
-            socket_timeout=2,
-        )
-    return _redis_client
+from app.database.redis import get_redis
 
 
 # ── Suspension check (Layer 1) ─────────────────────────────────────────────────

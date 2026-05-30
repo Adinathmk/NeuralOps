@@ -18,7 +18,7 @@ class TestInviteEngineerView:
             "role": "engineer",
         }
 
-        response = admin_client.post("/api/invitations/send", data, format="json")
+        response = admin_client.post("/api/v1/invitations/send", data, format="json")
 
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["success"] is True
@@ -32,7 +32,7 @@ class TestInviteEngineerView:
             "role": "viewer",
         }
 
-        response = admin_client.post("/api/invitations/send", data, format="json")
+        response = admin_client.post("/api/v1/invitations/send", data, format="json")
 
         assert response.status_code == status.HTTP_201_CREATED
 
@@ -43,7 +43,7 @@ class TestInviteEngineerView:
             "role": "owner",
         }
 
-        response = admin_client.post("/api/invitations/send", data, format="json")
+        response = admin_client.post("/api/v1/invitations/send", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -54,7 +54,7 @@ class TestInviteEngineerView:
             "role": "engineer",
         }
 
-        response = engineer_client.post("/api/invitations/send", data, format="json")
+        response = engineer_client.post("/api/v1/invitations/send", data, format="json")
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -65,7 +65,7 @@ class TestInviteEngineerView:
             "role": "engineer",
         }
 
-        response = admin_client.post("/api/invitations/send", data, format="json")
+        response = admin_client.post("/api/v1/invitations/send", data, format="json")
 
         assert response.status_code == status.HTTP_409_CONFLICT
 
@@ -76,7 +76,7 @@ class TestInviteEngineerView:
             "role": "engineer",
         }
 
-        response = api_client.post("/api/invitations/send", data, format="json")
+        response = api_client.post("/api/v1/invitations/send", data, format="json")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -87,7 +87,7 @@ class TestValidateInvitationView:
 
     def test_validate_valid_invitation(self, api_client, invitation):
         """Test validating valid invitation."""
-        response = api_client.get(f"/api/invitations/validate?token={invitation.token}")
+        response = api_client.get(f"/api/v1/invitations/validate?token={invitation.token}")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
@@ -95,21 +95,21 @@ class TestValidateInvitationView:
 
     def test_validate_invalid_token(self, api_client):
         """Test validation fails with invalid token."""
-        response = api_client.get("/api/invitations/validate?token=invalid-token")
+        response = api_client.get("/api/v1/invitations/validate?token=invalid-token")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_validate_expired_invitation(self, api_client, expired_invitation):
         """Test validation fails with expired token."""
         response = api_client.get(
-            f"/api/invitations/validate?token={expired_invitation.token}"
+            f"/api/v1/invitations/validate?token={expired_invitation.token}"
         )
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_validate_missing_token(self, api_client):
         """Test validation fails without token."""
-        response = api_client.get("/api/invitations/validate")
+        response = api_client.get("/api/v1/invitations/validate")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -128,7 +128,7 @@ class TestJoinWithInvitationView:
             "last_name": "Engineer",
         }
 
-        response = api_client.post("/api/invitations/join", data, format="json")
+        response = api_client.post("/api/v1/invitations/join", data, format="json")
 
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["success"] is True
@@ -155,7 +155,7 @@ class TestJoinWithInvitationView:
             "password_confirm": "NewSecurePass123!",
         }
 
-        response = api_client.post("/api/invitations/join", data, format="json")
+        response = api_client.post("/api/v1/invitations/join", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -167,7 +167,7 @@ class TestJoinWithInvitationView:
             "password_confirm": "NewSecurePass123!",
         }
 
-        response = api_client.post("/api/invitations/join", data, format="json")
+        response = api_client.post("/api/v1/invitations/join", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -179,7 +179,7 @@ class TestJoinWithInvitationView:
             "password_confirm": "DifferentPass123!",
         }
 
-        response = api_client.post("/api/invitations/join", data, format="json")
+        response = api_client.post("/api/v1/invitations/join", data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -190,14 +190,14 @@ class TestListInvitationsView:
 
     def test_list_invitations(self, admin_client, invitation):
         """Test listing pending invitations."""
-        response = admin_client.get("/api/invitations/?status=pending")
+        response = admin_client.get("/api/v1/invitations/?status=pending")
 
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data["data"]) > 0
 
     def test_list_requires_admin(self, engineer_client):
         """Test listing requires admin role."""
-        response = engineer_client.get("/api/invitations/?status=pending")
+        response = engineer_client.get("/api/v1/invitations/?status=pending")
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -209,7 +209,7 @@ class TestCancelInvitationView:
     def test_cancel_invitation(self, admin_client, invitation):
         """Test successful invitation cancellation."""
         response = admin_client.post(
-            f"/api/invitations/{invitation.id}/cancel", format="json"
+            f"/api/v1/invitations/{invitation.id}/cancel", format="json"
         )
 
         assert response.status_code == status.HTTP_200_OK
@@ -221,7 +221,7 @@ class TestCancelInvitationView:
     def test_cancel_requires_admin(self, engineer_client, invitation):
         """Test cancellation requires admin."""
         response = engineer_client.post(
-            f"/api/invitations/{invitation.id}/cancel", format="json"
+            f"/api/v1/invitations/{invitation.id}/cancel", format="json"
         )
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -234,7 +234,7 @@ class TestResendInvitationView:
     def test_resend_invitation(self, admin_client, invitation):
         """Test resending invitation."""
         response = admin_client.post(
-            f"/api/invitations/{invitation.id}/resend", format="json"
+            f"/api/v1/invitations/{invitation.id}/resend", format="json"
         )
 
         assert response.status_code == status.HTTP_200_OK
