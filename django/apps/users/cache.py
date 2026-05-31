@@ -115,6 +115,60 @@ class CacheManager:
     # RATE LIMITING (for brute force protection)
     # ====================================================================
 
+    def get_client_ip(self, request):
+        """Extract real IP; strip 1 rightmost proxy hop (Kong) from X-Forwarded-For."""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            proxies = [ip.strip() for ip in x_forwarded_for.split(',')]
+            if len(proxies) > 1:
+                return proxies[-2]
+            return proxies[0]
+        return request.META.get('REMOTE_ADDR')
+
+    def _get_backoff_ttl(self, failure_count):
+        """Calculate exponential backoff TTL."""
+        return min(60 * (2 ** (max(1, failure_count) - 1)), 3600)
+
+    def is_login_blocked(self, email, ip):
+        """Check 3 keys in order: IP → combined → email. Returns (bool, reason)."""
+        ip_count = int(self.redis_client.get(f"rl:login:ip:{ip}") or 0)
+        if ip_count >= 20:
+            return True, "Too many attempts from this IP. Please try again later."
+            
+        combined_count = int(self.redis_client.get(f"rl:login:combined:{email}:{ip}") or 0)
+        if combined_count >= 5:
+            return True, "Too many failed attempts. Please try again later."
+            
+        email_count = int(self.redis_client.get(f"rl:login:email:{email}") or 0)
+        if email_count >= 50:
+            return True, "Too many attempts for this account. Please try again later."
+            
+        return False, ""
+
+    def increment_login_failure(self, email, ip):
+        """INCR all 3 keys with correct TTLs."""
+        key_ip = f"rl:login:ip:{ip}"
+        key_combined = f"rl:login:combined:{email}:{ip}"
+        key_email = f"rl:login:email:{email}"
+
+        ip_count = self.redis_client.incr(key_ip)
+        if ip_count == 1:
+            self.redis_client.expire(key_ip, 60)
+
+        combined_count = self.redis_client.incr(key_combined)
+        self.redis_client.expire(key_combined, self._get_backoff_ttl(combined_count))
+
+        email_count = self.redis_client.incr(key_email)
+        if email_count == 1:
+            self.redis_client.expire(key_email, 900)
+
+        return combined_count
+
+    def clear_login_failures(self, email, ip):
+        """DELETE all 3 keys on successful login."""
+        self.redis_client.delete(f"rl:login:ip:{ip}", f"rl:login:combined:{email}:{ip}", f"rl:login:email:{email}")
+
+
     def increment_failed_login(self, email):
         """
         Increment failed login counter for an email.

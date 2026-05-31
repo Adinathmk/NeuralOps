@@ -116,15 +116,17 @@ class LoginView(APIView):
     )
     def post(self, request):
         email = request.data.get("email", "").lower()
+        ip = cache_manager.get_client_ip(request)
 
-        if cache_manager.is_login_rate_limited(email):
-            raise RateLimitException("Too many failed login attempts")
+        is_blocked, reason = cache_manager.is_login_blocked(email, ip)
+        if is_blocked:
+            raise RateLimitException(reason)
 
         serializer = LoginSerializer(data=request.data)
 
         if serializer.is_valid():
             user = serializer.validated_data["user"]
-            cache_manager.reset_failed_login(email)
+            cache_manager.clear_login_failures(email, ip)
             return AuthService.login(user, request)
 
         # Handle unverified email — silently resend verification
@@ -133,7 +135,7 @@ class LoginView(APIView):
             frontend_url = request.data.get("frontend_url", settings.FRONTEND_URL)
             AuthService.handle_unverified_login(email, frontend_url)
 
-        return AuthService.record_login_failure(email, serializer, request)
+        return AuthService.record_login_failure(email, ip, serializer, request)
 
 
 class TokenRefreshView(APIView):

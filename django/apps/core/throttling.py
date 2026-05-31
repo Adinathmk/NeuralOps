@@ -44,3 +44,12 @@ class TenantRateThrottle(SimpleRateThrottle):
                 self.num_requests, self.duration = self.parse_rate(self.rate)
 
         return super().allow_request(request, view)
+
+
+class BillingRateThrottle(SimpleRateThrottle):
+    scope = "billing"
+    rate = "5/hour"
+    
+    def get_cache_key(self, request, view):
+        tenant_id = getattr(request, "tenant_id", None)
+        return f"rl:billing:{tenant_id}" if tenant_id else None

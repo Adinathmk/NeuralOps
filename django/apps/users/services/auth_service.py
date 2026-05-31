@@ -131,13 +131,13 @@ class AuthService:
             pass
 
     @staticmethod
-    def record_login_failure(email, serializer, request):
+    def record_login_failure(email, ip, serializer, request):
         """
         Records a failed login attempt: increments rate limit counter,
         logs warning if multiple failures, creates AuditLog.
         Returns the APIResponse error.
         """
-        failed_count = cache_manager.increment_failed_login(email)
+        failed_count = cache_manager.increment_login_failure(email, ip)
 
         if failed_count >= 3:
             logger.warning(
@@ -151,7 +151,7 @@ class AuthService:
             user_email=email,
             success=False,
             description=f"error: {first_error}",
-            ip_address=JWTAuthentication._get_client_ip(request),
+            ip_address=ip,
         )
 
         return APIResponse.error(

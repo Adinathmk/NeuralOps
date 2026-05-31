@@ -121,6 +121,10 @@ services:
       KONG_NGINX_WORKER_PROCESSES: "1"
       KONG_MEM_CACHE_SIZE: "32m"
       KONG_UNTRUSTED_LUA: "on"
+      KONG_REDIS_HOST: redis
+      KONG_REDIS_PORT: 6379
+      KONG_NGINX_PROXY_REAL_IP_HEADER: X-Forwarded-For
+      KONG_TRUSTED_IPS: 0.0.0.0/0,::/0
     volumes:
       - ./kong/kong.yml:/usr/local/kong/declarative/kong.yml:ro
     ports:
@@ -132,6 +136,8 @@ services:
       django:
         condition: service_healthy
       fastapi:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "kong", "health"]

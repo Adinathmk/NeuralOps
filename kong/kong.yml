@@ -10,11 +10,31 @@ upstreams:
     targets:
       - target: django:8000
         weight: 100
+    healthchecks:
+      active:
+        http_path: /api/v1/health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 5
+          tcp_failures: 2
+          http_failures: 2
 
   - name: fastapi-upstream
     targets:
       - target: fastapi:8001
         weight: 100
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 5
+          tcp_failures: 2
+          http_failures: 2
 
 # ── Services ───────────────────────────────────────────────────────────────────
 services:
@@ -27,45 +47,37 @@ services:
     read_timeout: 120000
     write_timeout: 120000
     routes:
-      - name: auth-routes
+      - name: auth-route
         paths:
           - /api/v1/auth
         strip_path: false
         preserve_host: true
         protocols: [http, https]
-        # PUBLIC: No JWT validation required at gateway (Django handles internally).
-
-      - name: invitations-routes
-        paths:
-          - /api/v1/invitations
-        strip_path: false
-        preserve_host: true
-        protocols: [http, https]
-        # PUBLIC: Required for invitees accepting invites. Django secures private sub-paths.
-
-      - name: tenant-routes
-        paths:
-          - /api/v1/tenant
-        strip_path: false
-        preserve_host: true
-        protocols: [http, https]
         plugins:
-          - name: jwt
+          - name: rate-limiting
             config:
-              claims_to_verify: [exp]
-              key_claim_name: iss
-          - name: request-transformer
-            config:
-              add:
-                headers: ["X-Gateway-Validated: true"]
+              minute: 20
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              fault_tolerant: true
+              hide_client_headers: false
 
-      - name: admin-routes
+      - name: admin-route
         paths:
           - /api/admin
         strip_path: false
         preserve_host: true
         protocols: [http, https]
         plugins:
+          - name: rate-limiting
+            config:
+              minute: 60
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              fault_tolerant: true
+              hide_client_headers: false
           - name: jwt
             config:
               claims_to_verify: [exp]
@@ -75,45 +87,26 @@ services:
               add:
                 headers: ["X-Gateway-Validated: true"]
 
-      - name: alerts-routes
+      - name: django-management-route
         paths:
+          - /api/v1/tenant
           - /api/v1/alerts
-        strip_path: false
-        preserve_host: true
-        protocols: [http, https]
-        plugins:
-          - name: jwt
-            config:
-              claims_to_verify: [exp]
-              key_claim_name: iss
-          - name: request-transformer
-            config:
-              add:
-                headers: ["X-Gateway-Validated: true"]
-
-      - name: playbooks-routes
-        paths:
           - /api/v1/playbooks
-        strip_path: false
-        preserve_host: true
-        protocols: [http, https]
-        plugins:
-          - name: jwt
-            config:
-              claims_to_verify: [exp]
-              key_claim_name: iss
-          - name: request-transformer
-            config:
-              add:
-                headers: ["X-Gateway-Validated: true"]
-
-      - name: integrations-routes
-        paths:
           - /api/v1/integrations
         strip_path: false
         preserve_host: true
         protocols: [http, https]
         plugins:
+          - name: rate-limiting
+            config:
+              minute: 2000
+              limit_by: header
+              header_name: x-tenant-id
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              fault_tolerant: true
+              hide_client_headers: false
           - name: jwt
             config:
               claims_to_verify: [exp]
@@ -122,6 +115,13 @@ services:
             config:
               add:
                 headers: ["X-Gateway-Validated: true"]
+
+      - name: invitations-route
+        paths:
+          - /api/v1/invitations
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
 
       - name: schema-routes
         paths:
@@ -129,7 +129,6 @@ services:
         strip_path: false
         preserve_host: true
         protocols: [http, https]
-        # PUBLIC: Django Spectacular API schema & Swagger/Redoc UI.
 
       - name: static-routes
         paths:
@@ -151,7 +150,6 @@ services:
         strip_path: false
         preserve_host: true
         protocols: [http, https]
-        # PUBLIC/Session Auth (Django handles internally).
 
       - name: django-health-route
         paths:
@@ -159,7 +157,6 @@ services:
         strip_path: false
         preserve_host: true
         protocols: [http, https]
-        # PUBLIC: Required for direct platform or gateway-based health monitoring.
 
   # ── FastAPI AI + Real-time Service ─────────────────────────────────────────
   - name: fastapi-service
@@ -170,13 +167,23 @@ services:
     read_timeout: 120000
     write_timeout: 120000
     routes:
-      - name: fastapi-protected-routes
+      - name: ingest-logs-route
         paths:
-          - /api/v1/ingest
+          - /api/v1/ingest/logs
         strip_path: false
         preserve_host: true
         protocols: [http, https]
         plugins:
+          - name: rate-limiting
+            config:
+              minute: 5000
+              limit_by: header
+              header_name: x-tenant-id
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              fault_tolerant: true
+              hide_client_headers: false
           - name: jwt
             config:
               claims_to_verify: [exp]
@@ -186,15 +193,51 @@ services:
               add:
                 headers: ["X-Gateway-Validated: true"]
 
-      - name: fastapi-public-webhooks
+      - name: ingest-webhook-route
         paths:
           - /api/v1/webhooks
         strip_path: false
         preserve_host: true
         protocols: [http, https]
-        # PUBLIC: Required for unauthenticated GitHub webhooks. FastAPI verifies cryptographically.
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 200
+              limit_by: header
+              header_name: x-tenant-id
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              fault_tolerant: true
+              hide_client_headers: false
 
-      - name: websocket-routes
+      - name: fastapi-general-route
+        paths:
+          - /api/v1/
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 2000
+              limit_by: header
+              header_name: x-tenant-id
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              fault_tolerant: true
+              hide_client_headers: false
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
+
+      - name: websocket-route
         paths:
           - /ws
         strip_path: false
@@ -204,6 +247,16 @@ services:
           Upgrade:
             - websocket
         plugins:
+          - name: rate-limiting
+            config:
+              minute: 100
+              limit_by: header
+              header_name: x-tenant-id
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              fault_tolerant: true
+              hide_client_headers: false
           - name: jwt
             config:
               claims_to_verify: [exp]
@@ -239,14 +292,6 @@ consumers:
 
 # ── Global Plugins ─────────────────────────────────────────────────────────────
 plugins:
-  # ── Rate Limiting ─────────────────────────────────────────────────────────
-  - name: rate-limiting
-    config:
-      minute: 3000
-      policy: local
-      hide_client_headers: false
-      fault_tolerant: true
-
   # ── CORS (Cross-Origin Resource Sharing) ──────────────────────────────────
   - name: cors
     config:
@@ -273,8 +318,44 @@ plugins:
         - X-Gateway-Validated
       exposed_headers:
         - X-Auth-Token
+        - X-RateLimit-Limit-Minute
+        - X-RateLimit-Remaining-Minute
+        - X-RateLimit-Reset
+        - Retry-After
       credentials: true
       max_age: 3600
+
+  # ── Custom 429 JSON Response ────────────────────────────────────────────────
+  - name: pre-function
+    config:
+      header_filter:
+        - |
+          if kong.response.get_status() == 429 then
+            kong.response.set_header("Content-Type", "application/json")
+          end
+      body_filter:
+        - |
+          if kong.response.get_status() == 429 then
+            local chunk = ngx.arg[1]
+            local eof = ngx.arg[2]
+            if not ngx.ctx.buffer then
+              ngx.ctx.buffer = ""
+            end
+            if chunk then
+              ngx.ctx.buffer = ngx.ctx.buffer .. chunk
+              ngx.arg[1] = nil
+            end
+            if eof then
+              local cjson = require("cjson.safe")
+              local res = cjson.encode({
+                success = false,
+                code = "rate_limit_exceeded",
+                message = "API rate limit exceeded. Please retry later.",
+                retry_after = kong.response.get_header("Retry-After")
+              })
+              ngx.arg[1] = res
+            end
+          end
 
   # ── JWT Claims Injection (Enhanced pre-function) ─────────────────────────────
   - name: pre-function
@@ -301,6 +382,11 @@ plugins:
                   if payload.role then kong.service.request.set_header("x-user-role", payload.role) end
                   if payload.email then kong.service.request.set_header("x-user-email", payload.email) end
                   if payload.is_superadmin ~= nil then kong.service.request.set_header("x-is-superadmin", tostring(payload.is_superadmin)) end
+                  if payload.plan_tier then
+                    kong.service.request.set_header("x-plan-tier", payload.plan_tier)
+                  else
+                    kong.service.request.set_header("x-plan-tier", "free")
+                  end
                 end
               end
             end

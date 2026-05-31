@@ -26,6 +26,8 @@ ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 # ============================================================================
 # INSTALLED APPS (Order matters!)
 # ============================================================================
+NUM_PROXIES = 1
+USE_X_FORWARDED_HOST = True
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -178,6 +180,7 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_THROTTLE_RATES": {
         "tenant": "60/minute",
+        "billing": "5/hour",
     },
 }
 
