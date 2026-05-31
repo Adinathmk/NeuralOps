@@ -359,8 +359,21 @@ CELERY_TASK_DEFAULT_RETRY_DELAY = 5
 # Dead letter queue — tasks exhausting retries write here
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 
-# Beat schedule (periodic tasks — placeholder for Phase 7)
-CELERY_BEAT_SCHEDULE = {}
+# Beat schedule (periodic tasks)
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    "cleanup-expired-invitations-hourly": {
+        "task": "users.tasks.cleanup_expired_invitations_task",
+        "schedule": crontab(minute=0, hour="*"),  # hourly
+        "kwargs": {"is_superadmin": True},
+    },
+    "cleanup-expired-tokens-hourly": {
+        "task": "users.tasks.cleanup_expired_tokens_task",
+        "schedule": crontab(minute=30, hour="*"),  # hourly at minute 30
+        "kwargs": {"is_superadmin": True},
+    },
+}
 
 
 # ============================================================================

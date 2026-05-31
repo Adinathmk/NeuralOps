@@ -730,12 +730,15 @@ class ConfigSyncConsumer:
         key = self._settings.tenant_config_cache_key(tenant_id)
         rl_ingest_key = f"rl:ingest:{tenant_id}"
         rl_agent_key = f"rl:agent:{tenant_id}"
-        
+
         try:
             await self._redis.delete(key, rl_ingest_key, rl_agent_key)
             logger.debug(
                 "config_sync_cache_invalidated",
-                extra={"redis_keys": [key, rl_ingest_key, rl_agent_key], "tenant_id": tenant_id},
+                extra={
+                    "redis_keys": [key, rl_ingest_key, rl_agent_key],
+                    "tenant_id": tenant_id,
+                },
             )
         except Exception as exc:
             logger.error(

@@ -125,7 +125,9 @@ class TestChangePasswordView:
             "new_password_confirm": "NewSecurePass123!",
         }
 
-        response = owner_client.post("/api/v1/auth/change-password", data, format="json")
+        response = owner_client.post(
+            "/api/v1/auth/change-password", data, format="json"
+        )
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
@@ -142,7 +144,9 @@ class TestChangePasswordView:
             "new_password_confirm": "NewSecurePass123!",
         }
 
-        response = owner_client.post("/api/v1/auth/change-password", data, format="json")
+        response = owner_client.post(
+            "/api/v1/auth/change-password", data, format="json"
+        )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -154,7 +158,9 @@ class TestChangePasswordView:
             "new_password_confirm": "DifferentPass123!",
         }
 
-        response = owner_client.post("/api/v1/auth/change-password", data, format="json")
+        response = owner_client.post(
+            "/api/v1/auth/change-password", data, format="json"
+        )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 

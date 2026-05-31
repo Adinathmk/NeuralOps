@@ -26,6 +26,10 @@ fake = Faker()
 # Configure Django settings before importing models
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
+from django.conf import settings
+
+settings.CELERY_TASK_ALWAYS_EAGER = True
+
 
 # ============================================================================
 # FIXTURES: API Client

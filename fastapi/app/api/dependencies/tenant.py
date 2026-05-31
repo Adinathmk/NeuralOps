@@ -62,7 +62,6 @@ logger = get_logger(__name__)
 _settings = get_settings()
 from app.database.redis import get_redis
 
-
 # ── Suspension check (Layer 1) ─────────────────────────────────────────────────
 
 

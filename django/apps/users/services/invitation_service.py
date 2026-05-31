@@ -12,6 +12,7 @@ from ..authentication import JWTAuthentication
 from ..email import email_service
 from ..models import AuditLog, User, UserInvitation
 from ..serializers import UserSerializer
+from ..tasks import send_invitation_email_task, send_invitation_reminder_email_task
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +65,13 @@ class InvitationService:
 
         # Send invitation email
         try:
-            email_service.send_invitation_email(invitation, frontend_url)
+            send_invitation_email_task.delay(
+                tenant_id=tenant.id,
+                invitation_id=invitation.id,
+                frontend_url=frontend_url,
+            )
         except Exception as e:
-            logger.error(f"Failed to send invitation email: {str(e)}")
+            logger.error(f"Failed to dispatch invitation email: {str(e)}")
             return None, "email_failed"
 
         logger.info(f"Admin {inviter.email} invited {email} to {tenant.name} as {role}")
@@ -234,9 +239,13 @@ class InvitationService:
             invitation.save()
 
         try:
-            email_service.send_invitation_reminder_email(invitation, frontend_url)
+            send_invitation_reminder_email_task.delay(
+                tenant_id=tenant_id,
+                invitation_id=invitation.id,
+                frontend_url=frontend_url,
+            )
         except Exception as e:
-            logger.error(f"Failed to resend invitation: {str(e)}")
+            logger.error(f"Failed to dispatch invitation reminder: {str(e)}")
             return False, "Failed to resend invitation"
 
         logger.info(f"Invitation {invitation_id} resent to {invitation.email}")

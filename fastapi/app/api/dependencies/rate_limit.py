@@ -4,6 +4,7 @@ app/api/dependencies/rate_limit.py
 Inner-layer tenant-aware rate limiting using Token Bucket algorithm in Redis.
 Enforces limits based on the tenant's plan tier.
 """
+
 from __future__ import annotations
 
 import time
@@ -60,6 +61,7 @@ _PLAN_LIMITS = {
 
 _DEFAULT_LIMIT = 200
 
+
 async def rate_limit_dependency(request: Request, tenant: ValidatedTenant) -> None:
     """
     Token bucket rate limiter utilizing Redis Lua script.
@@ -101,7 +103,7 @@ async def rate_limit_dependency(request: Request, tenant: ValidatedTenant) -> No
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Your {plan_tier} plan allows {capacity} requests per minute burst.",
-            headers={"Retry-After": "1"}
+            headers={"Retry-After": "1"},
         )
 
 

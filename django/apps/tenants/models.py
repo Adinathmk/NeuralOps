@@ -37,6 +37,18 @@ class Tenant(models.Model):
     def __str__(self):
         return f"{self.name} ({self.plan_tier})"
 
+    @property
+    def is_suspended(self):
+        return self.status == "suspended"
+
+    @property
+    def vector_namespace(self):
+        return self.slug
+
+    @property
+    def kafka_group_id(self):
+        return f"group_{self.slug}"
+
 
 # ============================================================================
 # TENANT CONFIGURATION

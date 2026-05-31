@@ -3,8 +3,8 @@ import logging
 from django.conf import settings
 
 from ..authentication import JWTAuthentication
-from ..email import email_service
 from ..models import AuditLog, EmailVerification, User
+from ..tasks import send_verification_email_task, send_welcome_email_task
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +27,12 @@ class EmailVerificationService:
 
         # Send welcome email
         try:
-            email_service.send_welcome_email(user)
+            send_welcome_email_task.delay(
+                tenant_id=user.tenant_id,
+                user_id=user.id,
+            )
         except Exception as e:
-            logger.warning(f"Failed to send welcome email: {str(e)}")
+            logger.warning(f"Failed to dispatch welcome email task: {str(e)}")
 
         # Generate tokens for auto-login
         access_token, refresh_token = JWTAuthentication.generate_tokens(user, request)
@@ -73,13 +76,16 @@ class EmailVerificationService:
 
             # Send verification email
             try:
-                email_service.send_verification_email(
-                    user=user,
-                    verification_token=verification.token,
+                send_verification_email_task.delay(
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                    verification_id=verification.id,
                     frontend_url=frontend_url,
                 )
             except Exception as e:
-                logger.error(f"Failed to send verification email to {email}: {str(e)}")
+                logger.error(
+                    f"Failed to dispatch verification email task to {email}: {str(e)}"
+                )
 
             logger.info(f"Verification email resent to {email}")
 

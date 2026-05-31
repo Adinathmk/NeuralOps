@@ -117,13 +117,13 @@ class CacheManager:
 
     def get_client_ip(self, request):
         """Extract real IP; strip 1 rightmost proxy hop (Kong) from X-Forwarded-For."""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
         if x_forwarded_for:
-            proxies = [ip.strip() for ip in x_forwarded_for.split(',')]
+            proxies = [ip.strip() for ip in x_forwarded_for.split(",")]
             if len(proxies) > 1:
                 return proxies[-2]
             return proxies[0]
-        return request.META.get('REMOTE_ADDR')
+        return request.META.get("REMOTE_ADDR")
 
     def _get_backoff_ttl(self, failure_count):
         """Calculate exponential backoff TTL."""
@@ -134,15 +134,17 @@ class CacheManager:
         ip_count = int(self.redis_client.get(f"rl:login:ip:{ip}") or 0)
         if ip_count >= 20:
             return True, "Too many attempts from this IP. Please try again later."
-            
-        combined_count = int(self.redis_client.get(f"rl:login:combined:{email}:{ip}") or 0)
+
+        combined_count = int(
+            self.redis_client.get(f"rl:login:combined:{email}:{ip}") or 0
+        )
         if combined_count >= 5:
             return True, "Too many failed attempts. Please try again later."
-            
+
         email_count = int(self.redis_client.get(f"rl:login:email:{email}") or 0)
         if email_count >= 50:
             return True, "Too many attempts for this account. Please try again later."
-            
+
         return False, ""
 
     def increment_login_failure(self, email, ip):
@@ -166,8 +168,11 @@ class CacheManager:
 
     def clear_login_failures(self, email, ip):
         """DELETE all 3 keys on successful login."""
-        self.redis_client.delete(f"rl:login:ip:{ip}", f"rl:login:combined:{email}:{ip}", f"rl:login:email:{email}")
-
+        self.redis_client.delete(
+            f"rl:login:ip:{ip}",
+            f"rl:login:combined:{email}:{ip}",
+            f"rl:login:email:{email}",
+        )
 
     def increment_failed_login(self, email):
         """

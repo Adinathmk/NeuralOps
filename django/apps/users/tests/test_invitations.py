@@ -87,7 +87,9 @@ class TestValidateInvitationView:
 
     def test_validate_valid_invitation(self, api_client, invitation):
         """Test validating valid invitation."""
-        response = api_client.get(f"/api/v1/invitations/validate?token={invitation.token}")
+        response = api_client.get(
+            f"/api/v1/invitations/validate?token={invitation.token}"
+        )
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
