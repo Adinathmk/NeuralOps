@@ -48,6 +48,8 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
+import httpx
+
 import redis.asyncio as aioredis
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import KafkaError
@@ -103,6 +105,171 @@ def _apply_github_fields(
     for payload_key, column_name in _GITHUB_FIELD_MAP.items():
         if payload_key in github_data:
             setattr(snapshot, column_name, github_data[payload_key])
+
+
+# ── Initial-index dispatch helpers ────────────────────────────────────────────
+
+
+async def _resolve_branch_sha(
+    owner: str,
+    repo: str,
+    branch: str,
+    encrypted_pat: str,
+) -> Optional[str]:
+    """
+    Resolve the latest commit SHA for *branch* via the GitHub Branches API.
+
+    Decrypts *encrypted_pat* at call time using the shared FERNET_ENCRYPTION_KEY
+    so that the plaintext PAT is never stored outside the task that needs it.
+
+    Returns ``None`` on any failure (network error, bad credentials, etc.).
+    The caller is responsible for deciding whether to abort or retry.
+    """
+    # Local import — avoids a module-level circular dependency between
+    # config_sync (queue layer) and index_code (worker layer).
+    from app.worker.tasks.index_code import _decrypt  # noqa: PLC0415
+
+    try:
+        plain_pat = _decrypt(encrypted_pat)
+    except Exception as exc:
+        logger.error(
+            "config_sync_pat_decrypt_failed",
+            extra={"error": str(exc)},
+        )
+        return None
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/branches/{branch}"
+    headers = {
+        "Authorization": f"token {plain_pat}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "NeuralOps-ConfigSync/1.0",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            logger.error(
+                "config_sync_branch_sha_fetch_failed",
+                extra={
+                    "status": resp.status_code,
+                    "repo": f"{owner}/{repo}",
+                    "branch": branch,
+                    "response_preview": resp.text[:200],
+                },
+            )
+            return None
+        sha: str = resp.json()["commit"]["sha"]
+        logger.debug(
+            "config_sync_branch_sha_resolved",
+            extra={"repo": f"{owner}/{repo}", "branch": branch, "sha": sha},
+        )
+        return sha
+    except Exception as exc:
+        logger.error(
+            "config_sync_branch_sha_error",
+            extra={"repo": f"{owner}/{repo}", "branch": branch, "error": str(exc)},
+        )
+        return None
+
+
+async def _maybe_dispatch_initial_index(
+    tenant_id: str,
+    github_data: Dict[str, Any],
+    previous_status: Optional[str],
+) -> None:
+    """
+    Fire ``index_code(is_initial=True)`` if and only if this Kafka event
+    represents a *fresh* GitHub connection.
+
+    Conditions that must ALL be true before dispatching:
+      1. The incoming payload's ``indexing_status`` is ``"pending"``.
+      2. The row's status BEFORE this event was NOT ``"indexing"`` or
+         ``"indexed"`` — prevents re-triggering on Kafka replays after
+         a service restart.
+      3. All required GitHub fields are present in the payload.
+      4. The GitHub Branches API successfully returns a commit SHA.
+
+    If conditions 3 or 4 fail the row stays at ``"pending"`` in the DB,
+    which makes the gap observable (ops can re-connect the repo to retry).
+
+    Args:
+        tenant_id:       String UUID of the tenant.
+        github_data:     The ``github_integration`` block from the Kafka payload.
+        previous_status: ``github_indexing_status`` value that was in the DB
+                         *before* this event was applied (``None`` for a brand-
+                         new row).
+    """
+    incoming_status: Optional[str] = github_data.get("indexing_status")
+
+    # ── Guard 1: only act on a fresh connection ────────────────────────────────
+    if incoming_status != "pending":
+        return
+
+    # ── Guard 2: idempotency — skip if already processed ──────────────────────
+    if previous_status in ("indexing", "indexed"):
+        logger.info(
+            "config_sync_initial_index_skip_already_processed",
+            extra={
+                "tenant_id": tenant_id,
+                "previous_status": previous_status,
+            },
+        )
+        return
+
+    owner: Optional[str] = github_data.get("repo_owner")
+    repo: Optional[str] = github_data.get("repo_name")
+    branch: str = github_data.get("default_branch") or "main"
+    encrypted_pat: Optional[str] = github_data.get("encrypted_pat")
+    repo_url: Optional[str] = github_data.get("repo_url")
+
+    # ── Guard 3: all required fields must be present ───────────────────────────
+    if not all([owner, repo, encrypted_pat, repo_url]):
+        logger.error(
+            "config_sync_initial_index_missing_fields",
+            extra={
+                "tenant_id": tenant_id,
+                "has_owner": bool(owner),
+                "has_repo": bool(repo),
+                "has_pat": bool(encrypted_pat),
+                "has_repo_url": bool(repo_url),
+            },
+        )
+        return
+
+    # ── Guard 4: resolve latest commit SHA from GitHub ─────────────────────────
+    commit_sha = await _resolve_branch_sha(owner, repo, branch, encrypted_pat)
+    if not commit_sha:
+        logger.error(
+            "config_sync_initial_index_sha_unavailable",
+            extra={
+                "tenant_id": tenant_id,
+                "repo": f"{owner}/{repo}",
+                "branch": branch,
+            },
+        )
+        # Stay 'pending' — the next re-connection event will retry.
+        return
+
+    # ── Dispatch the Celery task ───────────────────────────────────────────────
+    # Local import to avoid module-level circular dependency.
+    from app.worker.tasks.index_code import index_code  # noqa: PLC0415
+
+    index_code.delay(
+        tenant_id=tenant_id,
+        repo_url=repo_url,
+        commit_sha=commit_sha,
+        is_initial=True,
+    )
+
+    logger.info(
+        "config_sync_initial_index_dispatched",
+        extra={
+            "tenant_id": tenant_id,
+            "repo": f"{owner}/{repo}",
+            "branch": branch,
+            "commit_sha": commit_sha,
+        },
+    )
 
 
 # ── ConfigSyncConsumer ────────────────────────────────────────────────────────
@@ -376,6 +543,12 @@ class ConfigSyncConsumer:
         # Optional GitHub block — may be absent on non-integration events.
         github_data: Optional[Dict[str, Any]] = tenant_data.get("github_integration")
 
+        # Capture the PREVIOUS indexing status before we overwrite it.
+        # Used by _maybe_dispatch_initial_index() to enforce idempotency:
+        # if the row already says 'indexing' or 'indexed' we must not
+        # re-dispatch the task on a Kafka replay after a service restart.
+        previous_indexing_status: Optional[str] = None
+
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 existing = await self._get_tenant_snapshot(session, tenant_id)
@@ -395,6 +568,9 @@ class ConfigSyncConsumer:
                             },
                         )
                         return  # Discard stale event
+
+                    # Snapshot the current indexing status before overwriting.
+                    previous_indexing_status = existing.github_indexing_status
 
                     # ── Update core tenant fields ─────────────────────────────
                     existing.plan_tier = tenant_data.get(
@@ -435,6 +611,9 @@ class ConfigSyncConsumer:
                     )
 
                 else:
+                    # New row — previous status is implicitly None.
+                    # previous_indexing_status stays None (already initialised above).
+
                     # ── Create new snapshot ───────────────────────────────────
                     snapshot = TenantSnapshot(
                         tenant_id=tenant_id,
@@ -469,6 +648,16 @@ class ConfigSyncConsumer:
 
         # ── Redis L1 cache invalidation (outside the DB transaction) ──────────
         await self._invalidate_tenant_cache(str(tenant_id))
+
+        # ── Dispatch initial indexing task on first GitHub connection ──────────
+        # Runs AFTER the DB transaction has committed so the worker can read
+        # the fully-written TenantSnapshot without hitting a race condition.
+        if github_data is not None:
+            await _maybe_dispatch_initial_index(
+                tenant_id=str(tenant_id),
+                github_data=github_data,
+                previous_status=previous_indexing_status,
+            )
 
     async def _handle_alert_rule_event(self, payload: Dict[str, Any]) -> None:
         """

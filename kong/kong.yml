@@ -325,39 +325,7 @@ plugins:
       credentials: true
       max_age: 3600
 
-  # ── Custom 429 JSON Response ────────────────────────────────────────────────
-  - name: pre-function
-    config:
-      header_filter:
-        - |
-          if kong.response.get_status() == 429 then
-            kong.response.set_header("Content-Type", "application/json")
-          end
-      body_filter:
-        - |
-          if kong.response.get_status() == 429 then
-            local chunk = ngx.arg[1]
-            local eof = ngx.arg[2]
-            if not ngx.ctx.buffer then
-              ngx.ctx.buffer = ""
-            end
-            if chunk then
-              ngx.ctx.buffer = ngx.ctx.buffer .. chunk
-              ngx.arg[1] = nil
-            end
-            if eof then
-              local cjson = require("cjson.safe")
-              local res = cjson.encode({
-                success = false,
-                code = "rate_limit_exceeded",
-                message = "API rate limit exceeded. Please retry later.",
-                retry_after = kong.response.get_header("Retry-After")
-              })
-              ngx.arg[1] = res
-            end
-          end
-
-  # ── JWT Claims Injection (Enhanced pre-function) ─────────────────────────────
+  # ── Custom 429 JSON Response & JWT Claims Injection ────────────────────────
   - name: pre-function
     config:
       access:
@@ -389,5 +357,33 @@ plugins:
                   end
                 end
               end
+            end
+          end
+      header_filter:
+        - |
+          if kong.response.get_status() == 429 then
+            kong.response.set_header("Content-Type", "application/json")
+          end
+      body_filter:
+        - |
+          if kong.response.get_status() == 429 then
+            local chunk = ngx.arg[1]
+            local eof = ngx.arg[2]
+            if not ngx.ctx.buffer then
+              ngx.ctx.buffer = ""
+            end
+            if chunk then
+              ngx.ctx.buffer = ngx.ctx.buffer .. chunk
+              ngx.arg[1] = nil
+            end
+            if eof then
+              local cjson = require("cjson.safe")
+              local res = cjson.encode({
+                success = false,
+                code = "rate_limit_exceeded",
+                message = "API rate limit exceeded. Please retry later.",
+                retry_after = kong.response.get_header("Retry-After")
+              })
+              ngx.arg[1] = res
             end
           end

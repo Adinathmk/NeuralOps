@@ -1,5 +1,34 @@
 import asyncio
-from unittest.mock import AsyncMock, patch
+import sys
+from unittest.mock import AsyncMock, MagicMock, patch
+
+# ── Platform shims ────────────────────────────────────────────────────────────
+# aiokafka (and asyncpg) require a C compiler to build from source on Windows.
+# Since every test that touches Kafka/DB behaviour mocks those layers anyway,
+# we stub the modules into sys.modules so the import chain succeeds on any
+# platform — including Windows dev machines without Visual C++ installed.
+# In Docker/CI the real wheels are present and take precedence (the `if` guard
+# means we never overwrite an already-imported real module).
+
+import importlib
+
+def _stub(name: str) -> MagicMock:
+    """Insert a MagicMock into sys.modules under *name* and return it."""
+    mock = MagicMock(name=name)
+    sys.modules[name] = mock
+    return mock
+
+
+for _pkg in ("aiokafka", "aiokafka.errors", "asyncpg"):
+    try:
+        importlib.import_module(_pkg)
+    except ImportError:
+        _stub(_pkg)
+
+# ── Pre-import app module so unittest.mock patcher can resolve dotted paths ───
+# Required on Python 3.13+ where pkgutil.resolve_name no longer auto-imports
+# submodules — the attribute must already exist on the parent package object.
+import app.queue.kafka.consumers.config_sync  # noqa: F401
 
 # Disable background Kafka config sync consumer during test execution.
 # We save the patcher objects so lifecycle tests can temporarily stop them
@@ -14,6 +43,8 @@ _consumer_stop_patcher = patch(
 )
 _consumer_start_patcher.start()
 _consumer_stop_patcher.start()
+
+
 
 import pytest
 from asgi_lifespan import LifespanManager
