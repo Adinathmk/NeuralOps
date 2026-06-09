@@ -64,9 +64,11 @@ boto3
 python-json-logger==4.1.0
 whitenoise==6.6.0
 
+# ── Kafka Consumer ───────────────────────────────────────────
+confluent-kafka==2.4.0
+
 # ── Code Quality & Automation ───────────────────────────────────
 black==24.4.2
 isort==5.13.2
 flake8==7.0.0
 nox==2024.4.15
-

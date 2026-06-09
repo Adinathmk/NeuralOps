@@ -57,11 +57,13 @@ from botocore.exceptions import BotoCoreError, ClientError
 from celery import shared_task
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import delete, select, update
+from datetime import timezone as _tz, datetime as _dt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.database.session import AsyncSessionLocal
 from app.models.code_index import CodeIndex
+from app.models.outbox import OutboxEvent, write_outbox
 from app.models.snapshots import TenantSnapshot
 from app.utils.ast_parser import ASTIndexer, SymbolInfo
 from app.worker.celery_app import celery_app
@@ -278,25 +280,48 @@ async def _update_indexing_status(
 ) -> None:
     """
     Update ``github_indexing_status`` (and optionally ``github_last_indexed_commit``)
-    in the ``tenant_snapshots`` table.
+    in the ``tenant_snapshots`` table, then write an outbox event so Debezium
+    publishes it to the ``indexing.status`` Kafka topic for Django to consume.
     """
     values: Dict = {"github_indexing_status": status}
     if commit_sha:
         values["github_last_indexed_commit"] = commit_sha
 
+    event_id = uuid.uuid4()
+    outbox_payload = {
+        "event_id": str(event_id),
+        "event_type": "indexing.status.updated",
+        "tenant_id": str(tenant_id),
+        "status": status,
+        "commit_sha": commit_sha,
+        "occurred_at": _dt.now(_tz.utc).isoformat(),
+    }
+
     async with AsyncSessionLocal() as session:
         async with session.begin():
+            # 1. Update tenant_snapshots (DB-2) as before.
             await session.execute(
                 update(TenantSnapshot)
                 .where(TenantSnapshot.tenant_id == tenant_id)
                 .values(**values)
             )
+            # 2. Write outbox event in the same transaction.
+            #    Debezium tails the DB-2 WAL and delivers this to Kafka
+            #    topic "indexing.status", which Django's consumer reads.
+            write_outbox(
+                session=session,
+                topic="indexing.status",
+                key=str(tenant_id),
+                payload=outbox_payload,
+            )
+
     logger.info(
         "index_status_updated",
         extra={
             "tenant_id": str(tenant_id),
             "status": status,
             "commit_sha": commit_sha,
+            "outbox_event_id": str(event_id),
         },
     )
 
@@ -931,3 +956,111 @@ def index_code(
         "commit_sha": commit_sha,
         "is_initial": is_initial,
     }
+
+
+# ---------------------------------------------------------------------------
+# Cleanup Task
+# ---------------------------------------------------------------------------
+
+async def _cleanup_index_async(tenant_id_str: str) -> None:
+    """
+    Asynchronously purge all code indexes, S3 source files, and Redis cache
+    entries for a specific tenant when their GitHub integration is deleted.
+    """
+    tenant_uuid = uuid.UUID(tenant_id_str)
+    settings = get_settings()
+
+    # 1. DB Cleanup: rapidly drop all parsed AST nodes for this tenant
+    logger.info("cleanup_db_started", extra={"tenant_id": tenant_id_str})
+    try:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                await session.execute(
+                    delete(CodeIndex).where(CodeIndex.tenant_id == tenant_uuid)
+                )
+    except Exception as exc:
+        logger.error("cleanup_db_failed", extra={"tenant_id": tenant_id_str, "error": str(exc)}, exc_info=True)
+
+    # 2. S3 Cleanup: delete all objects under `code/{tenant_id}/`
+    logger.info("cleanup_s3_started", extra={"tenant_id": tenant_id_str})
+    boto_session = aioboto3.Session()
+    prefix = f"code/{tenant_id_str}/"
+    try:
+        async with boto_session.client("s3", endpoint_url=settings.AWS_S3_ENDPOINT_URL) as s3:
+            paginator = s3.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(Bucket=settings.AWS_S3_BUCKET_NAME, Prefix=prefix):
+                if "Contents" in page:
+                    objects_to_delete = [{"Key": obj["Key"]} for obj in page["Contents"]]
+                    if objects_to_delete:
+                        await s3.delete_objects(
+                            Bucket=settings.AWS_S3_BUCKET_NAME,
+                            Delete={"Objects": objects_to_delete}
+                        )
+    except (BotoCoreError, ClientError) as exc:
+        logger.error("cleanup_s3_failed", extra={"tenant_id": tenant_id_str, "error": str(exc)})
+
+    # 3. Redis Cleanup: scan and delete L1 cache keys
+    logger.info("cleanup_redis_started", extra={"tenant_id": tenant_id_str})
+    import redis.asyncio as aioredis
+    try:
+        client = aioredis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
+        cursor = 0
+        pattern = f"code:{prefix}*"
+        while True:
+            cursor, keys = await client.scan(cursor=cursor, match=pattern, count=100)
+            if keys:
+                await client.delete(*keys)
+            if cursor == 0:
+                break
+        await client.aclose()
+    except Exception as exc:
+        logger.error("cleanup_redis_failed", extra={"tenant_id": tenant_id_str, "error": str(exc)})
+
+
+@celery_app.task(
+    name="app.worker.tasks.index_code.cleanup_code_index",
+    bind=True,
+    acks_late=True,
+    max_retries=3,
+    default_retry_delay=10,
+)
+def cleanup_code_index(self, *, tenant_id: str) -> Dict:
+    """
+    Celery task: delete all indexed AST data and source files for a tenant.
+    """
+    logger.info(
+        "cleanup_code_index_task_started",
+        extra={
+            "tenant_id": tenant_id,
+            "task_id": self.request.id,
+        },
+    )
+
+    try:
+        asyncio.run(_cleanup_index_async(tenant_id))
+    except Exception as exc:
+        logger.error(
+            "cleanup_code_index_task_failed",
+            extra={
+                "tenant_id": tenant_id,
+                "error": str(exc),
+                "task_id": self.request.id,
+            },
+            exc_info=True,
+        )
+        raise
+
+    logger.info(
+        "cleanup_code_index_task_complete",
+        extra={
+            "tenant_id": tenant_id,
+            "task_id": self.request.id,
+        },
+    )
+
+    return {"status": "ok", "tenant_id": tenant_id}

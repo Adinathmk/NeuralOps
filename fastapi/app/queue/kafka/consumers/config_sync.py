@@ -588,16 +588,36 @@ class ConfigSyncConsumer:
                     existing.source_version = incoming_version
 
                     # ── Apply GitHub integration fields (Phase 3) ─────────────
-                    if github_data is not None:
-                        _apply_github_fields(existing, github_data)
-                        logger.info(
-                            "config_sync_tenant_github_updated",
-                            extra={
-                                "tenant_id": str(tenant_id),
-                                "repo": f"{github_data.get('repo_owner')}/{github_data.get('repo_name')}",
-                                "indexing_status": github_data.get("indexing_status"),
-                            },
-                        )
+                    if "github_integration" in tenant_data:
+                        if github_data is None:
+                            # Explicit null means the integration was deleted
+                            _apply_github_fields(existing, {
+                                "repo_url": None,
+                                "repo_owner": None,
+                                "repo_name": None,
+                                "encrypted_pat": None,
+                                "webhook_secret": None,
+                                "default_branch": None,
+                                "indexing_status": None,
+                                "last_indexed_commit": None,
+                            })
+                            logger.info(
+                                "config_sync_tenant_github_cleared",
+                                extra={"tenant_id": str(tenant_id)},
+                            )
+                            # Dispatch cleanup task
+                            from app.worker.tasks.index_code import cleanup_code_index
+                            cleanup_code_index.delay(tenant_id=str(tenant_id))
+                        else:
+                            _apply_github_fields(existing, github_data)
+                            logger.info(
+                                "config_sync_tenant_github_updated",
+                                extra={
+                                    "tenant_id": str(tenant_id),
+                                    "repo": f"{github_data.get('repo_owner')}/{github_data.get('repo_name')}",
+                                    "indexing_status": github_data.get("indexing_status"),
+                                },
+                            )
 
                     session.add(existing)
 

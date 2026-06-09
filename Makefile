@@ -137,13 +137,14 @@ build:
 
 up:
 	$(DC) up -d
+	@echo "  Verifying Debezium CDC connectors..."
+	@$(MAKE) debezium-register
 	@echo ""
 	@echo "  ✔ NeuralOps is running!"
-	@echo "  Gateway:  http://localhost/"
-	@echo "  Django:   http://localhost/api/v1/"
-	@echo "  Admin:    http://localhost/admin/"
-	@echo "  FastAPI:  http://localhost/ingest/"
-	@echo "  Swagger:  http://localhost/api/schema/swagger-ui/"
+	@echo "  Admin:      http://localhost:8000/admin/"
+	@echo "  FastAPI Swagger:    http://127.0.0.1:8001/docs#/"
+	@echo "  Django Swagger:    http://localhost:8000/api/v1/schema/swagger-ui/"
+	@echo "  Webhook:    Run 'docker compose logs -f localtunnel' for URL"
 	@echo ""
 
 down:

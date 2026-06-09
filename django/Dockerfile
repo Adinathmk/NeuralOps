@@ -79,3 +79,20 @@ USER django
 
 ENTRYPOINT ["/entrypoint.worker.sh"]
 
+
+# ============================================================
+# Stage 4: Kafka Consumer — runs Django management command
+# ============================================================
+FROM production AS kafka-consumer
+
+# Switch back to root temporarily
+USER root
+
+# Install consumer-specific entrypoint
+COPY entrypoint.kafka_consumer.sh /entrypoint.kafka_consumer.sh
+RUN chmod +x /entrypoint.kafka_consumer.sh
+
+# Drop privileges again
+USER django
+
+ENTRYPOINT ["/entrypoint.kafka_consumer.sh"]

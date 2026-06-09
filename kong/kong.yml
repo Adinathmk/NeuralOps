@@ -93,6 +93,7 @@ services:
           - /api/v1/alerts
           - /api/v1/playbooks
           - /api/v1/integrations
+          - /api/v1/team
         strip_path: false
         preserve_host: true
         protocols: [http, https]

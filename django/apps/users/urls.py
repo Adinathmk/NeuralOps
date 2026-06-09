@@ -12,6 +12,7 @@ from .views import (
     InviteEngineerView,
     JoinWithEmailPasswordView,
     ListInvitationsView,
+    ListTeamMembersView,
     LoginView,
     LogoutView,
     MeView,
@@ -71,6 +72,7 @@ urlpatterns = [
         JoinWithEmailPasswordView.as_view(),
         name="join_with_invitation",
     ),
+    path("team/members", ListTeamMembersView.as_view(), name="list_team_members"),
     path("invitations/", ListInvitationsView.as_view(), name="list_invitations"),
     path(
         "invitations/<uuid:invitation_id>/cancel",

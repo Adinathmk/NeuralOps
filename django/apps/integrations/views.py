@@ -49,6 +49,7 @@ def _build_outbox_payload(integration: GitHubIntegration) -> dict:
     so FastAPI can store and later decrypt them when authenticating against
     GitHub at index time.  The plaintext is never transmitted.
     """
+    import time
     tenant = integration.tenant
     return {
         "event_type": "tenant.updated",
@@ -56,7 +57,7 @@ def _build_outbox_payload(integration: GitHubIntegration) -> dict:
             "id": str(tenant.id),
             "plan_tier": tenant.plan_tier,
             "is_suspended": tenant.status == "suspended",
-            "source_version": integration.source_version,
+            "source_version": int(time.time() * 1000),
             "github_integration": {
                 "repo_url": integration.repo_url,
                 "repo_owner": integration.repo_owner,
@@ -185,11 +186,12 @@ class GitHubIntegrationView(APIView):
             )
 
             # Transactional outbox event → config.tenants → FastAPI snapshot
+            payload = _build_outbox_payload(integration)
             write_outbox(
                 topic="config.tenants",
                 key=str(tenant_id),
-                payload=_build_outbox_payload(integration),
-                source_version=integration.source_version,
+                payload=payload,
+                source_version=payload["tenant"]["source_version"],
             )
 
         logger.info(
@@ -214,4 +216,86 @@ class GitHubIntegrationView(APIView):
             data=response_serializer.data,
             message=message,
             status_code=status_code,
+        )
+
+    # ── DELETE ────────────────────────────────────────────────────────────────
+
+    @extend_schema(
+        summary="Delete GitHub Integration",
+        description="Removes the GitHub integration and credentials for this tenant.",
+        responses={200: dict},
+    )
+    def delete(self, request) -> APIResponse:
+        """
+        Delete the GitHub integration for this tenant.
+
+        An outbox event is published so FastAPI's snapshot table clears out
+        the github_* columns.
+
+        Returns:
+            200 on successful deletion.
+            404 if no integration exists.
+        """
+        import time
+        tenant_id = request.tenant_id
+
+        try:
+            integration = GitHubIntegration.objects.get(tenant_id=tenant_id)
+        except GitHubIntegration.DoesNotExist:
+            return APIResponse.error(
+                message="No GitHub integration found for this tenant.",
+                status_code=404,
+                code="not_found",
+            )
+
+        with transaction.atomic():
+            # Build the outbox payload with github_integration = None
+            tenant = integration.tenant
+            source_version = int(time.time() * 1000)
+            payload = {
+                "event_type": "tenant.updated",
+                "tenant": {
+                    "id": str(tenant.id),
+                    "plan_tier": tenant.plan_tier,
+                    "is_suspended": tenant.status == "suspended",
+                    "source_version": source_version,
+                    "github_integration": None,
+                },
+            }
+
+            # Delete the integration
+            integration_id_str = str(integration.id)
+            repo_str = f"{integration.repo_owner}/{integration.repo_name}"
+            integration.delete()
+
+            # Audit trail
+            AuditLog.log(
+                action="TENANT_CONFIG_UPDATED",
+                user=request.user,
+                tenant=tenant,
+                resource_type="GitHubIntegration",
+                resource_id=integration_id_str,
+                description=f"GitHub integration deleted for repo {repo_str}",
+            )
+
+            # Transactional outbox event
+            write_outbox(
+                topic="config.tenants",
+                key=str(tenant_id),
+                payload=payload,
+                source_version=source_version,
+            )
+
+        logger.info(
+            "github_integration_deleted",
+            extra={
+                "tenant_id": str(tenant_id),
+                "repo": repo_str,
+                "integration_id": integration_id_str,
+            },
+        )
+
+        return APIResponse.success(
+            message="GitHub integration deleted successfully.",
+            status_code=200,
         )

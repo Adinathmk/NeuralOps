@@ -190,6 +190,29 @@ class MeView(APIView):
         )
 
 
+class ListTeamMembersView(APIView):
+    """
+    List all active team members (users) for the current tenant.
+    Requires authentication.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="List team members",
+        description="Returns all users belonging to the current user's workspace.",
+        responses={200: UserSerializer(many=True)},
+    )
+    def get(self, request):
+        # Fetch all active users in the same tenant, ordered by creation date or role
+        users = User.objects.filter(tenant=request.user.tenant, is_active=True).order_by("created_at")
+        serializer = UserSerializer(users, many=True)
+        return APIResponse.success(
+            data=serializer.data,
+            message="Team members retrieved successfully."
+        )
+
+
 class LogoutView(APIView):
     """Logout user - revoke token and session."""
 

@@ -334,6 +334,16 @@ FRONTEND_OAUTH_ERROR_URL = os.getenv(
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 SCHEMA_REGISTRY_URL = os.getenv("SCHEMA_REGISTRY_URL", "http://localhost:8081")
 
+# Django Kafka consumer — indexing status sync (Section 3: "Kafka consumption")
+# Listens to events published by FastAPI's index_code Celery task via Debezium.
+KAFKA_INDEXING_STATUS_TOPIC = os.getenv(
+    "KAFKA_INDEXING_STATUS_TOPIC", "indexing.status"
+)
+KAFKA_INDEXING_STATUS_GROUP_ID = os.getenv(
+    "KAFKA_INDEXING_STATUS_GROUP_ID", "django-indexing-status-consumer"
+)
+
+
 # Elasticsearch
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
 

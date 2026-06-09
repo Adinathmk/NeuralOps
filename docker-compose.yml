@@ -190,7 +190,7 @@ services:
     restart: unless-stopped
     env_file: .env.docker
     environment:
-      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+      CLUSTER_ID: "RdEoWBwUQyuyHQvv8SfHSA"
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
@@ -207,7 +207,7 @@ services:
       KAFKA_MIN_INSYNC_REPLICAS: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_LOG_RETENTION_HOURS: 168
-      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+      KAFKA_CLUSTER_ID: "RdEoWBwUQyuyHQvv8SfHSA"
     volumes:
       - kafka_data:/var/lib/kafka/data
     networks:
@@ -305,6 +305,32 @@ services:
       django_db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  # ── Django Kafka Consumer — Indexing Status Sync ─────────────────────────────
+  # Listens to the ``indexing.status`` topic published by FastAPI's index_code
+  # Celery task (via the DB-2 outbox → Debezium pipeline) and updates
+  # GitHubIntegration.indexing_status in DB-1 so the frontend shows the real
+  # status instead of permanently showing "Pending".
+  #
+  # Architecture reference: NeuralOps Technical Documentation — Section 3
+  # (Service 1 — Django, Kafka consumption: incidents.created & indexing.status)
+  django-kafka-consumer:
+    build:
+      context: ./django
+      dockerfile: Dockerfile
+      target: kafka-consumer
+    container_name: neuralops_django_kafka_consumer
+    restart: unless-stopped
+    env_file: .env.docker
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+    networks:
+      - neuralops_network
+    depends_on:
+      django_db:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
 
   # ── Celery Worker — FastAPI (AI + Background Tasks) ─────────────────────────
