@@ -22,6 +22,7 @@ import app.models.code_index  # noqa: F401  ← Phase 3: CodeIndex / code_index 
 import app.models.logs  # noqa: F401
 import app.models.outbox  # noqa: F401
 import app.models.snapshots  # noqa: F401
+import app.models.incidents  # noqa: F401
 from alembic import context
 from app.core.config import get_settings
 

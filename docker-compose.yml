@@ -11,7 +11,7 @@ services:
   # ── DB-1 (Django Database) ───────────────────────────────────────────────────
   django_db:
     image: postgres:16-alpine
-    container_name: neuralops_django_db
+    container_name: db-django
     restart: unless-stopped
     command: postgres -c wal_level=logical -c max_wal_senders=10 -c max_replication_slots=10
     env_file: .env.docker
@@ -34,7 +34,7 @@ services:
   # ── DB-2 (FastAPI Database) ──────────────────────────────────────────────────
   fastapi_db:
     image: postgres:16-alpine
-    container_name: neuralops_fastapi_db
+    container_name: db-fastapi
     restart: unless-stopped
     command: postgres -c wal_level=logical -c max_wal_senders=10 -c max_replication_slots=10
     env_file: .env.docker
@@ -57,7 +57,7 @@ services:
   # ── Redis Cache ──────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: neuralops_redis
+    container_name: redis
     restart: unless-stopped
     command: >
       redis-server
@@ -82,7 +82,7 @@ services:
       context: ./django
       dockerfile: Dockerfile
       target: production
-    container_name: neuralops_django
+    container_name: django
     restart: unless-stopped
     env_file: .env.docker
     volumes:
@@ -106,7 +106,7 @@ services:
   # ── Kong API Gateway (DB-less declarative mode) ─────────────────────────────
   kong:
     image: kong:3.7-ubuntu
-    container_name: neuralops_kong
+    container_name: kong
     restart: unless-stopped
     environment:
       KONG_DATABASE: "off"
@@ -152,7 +152,7 @@ services:
       context: ./fastapi
       dockerfile: Dockerfile
       target: production
-    container_name: neuralops_fastapi
+    container_name: fastapi
     restart: unless-stopped
     env_file: .env.docker
     environment:
@@ -186,7 +186,7 @@ services:
   # ── Kafka ──────────────────────────────────────────────────────────────────────
   kafka:
     image: confluentinc/cp-kafka:7.7.0
-    container_name: neuralops_kafka
+    container_name: kafka
     restart: unless-stopped
     env_file: .env.docker
     environment:
@@ -222,7 +222,7 @@ services:
   # ── Debezium Connect ─────────────────────────────────────────────────────────
   debezium:
     image: debezium/connect:2.7.0.Final
-    container_name: neuralops_debezium
+    container_name: debezium
     restart: unless-stopped
     depends_on:
       kafka:
@@ -250,7 +250,7 @@ services:
   # ── Elasticsearch ──────────────────────────────────────────────────────────
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
-    container_name: neuralops_elasticsearch
+    container_name: elasticsearch
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
@@ -273,7 +273,7 @@ services:
       context: ./django
       dockerfile: Dockerfile
       target: worker
-    container_name: neuralops_celery_worker
+    container_name: celery-worker-django
     restart: unless-stopped
     env_file: .env.docker
     networks:
@@ -292,7 +292,7 @@ services:
       context: ./django
       dockerfile: Dockerfile
       target: worker
-    container_name: neuralops_celery_beat
+    container_name: celery-beat-django
     restart: unless-stopped
     env_file: .env.docker
     command: >
@@ -320,7 +320,7 @@ services:
       context: ./django
       dockerfile: Dockerfile
       target: kafka-consumer
-    container_name: neuralops_django_kafka_consumer
+    container_name: django-kafka-consumer
     restart: unless-stopped
     env_file: .env.docker
     environment:
@@ -349,7 +349,7 @@ services:
       context: ./fastapi
       dockerfile: Dockerfile
       target: production
-    container_name: neuralops_celery_worker_fastapi
+    container_name: celery-worker-fastapi
     restart: unless-stopped
     command: >
       celery -A app.worker.celery_app worker
@@ -388,7 +388,7 @@ services:
   # ── MinIO (Local S3 Mock Object Storage) ────────────────────────────────────
   minio:
     image: minio/minio:RELEASE.2024-01-28T22-35-53Z
-    container_name: neuralops_minio
+    container_name: minio
     restart: unless-stopped
     ports:
       - "9000:9000"

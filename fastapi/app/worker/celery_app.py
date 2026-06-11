@@ -92,3 +92,5 @@ celery_app.autodiscover_tasks(["app.worker"], force=True)
 # Since the task module is named index_code.py rather than tasks.py,
 # we explicitly import it here to trigger registration with the Celery application.
 import app.worker.tasks.index_code
+import app.worker.tasks.parse_log
+import app.worker.tasks.run_agent
