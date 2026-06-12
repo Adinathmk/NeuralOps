@@ -344,6 +344,15 @@ async def _execute_run_agent(
                     new_s3_key=parsed_event.s3_path,
                 )
 
+                from app.services.ws_publisher import notify_duplicate_recorded
+                try:
+                    await notify_duplicate_recorded(
+                        incident_id=str(existing_incident.id),
+                        occurrence_count=new_count,
+                    )
+                except Exception as exc:
+                    logger.warning("ws_duplicate_notification_failed", extra={"error": str(exc)})
+
                 logger.info(
                     "run_agent_duplicate_recorded",
                     extra={
@@ -427,6 +436,35 @@ async def _execute_run_agent(
                         is_draft=is_draft,
                     )
                 )
+
+                from app.services.ws_publisher import notify_incident_analysis_complete
+                ws_payload = {
+                    "incident_id": str(persistence_result["incident_id"]),
+                    "tenant_id": tenant_id_str,
+                    "status": "open" if not is_draft else "draft",
+                    "severity": agent_result.get("severity", "unknown"),
+                    "error_type": parsed_event.error_type,
+                    "service_name": parsed_event.service_name,
+                    "root_cause": agent_result.get("root_cause", ""),
+                    "suggested_fix": agent_result.get("suggested_fix", ""),
+                    "confidence_score": agent_result.get("confidence_score"),
+                    "crash_file": parsed_event.crash_file,
+                    "crash_line": parsed_event.crash_line,
+                    "crash_method": parsed_event.crash_method,
+                    "is_draft": is_draft,
+                    "total_latency_ms": total_latency_ms,
+                }
+                try:
+                    await notify_incident_analysis_complete(
+                        incident_id=str(persistence_result["incident_id"]),
+                        tenant_id=tenant_id_str,
+                        analysis_data=ws_payload,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "ws_notification_failed",
+                        extra={"incident_id": str(persistence_result["incident_id"]), "error": str(exc)}
+                    )
 
             except sqlalchemy.exc.IntegrityError as exc:
                 # IntegrityError on the partial unique index means a concurrent

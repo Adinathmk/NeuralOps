@@ -159,6 +159,35 @@ services:
         preserve_host: true
         protocols: [http, https]
 
+      - name: django-websocket-route
+        paths:
+          - /ws
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+        headers:
+          Upgrade:
+            - websocket
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 100
+              limit_by: header
+              header_name: x-tenant-id
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              fault_tolerant: true
+              hide_client_headers: false
+          - name: jwt
+            config:
+              claims_to_verify: [exp]
+              key_claim_name: iss
+          - name: request-transformer
+            config:
+              add:
+                headers: ["X-Gateway-Validated: true"]
+
   # ── FastAPI AI + Real-time Service ─────────────────────────────────────────
   - name: fastapi-service
     host: fastapi-upstream
@@ -238,34 +267,7 @@ services:
               add:
                 headers: ["X-Gateway-Validated: true"]
 
-      - name: websocket-route
-        paths:
-          - /ws
-        strip_path: false
-        preserve_host: true
-        protocols: [http, https]
-        headers:
-          Upgrade:
-            - websocket
-        plugins:
-          - name: rate-limiting
-            config:
-              minute: 100
-              limit_by: header
-              header_name: x-tenant-id
-              policy: redis
-              redis_host: redis
-              redis_port: 6379
-              fault_tolerant: true
-              hide_client_headers: false
-          - name: jwt
-            config:
-              claims_to_verify: [exp]
-              key_claim_name: iss
-          - name: request-transformer
-            config:
-              add:
-                headers: ["X-Gateway-Validated: true"]
+
 
       - name: health-route
         paths:

@@ -50,6 +50,8 @@ INSTALLED_APPS = [
     "alerts",
     "playbooks",
     "integrations",
+    "channels",
+    "websockets",
 ]
 
 # ============================================================================
@@ -102,10 +104,22 @@ TEMPLATES = [
 ]
 
 # ============================================================================
-# WSGI
+# WSGI & ASGI
 # ============================================================================
 
 WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [REDIS_URL],
+            "capacity": 1500,
+            "expiry": 10,
+        },
+    }
+}
 
 # ============================================================================
 # DATABASE CONFIGURATION

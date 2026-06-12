@@ -67,17 +67,11 @@ if [ $# -gt 0 ]; then
   echo "==> [6/6] Running custom command: $@"
   exec "$@"
 else
-  echo "==> [6/6] Starting Gunicorn (workers=${GUNICORN_WORKERS:-3})..."
-  exec gunicorn config.wsgi:application \
-      --bind 0.0.0.0:8000 \
-      --reload \
-      --workers "${GUNICORN_WORKERS:-3}" \
-      --threads "${GUNICORN_THREADS:-2}" \
-      --timeout "${GUNICORN_TIMEOUT:-120}" \
-      --keep-alive 5 \
-      --max-requests 1000 \
-      --max-requests-jitter 100 \
-      --log-level "${GUNICORN_LOG_LEVEL:-info}" \
-      --access-logfile - \
-      --error-logfile -
+  echo "==> [6/6] Starting Daphne..."
+  exec daphne \
+      -b 0.0.0.0 \
+      -p 8000 \
+      --access-log - \
+      --proxy-headers \
+      config.asgi:application
 fi
