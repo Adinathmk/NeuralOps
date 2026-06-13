@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+import re
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -164,6 +165,28 @@ class IncidentDetail(BaseModel):
     resolved_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("stack_frames", mode="before")
+    @classmethod
+    def parse_string_frames(cls, v):
+        if not v:
+            return []
+        parsed = []
+        for frame in v:
+            if isinstance(frame, str):
+                file_match = re.search(r"file='([^']+)'", frame)
+                line_match = re.search(r"line=(\d+)", frame)
+                method_match = re.search(r"method='([^']+)'", frame)
+                module_match = re.search(r"module='([^']+)'", frame)
+                parsed.append({
+                    "file": file_match.group(1) if file_match else "unknown",
+                    "line": int(line_match.group(1)) if line_match else 0,
+                    "method": method_match.group(1) if method_match else "unknown",
+                    "module": module_match.group(1) if module_match else None
+                })
+            else:
+                parsed.append(frame)
+        return parsed
 
     class Config:
         from_attributes = True
