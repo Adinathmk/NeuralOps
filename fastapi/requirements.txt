@@ -47,7 +47,7 @@ tree-sitter-java==0.23.2
 # ── AI / Tokenization ─────────────────────────────────────────────────────────
 tiktoken==0.8.0
 langgraph
-openai
+google-generativeai==0.8.3
 
 # ── Dev / Testing ─────────────────────────────────────────────────────────────
 pytest==7.4.3

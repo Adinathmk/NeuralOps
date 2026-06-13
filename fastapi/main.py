@@ -37,6 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 from app.api.v1.health import router as health_router
+from app.api.v1.incidents import router as incidents_router  # ← Phase 4
 from app.api.v1.ingest import router as ingest_router  # ← Phase 2
 from app.api.v1.webhooks import router as webhooks_router
 from app.core.config import get_settings
@@ -55,11 +56,13 @@ from app.models import incidents   # noqa: F401
 
 # ── Background consumers ──────────────────────────────────────────────────────
 from app.queue.kafka.consumers.config_sync import ConfigSyncConsumer
+from app.queue.kafka.consumers.raw_logs import RawLogConsumer
 
 settings = get_settings()
 
 # Module-level consumer instance — created once, started in lifespan.
 _config_sync_consumer = ConfigSyncConsumer()
+_raw_log_consumer = RawLogConsumer()
 
 
 # ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
@@ -104,6 +107,11 @@ async def lifespan(app: FastAPI):
         _config_sync_consumer.start(),
         name="config_sync_consumer",
     )
+    
+    _raw_log_task = asyncio.create_task(
+        _raw_log_consumer.start(),
+        name="raw_log_consumer",
+    )
 
     logger.info(
         "config_sync_consumer_task_created",
@@ -117,6 +125,7 @@ async def lifespan(app: FastAPI):
     logger.info("service_shutting_down", service=settings.APP_NAME)
 
     await _config_sync_consumer.stop()
+    await _raw_log_consumer.stop()
     logger.info("config_sync_consumer_stopped")
 
     if not _consumer_task.done():
@@ -125,6 +134,13 @@ async def lifespan(app: FastAPI):
             await _consumer_task
         except asyncio.CancelledError:
             pass  # Expected during shutdown
+
+    if not _raw_log_task.done():
+        _raw_log_task.cancel()
+        try:
+            await _raw_log_task
+        except asyncio.CancelledError:
+            pass
 
     await engine.dispose()
     logger.info("database_engine_disposed")
@@ -171,5 +187,6 @@ app.add_middleware(TenantRLSMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health_router)
+app.include_router(incidents_router, prefix="/api/v1")  # ← Phase 4 wired in
 app.include_router(ingest_router, prefix="/api/v1")  # ← Phase 2 wired in
 app.include_router(webhooks_router, prefix="/api/v1")

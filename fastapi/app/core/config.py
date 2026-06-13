@@ -124,6 +124,12 @@ class Settings(BaseSettings):
         description="Symmetric encryption key used for decrypting sensitive integrations credentials.",
     )
 
+    # ── AI Agents ─────────────────────────────────────────────────────────────
+    GEMINI_API_KEY: Optional[str] = Field(
+        default=None,
+        description="Google Gemini API Key for the LangGraph agent pipeline.",
+    )
+
     # ── Derived helpers ───────────────────────────────────────────────────────
 
     @field_validator("JWT_PUBLIC_KEY", mode="before")

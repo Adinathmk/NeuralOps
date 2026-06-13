@@ -322,7 +322,7 @@ class IncidentService:
         tenant_id: _uuid_module.UUID = incident.tenant_id
         event_id: _uuid_module.UUID = _uuid_module.uuid4()
 
-        async with self._session.begin():
+        try:
             # ── Step 1: Atomic UPDATE using DB-side expression ────────────────
             # We use a raw UPDATE statement with occurrence_count + 1 rather
             # than reading the current count and adding 1 in Python.
@@ -338,9 +338,7 @@ class IncidentService:
                     # PostgreSQL array_append equivalent via || operator:
                     # occurrences = occurrences || ARRAY[new_s3_key]
                     occurrences=Incident.occurrences.op("||")(
-                        # Wrap in a single-element ARRAY to match type
-                        # Expected type: TEXT[] || TEXT[] → TEXT[]
-                        f"{{{new_s3_key}}}"
+                        [new_s3_key]
                     ),
                     last_seen_at=now,
                     updated_at=now,
@@ -349,13 +347,22 @@ class IncidentService:
             )
 
             result = await self._session.execute(update_stmt)
-            row = result.fetchone()
-            new_count: int = row[0] if row else (incident.occurrence_count + 1)
+            new_count: Optional[int] = result.scalar()
+            
+            if new_count is None:
+                # Edge case: The incident was deleted between the SELECT and UPDATE
+                logger.warning(
+                    "duplicate_update_missed",
+                    incident_id=str(incident_id),
+                    detail="Incident deleted before occurrence update could lock it.",
+                )
+                new_count = incident.occurrence_count
 
-            # ── Step 2: Write outbox event (same transaction) ─────────────────
+            # ── Step 2: Outbox event for Django analytics consumer ────────────
+            # This outbox event drives metrics like "error frequency spikes".
             write_outbox(
                 session=self._session,
-                topic="incidents.created",
+                topic="incidents.duplicate_recorded",
                 key=str(tenant_id),
                 payload={
                     "event_id": str(event_id),
@@ -377,6 +384,10 @@ class IncidentService:
                     },
                 },
             )
+            await self._session.commit()
+        except Exception as exc:
+            await self._session.rollback()
+            raise exc
 
         logger.info(
             "duplicate_occurrence_recorded",
@@ -502,7 +513,7 @@ class IncidentService:
             is_draft=is_draft,
         )
 
-        async with self._session.begin():
+        try:
             # ── Step 1: INSERT incidents ──────────────────────────────────────
             incident = Incident(
                 id=incident_id,
@@ -518,9 +529,9 @@ class IncidentService:
                 crash_line=parsed_event.crash_line,
                 crash_method=parsed_event.crash_method,
                 stack_frames=[
-                    frame.model_dump()
-                    for frame in (parsed_event.stack_frames or [])
-                ],
+                    f.to_dict() if hasattr(f, "to_dict") else f
+                    for f in parsed_event.stack_frames
+                ] if parsed_event.stack_frames else [],
                 root_cause=root_cause,
                 suggested_fix=suggested_fix,
                 confidence_score=confidence_score,
@@ -595,6 +606,11 @@ class IncidentService:
                         occurred_at=now,
                     ),
                 )
+
+            await self._session.commit()
+        except Exception as exc:
+            await self._session.rollback()
+            raise exc
 
         logger.info(
             "new_incident_persisted",

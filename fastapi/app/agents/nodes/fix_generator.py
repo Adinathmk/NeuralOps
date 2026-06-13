@@ -52,17 +52,21 @@ logger = logging.getLogger(__name__)
 # Lazy singletons
 # ---------------------------------------------------------------------------
 
-_openai_client = None
+_gemini_client = None
 _fix_cb = None
 
 
 def _get_client():
-    global _openai_client
-    if _openai_client is None:
-        from openai import AsyncOpenAI
+    global _gemini_client
+    if _gemini_client is None:
+        import google.generativeai as genai
         from app.core.config import get_settings
-        _openai_client = AsyncOpenAI(api_key=get_settings().OPENAI_API_KEY)
-    return _openai_client
+        genai.configure(api_key=get_settings().GEMINI_API_KEY)
+        _gemini_client = genai.GenerativeModel(
+            "models/gemini-3.5-flash",
+            generation_config={"response_mime_type": "application/json", "temperature": 0.15, "max_output_tokens": 1200}
+        )
+    return _gemini_client
 
 
 def _get_circuit_breaker():
@@ -253,30 +257,22 @@ class FixGeneratorNode:
                 code_context=code_context,
             )
 
-            # ── GPT-4o call ───────────────────────────────────────────────────
+            # ── Gemini call ───────────────────────────────────────────────────
             client = _get_client()
-            response = await client.chat.completions.create(
-                model="gpt-4o",
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.15,
-                max_tokens=1200,
-            )
+            full_prompt = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
+            response = await client.generate_content_async(full_prompt)
 
-            raw_output = response.choices[0].message.content or ""
-            usage = response.usage
+            raw_output = response.text or ""
+            usage = getattr(response, "usage_metadata", None)
 
             # ── Pydantic validation ───────────────────────────────────────────
             output = FixGeneratorOutput.model_validate_json(raw_output)
             suggested_fix = output.suggested_fix
 
             tokens = {
-                "prompt": usage.prompt_tokens if usage else 0,
-                "completion": usage.completion_tokens if usage else 0,
-                "total": usage.total_tokens if usage else 0,
+                "prompt": usage.prompt_token_count if usage else 0,
+                "completion": usage.candidates_token_count if usage else 0,
+                "total": usage.total_token_count if usage else 0,
             }
 
             await cb.record_success(redis)

@@ -1,0 +1,39 @@
+{
+  "incident_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "service_name": "dummy-order-service",
+  "environment": "production",
+  "context_logs": [
+    {
+      "seq": 1,
+      "timestamp": "2026-06-12T15:19:55Z",
+      "level": "INFO",
+      "message": "Received order request from user user_123"
+    },
+    {
+      "seq": 2,
+      "timestamp": "2026-06-12T15:19:56Z",
+      "level": "DEBUG",
+      "message": "Attempting to apply discount code 'INVALID99'"
+    },
+    {
+      "seq": 3,
+      "timestamp": "2026-06-12T15:20:00Z",
+      "level": "ERROR",
+      "message": "TypeError: 'NoneType' object is not subscriptable",
+      "stack_trace": [
+        {
+          "file": "services.py",
+          "line": 12,
+          "method": "process_order",
+          "module": "services"
+        },
+        {
+          "file": "main.py",
+          "line": 14,
+          "method": "create_order",
+          "module": "main"
+        }
+      ]
+    }
+  ]
+}

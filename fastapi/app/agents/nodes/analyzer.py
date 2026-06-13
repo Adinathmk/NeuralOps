@@ -57,17 +57,26 @@ logger = logging.getLogger(__name__)
 # when OPENAI_API_KEY is not yet set in the environment.
 # ---------------------------------------------------------------------------
 
-_openai_client = None
+_gemini_client = None
 _analyzer_cb = None
 
 
 def _get_client():
-    global _openai_client
-    if _openai_client is None:
-        from openai import AsyncOpenAI
+    global _gemini_client
+    if _gemini_client is None:
+        import google.generativeai as genai
         from app.core.config import get_settings
-        _openai_client = AsyncOpenAI(api_key=get_settings().OPENAI_API_KEY)
-    return _openai_client
+        genai.configure(api_key=get_settings().GEMINI_API_KEY)
+        _gemini_client = genai.GenerativeModel(
+            "models/gemini-3.5-flash",
+            generation_config={
+                "response_mime_type": "application/json",
+                "response_schema": AnalyzerOutput,
+                "temperature": 0.1,
+                "max_output_tokens": 8192
+            }
+        )
+    return _gemini_client
 
 
 def _get_circuit_breaker():
@@ -171,25 +180,19 @@ def _build_user_prompt(
 class AnalyzerOutput(BaseModel):
     root_cause: str = Field(
         ...,
-        min_length=1,
         description="Precise root cause of the error.",
     )
     root_cause_confidence: float = Field(
         ...,
-        ge=0.0,
-        le=1.0,
         description="Model confidence in this root cause (0.0–1.0).",
     )
     reasoning_steps: List[str] = Field(
-        default_factory=list,
         description="Step-by-step reasoning trace.",
     )
     affected_component: str = Field(
-        default="",
         description="Primary function or class responsible for the error.",
     )
     suggested_area: str = Field(
-        default="",
         description="File path and function that needs to be fixed.",
     )
 
@@ -283,30 +286,40 @@ class AnalyzerNode:
                 context_log_count=context_log_count,
             )
 
-            # ── GPT-4o call ───────────────────────────────────────────────────
+            # ── Gemini call ───────────────────────────────────────────────────
             client = _get_client()
-            response = await client.chat.completions.create(
-                model="gpt-4o",
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-                max_tokens=1000,
-            )
+            full_prompt = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
+            response = await client.generate_content_async(full_prompt)
 
-            raw_output = response.choices[0].message.content or ""
-            usage = response.usage
+            raw_output = response.text or ""
+            usage = getattr(response, "usage_metadata", None)
 
-            # ── Pydantic validation ───────────────────────────────────────────
-            output = AnalyzerOutput.model_validate_json(raw_output)
-            root_cause = output.root_cause
+            # ── Lenient JSON parsing ───────────────────────────────────────────
+            cleaned_output = raw_output.strip()
+            if cleaned_output.startswith("```json"):
+                cleaned_output = cleaned_output[7:]
+            elif cleaned_output.startswith("```"):
+                cleaned_output = cleaned_output[3:]
+            if cleaned_output.endswith("```"):
+                cleaned_output = cleaned_output[:-3]
+            cleaned_output = cleaned_output.strip()
+            
+            try:
+                output_dict = json.loads(cleaned_output)
+            except json.JSONDecodeError:
+                output_dict = {}
+
+            root_cause = output_dict.get("root_cause", "Automated analysis completed, but root cause extraction failed. Please check raw output.")
+            root_cause_confidence = output_dict.get("root_cause_confidence", 0.5)
+            try:
+                root_cause_confidence = float(root_cause_confidence)
+            except (ValueError, TypeError):
+                root_cause_confidence = 0.5
 
             tokens = {
-                "prompt": usage.prompt_tokens if usage else 0,
-                "completion": usage.completion_tokens if usage else 0,
-                "total": usage.total_tokens if usage else 0,
+                "prompt": usage.prompt_token_count if usage else 0,
+                "completion": usage.candidates_token_count if usage else 0,
+                "total": usage.total_token_count if usage else 0,
             }
 
             await cb.record_success(redis)
@@ -317,7 +330,7 @@ class AnalyzerNode:
                     "error_type": error_type,
                     "prompt_tokens": tokens["prompt"],
                     "completion_tokens": tokens["completion"],
-                    "root_cause_confidence": output.root_cause_confidence,
+                    "root_cause_confidence": root_cause_confidence,
                 },
             )
 

@@ -138,8 +138,14 @@ def write_outbox(
     Returns:
         The OutboxEvent instance added to the session (not yet persisted).
     """
+    event_id_str = payload.get("event_id")
+    if event_id_str and isinstance(event_id_str, str):
+        event_id_val = uuid.UUID(event_id_str)
+    else:
+        event_id_val = event_id_str or uuid.uuid4()
+
     event_row = OutboxEvent(
-        event_id=payload.get("event_id", uuid.uuid4()),
+        event_id=event_id_val,
         topic=topic,
         key=key,
         payload=payload,
