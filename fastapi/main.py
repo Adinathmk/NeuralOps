@@ -39,9 +39,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.health import router as health_router
 from app.api.v1.incidents import router as incidents_router  # ← Phase 4
 from app.api.v1.ingest import router as ingest_router  # ← Phase 2
+from app.api.v1.log_search_endpoint import router as logs_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.database.elasticsearch_client import get_es_client, close_es_client
 from app.database.session import engine
 from app.middleware.auth import JWTAuthMiddleware
 from app.middleware.error_handler import register_exception_handlers
@@ -103,6 +105,9 @@ async def lifespan(app: FastAPI):
         database_url=settings.DATABASE_URL.split("@")[-1],
     )
 
+    get_es_client()
+
+
     _consumer_task = asyncio.create_task(
         _config_sync_consumer.start(),
         name="config_sync_consumer",
@@ -141,6 +146,9 @@ async def lifespan(app: FastAPI):
             await _raw_log_task
         except asyncio.CancelledError:
             pass
+
+    await close_es_client()
+    logger.info("elasticsearch_client_closed")
 
     await engine.dispose()
     logger.info("database_engine_disposed")
@@ -189,4 +197,5 @@ app.add_middleware(TenantRLSMiddleware)
 app.include_router(health_router)
 app.include_router(incidents_router, prefix="/api/v1")  # ← Phase 4 wired in
 app.include_router(ingest_router, prefix="/api/v1")  # ← Phase 2 wired in
+app.include_router(logs_router)
 app.include_router(webhooks_router, prefix="/api/v1")

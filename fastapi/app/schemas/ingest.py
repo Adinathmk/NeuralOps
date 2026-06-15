@@ -90,6 +90,26 @@ class LogIngestRequest(BaseModel):
         examples=["production"],
     )
 
+    severity: str = Field(
+        default="error",
+        max_length=64,
+        description="Severity level of the error.",
+    )
+    error_type: str = Field(
+        default="UnknownError",
+        max_length=255,
+        description="Type or class of the exception.",
+    )
+    file_path: Optional[str] = Field(
+        default=None,
+        max_length=1024,
+        description="File where the error occurred.",
+    )
+    line_number: Optional[int] = Field(
+        default=None,
+        description="Line number where the error occurred.",
+    )
+
     class Config:
         json_schema_extra = {
             "example": {

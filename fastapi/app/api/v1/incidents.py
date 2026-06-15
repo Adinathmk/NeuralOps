@@ -444,6 +444,26 @@ async def update_incident(
         assigned_user_id=str(new_assigned) if new_assigned else None,
     )
 
+    # ── Step 6: Update Elasticsearch status (non-fatal) ───────────────────
+    if payload.status is not None:
+        try:
+            from app.services.log_event_indexer import LogEventIndexer
+            indexer = LogEventIndexer()
+            # We don't wrap this in circuit_breaker because update_by_query
+            # takes longer and we don't want to trip the global ingest circuit
+            await indexer.update_incident_status(
+                incident_id=str(incident_id),
+                tenant_id=str(tenant_id),
+                plan_tier=tenant.plan_tier,
+                new_status=new_status,
+            )
+        except Exception as exc:
+            logger.warning(
+                "es_status_update_failed",
+                incident_id=str(incident_id),
+                error=str(exc)
+            )
+
     return IncidentUpdateResponse(
         success=True,
         message="Incident updated.",

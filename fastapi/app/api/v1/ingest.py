@@ -53,6 +53,8 @@ from app.models.logs import IngestedLogMetadata
 from app.models.outbox import write_outbox
 from app.models.snapshots import TenantSnapshot
 from app.schemas.ingest import LogIngestRequest, LogIngestResponse
+from app.services.log_event_indexer import LogEventIndexer
+from app.services.circuit_breaker import get_es_circuit_breaker
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["ingest"])
@@ -267,35 +269,37 @@ async def ingest_logs(
     # back — the S3 object will be orphaned in that case (cleaned up by the
     # S3 lifecycle rule after 30 days) but no partial state is written to DB.
     try:
-        async with db.begin():
-            # 3a. Persist ingestion metadata
-            log_meta = IngestedLogMetadata(
-                incident_id=incident_id,
-                tenant_id=tenant.tenant_id,
-                service_name=payload.service_name,
-                environment=payload.environment,
-                s3_path=s3_key,
-            )
-            db.add(log_meta)
+        # 3a. Persist ingestion metadata
+        log_meta = IngestedLogMetadata(
+            incident_id=incident_id,
+            tenant_id=tenant.tenant_id,
+            service_name=payload.service_name,
+            environment=payload.environment,
+            s3_path=s3_key,
+        )
+        db.add(log_meta)
 
-            # 3b. Write outbox event — Debezium delivers to Kafka
-            outbox_payload = {
-                "event_type": "log.ingested",
-                "incident_id": str(incident_id),
-                "tenant_id": tenant_id_str,
-                "service_name": payload.service_name,
-                "environment": payload.environment,
-                "s3_path": s3_key,
-                "context_log_count": len(payload.context_logs),
-            }
-            write_outbox(
-                session=db,
-                topic=f"raw.logs.{tenant_id_str}",
-                key=str(incident_id),
-                payload=outbox_payload,
-            )
+        # 3b. Write outbox event — Debezium delivers to Kafka
+        outbox_payload = {
+            "event_type": "log.ingested",
+            "incident_id": str(incident_id),
+            "tenant_id": tenant_id_str,
+            "service_name": payload.service_name,
+            "environment": payload.environment,
+            "s3_path": s3_key,
+            "context_log_count": len(payload.context_logs),
+        }
+        write_outbox(
+            session=db,
+            topic=f"raw.logs.{tenant_id_str}",
+            key=str(incident_id),
+            payload=outbox_payload,
+        )
+        
+        await db.commit()
 
     except Exception as exc:
+        await db.rollback()
         # DB write failed after a successful S3 upload.
         # The S3 object is orphaned but will be cleaned up by the 30-day
         # lifecycle rule.  We return 500 so the SDK retries with the same
@@ -311,6 +315,17 @@ async def ingest_logs(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist ingestion record. Please retry.",
         ) from exc
+
+    # ── Step 4: Write to Elasticsearch (non-fatal) ────────────────────────────
+    indexer = LogEventIndexer()
+    await get_es_circuit_breaker().call(
+        indexer.index_log_event,
+        parsed_log=payload,
+        incident_id=str(incident_id),
+        tenant_id=tenant_id_str,
+        plan_tier=tenant.plan_tier,
+        s3_key=s3_key,
+    )
 
     logger.info(
         "ingest_logs_success",

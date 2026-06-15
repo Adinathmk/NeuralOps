@@ -130,6 +130,15 @@ class Settings(BaseSettings):
         description="Google Gemini API Key for the LangGraph agent pipeline.",
     )
 
+    # ── Elasticsearch ─────────────────────────────────────────────────────────
+    ELASTICSEARCH_HOSTS: Any = Field(
+        default=["http://localhost:9200"],
+        description="Comma-separated or JSON list of Elasticsearch hosts.",
+    )
+    ELASTICSEARCH_USERNAME: str = Field(default="elastic")
+    ELASTICSEARCH_PASSWORD: str = Field(default="changeme")
+    ELASTICSEARCH_CA_CERT_PATH: Optional[str] = Field(default=None)
+
     # ── Derived helpers ───────────────────────────────────────────────────────
 
     @field_validator("JWT_PUBLIC_KEY", mode="before")
@@ -138,9 +147,9 @@ class Settings(BaseSettings):
         """Replace literal \\n with real newlines so PEM blocks work correctly."""
         return v.replace("\\n", "\n")
 
-    @field_validator("CORS_ALLOWED_ORIGINS", mode="before")
+    @field_validator("CORS_ALLOWED_ORIGINS", "ELASTICSEARCH_HOSTS", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: any) -> List[str]:
+    def parse_list_vars(cls, v: any) -> List[str]:
         """Support both JSON list format and comma-separated string format in environment variables."""
         if isinstance(v, str):
             import json
