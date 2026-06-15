@@ -52,6 +52,62 @@ from app.schemas.parse_log import ParsedLogEvent
 
 logger = logging.getLogger(__name__)
 
+import aioboto3
+import json
+
+async def _publish_to_sqs(
+    tenant_id: str,
+    incident_id: str,
+    service_name: str,
+    environment: str,
+    error_type: str,
+    severity: str,
+) -> None:
+    """
+    Bypass Kafka and drop an incident.created event directly into the SQS
+    Push Notifications queue. This natively triggers the push router Lambda.
+    """
+    queue_url = "https://sqs.ap-south-1.amazonaws.com/160823835768/neuralops-push-incidents.fifo"
+    
+    import os
+    session = aioboto3.Session(
+        aws_access_key_id=os.environ.get('DYNAMODB_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.environ.get('DYNAMODB_SECRET_ACCESS_KEY'),
+        region_name=os.environ.get('SQS_REGION', 'ap-south-1'),
+    )
+    
+    event_id = str(_uuid_module.uuid4())
+    message = {
+        'event_id':       event_id,
+        'tenant_id':      str(tenant_id),
+        'incident_id':    str(incident_id),
+        'severity':       severity,
+        'error_type':     error_type,
+        'service_name':   service_name,
+        'environment':    environment,
+    }
+    
+    try:
+        async with session.client('sqs', endpoint_url=None) as sqs_client:
+            await sqs_client.send_message(
+                QueueUrl=queue_url,
+                MessageBody=json.dumps(message),
+                MessageGroupId=str(tenant_id),
+                MessageDeduplicationId=event_id,
+            )
+        logger.info(
+            "sqs_push_notification_queued",
+            tenant_id=tenant_id,
+            incident_id=str(incident_id)
+        )
+    except Exception as exc:
+        logger.error(
+            "sqs_push_notification_failed",
+            tenant_id=tenant_id,
+            incident_id=str(incident_id),
+            error=str(exc)
+        )
+
 
 # ---------------------------------------------------------------------------
 # Fingerprint computation
@@ -627,6 +683,16 @@ class IncidentService:
                 "total_latency_ms": agent_result.get("total_latency_ms"),
             },
         )
+
+        if not is_draft:
+            await _publish_to_sqs(
+                tenant_id=str(tenant_id),
+                incident_id=str(incident_id),
+                service_name=parsed_event.service_name,
+                environment=parsed_event.environment,
+                error_type=parsed_event.error_type,
+                severity=severity,
+            )
 
         return {
             "incident_id": incident_id,
