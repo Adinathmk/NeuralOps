@@ -9,20 +9,33 @@ DEBEZIUM_HOST = os.environ.get("DEBEZIUM_HOST", "localhost")
 DEBEZIUM_PORT = os.environ.get("DEBEZIUM_PORT", "8083")
 DEBEZIUM_BASE_URL = f"http://{DEBEZIUM_HOST}:{DEBEZIUM_PORT}"
 
-def get_env(key, default):
+def get_env_from_docker_file(key, default):
+    """
+    Read explicitly from .env.docker to prevent host shell variables 
+    (e.g., DJANGO_DB_HOST=127.0.0.1) from leaking into the container configuration.
+    Debezium runs inside Docker and MUST use the internal container names.
+    """
+    try:
+        with open(".env.docker", "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(f"{key}="):
+                    return line.split("=", 1)[1].strip("'\"")
+    except Exception:
+        pass
     return os.environ.get(key, default)
 
-DJANGO_DB_HOST = get_env("DJANGO_DB_HOST", "django_db")
-DJANGO_DB_PORT = get_env("DJANGO_DB_PORT", "5432")
-DJANGO_DB_NAME = get_env("DJANGO_DB_NAME", "neuralops_db")
-DJANGO_DB_USER = get_env("DJANGO_DB_USER", "neuralops")
-DJANGO_DB_PASSWORD = get_env("DJANGO_DB_PASSWORD", "neuralops_password")
+DJANGO_DB_HOST = get_env_from_docker_file("DJANGO_DB_HOST", "django_db")
+DJANGO_DB_PORT = get_env_from_docker_file("DJANGO_DB_PORT", "5432")
+DJANGO_DB_NAME = get_env_from_docker_file("DJANGO_DB_NAME", "neuralops_db")
+DJANGO_DB_USER = get_env_from_docker_file("DJANGO_DB_USER", "neuralops")
+DJANGO_DB_PASSWORD = get_env_from_docker_file("DJANGO_DB_PASSWORD", "neuralops_password")
 
-FASTAPI_DB_HOST = get_env("FASTAPI_DB_HOST", "fastapi_db")
-FASTAPI_DB_PORT = get_env("FASTAPI_DB_PORT", "5432")
-FASTAPI_DB_NAME = get_env("FASTAPI_DB_NAME", "neuralops_fastapi_db")
-FASTAPI_DB_USER = get_env("FASTAPI_DB_USER", "neuralops_fastapi")
-FASTAPI_DB_PASSWORD = get_env("FASTAPI_DB_PASSWORD", "fastapi_password")
+FASTAPI_DB_HOST = get_env_from_docker_file("FASTAPI_DB_HOST", "fastapi_db")
+FASTAPI_DB_PORT = get_env_from_docker_file("FASTAPI_DB_PORT", "5432")
+FASTAPI_DB_NAME = get_env_from_docker_file("FASTAPI_DB_NAME", "neuralops_fastapi_db")
+FASTAPI_DB_USER = get_env_from_docker_file("FASTAPI_DB_USER", "neuralops_fastapi")
+FASTAPI_DB_PASSWORD = get_env_from_docker_file("FASTAPI_DB_PASSWORD", "fastapi_password")
 
 def log_info(msg):
     print(f"[INFO]  {msg}")

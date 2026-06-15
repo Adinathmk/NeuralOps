@@ -57,16 +57,13 @@ _fix_cb = None
 
 
 def _get_client():
-    global _gemini_client
-    if _gemini_client is None:
-        import google.generativeai as genai
-        from app.core.config import get_settings
-        genai.configure(api_key=get_settings().GEMINI_API_KEY)
-        _gemini_client = genai.GenerativeModel(
-            "models/gemini-3.5-flash",
-            generation_config={"response_mime_type": "application/json", "temperature": 0.15, "max_output_tokens": 1200}
-        )
-    return _gemini_client
+    import google.generativeai as genai
+    from app.core.config import get_settings
+    genai.configure(api_key=get_settings().GEMINI_API_KEY)
+    return genai.GenerativeModel(
+        "models/gemini-2.5-flash",
+        generation_config={"response_mime_type": "application/json", "temperature": 0.15, "max_output_tokens": 1200}
+    )
 
 
 def _get_circuit_breaker():
@@ -302,7 +299,7 @@ class FixGeneratorNode:
             )
 
             logger.warning(
-                "fix_generator_fallback_used",
+                f"fix_generator_fallback_used: {error_name} - {str(exc)[:300]}",
                 extra={
                     "error_type": error_type,
                     "exception_type": error_name,

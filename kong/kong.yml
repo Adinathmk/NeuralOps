@@ -10,31 +10,11 @@ upstreams:
     targets:
       - target: django:8000
         weight: 100
-    healthchecks:
-      active:
-        http_path: /api/v1/health
-        healthy:
-          interval: 10
-          successes: 2
-        unhealthy:
-          interval: 5
-          tcp_failures: 2
-          http_failures: 2
 
   - name: fastapi-upstream
     targets:
       - target: fastapi:8001
         weight: 100
-    healthchecks:
-      active:
-        http_path: /health
-        healthy:
-          interval: 10
-          successes: 2
-        unhealthy:
-          interval: 5
-          tcp_failures: 2
-          http_failures: 2
 
 # ── Services ───────────────────────────────────────────────────────────────────
 services:
@@ -94,6 +74,7 @@ services:
           - /api/v1/playbooks
           - /api/v1/integrations
           - /api/v1/team
+          - /api/v1/push
         strip_path: false
         preserve_host: true
         protocols: [http, https]

@@ -223,6 +223,56 @@ class LogEventIndexer:
             request_timeout=30,
         )
 
+    async def update_parsed_fields(
+        self,
+        incident_id: str,
+        tenant_id: str,
+        plan_tier: str,
+        error_type: str,
+        file_path: Optional[str],
+        line_number: Optional[int],
+        severity: str,
+    ) -> None:
+        """
+        Update the parsed fields on the log event after Celery parsing.
+        """
+        search_index = get_write_alias(tenant_id=tenant_id, plan_tier=plan_tier)
+        
+        await self.es.update_by_query(
+            index=search_index,
+            body={
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"term": {"tenant_id": tenant_id}},
+                            {"term": {"incident_id": incident_id}},
+                        ]
+                    }
+                },
+                "script": {
+                    "source": """
+                        ctx._source.error_type = params.error_type;
+                        if (params.file_path != null) {
+                            ctx._source.file_path = params.file_path;
+                        }
+                        if (params.line_number != null) {
+                            ctx._source.line_number = params.line_number;
+                        }
+                        ctx._source.severity = params.severity;
+                    """,
+                    "lang": "painless",
+                    "params": {
+                        "error_type": error_type,
+                        "file_path": file_path,
+                        "line_number": line_number,
+                        "severity": severity,
+                    },
+                },
+            },
+            conflicts="proceed",
+            request_timeout=30,
+        )
+
     # ── DOCUMENT BUILDER ───────────────────────────────────────────────────
 
     def _build_document(

@@ -150,6 +150,33 @@ async def _execute_run_agent(
     try:
         async with AsyncSessionLocal() as session:
 
+            # ── Step 2.5: Update Elasticsearch log document with parsed fields ───────
+            from sqlalchemy import select
+            from app.models.snapshots import TenantSnapshot
+            tenant_snapshot = await session.execute(
+                select(TenantSnapshot).where(TenantSnapshot.tenant_id == tenant_uuid)
+            )
+            tenant = tenant_snapshot.scalar_one_or_none()
+            plan_tier = tenant.plan_tier if tenant else "standard"
+            
+            from app.services.log_event_indexer import LogEventIndexer
+            es_indexer = LogEventIndexer()
+            try:
+                await es_indexer.update_parsed_fields(
+                    incident_id=incident_id_str,
+                    tenant_id=tenant_id_str,
+                    plan_tier=plan_tier,
+                    error_type=parsed_event.error_type,
+                    file_path=parsed_event.crash_file,
+                    line_number=parsed_event.crash_line,
+                    severity=parsed_event.severity,
+                )
+            except Exception as e:
+                logger.warning(
+                    "es_update_parsed_fields_failed",
+                    extra={"error": str(e), "incident_id": incident_id_str}
+                )
+
             # ── Step 3: DB deduplication check (Layer 2) ─────────────────────
             incident_service = IncidentService(session)
 

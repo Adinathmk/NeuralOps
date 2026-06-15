@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "integrations",
     "channels",
     "websockets",
+    "push",
 ]
 
 # ============================================================================
@@ -425,3 +426,23 @@ FERNET_ENCRYPTION_KEY = os.getenv("FERNET_ENCRYPTION_KEY")
 # NOTE: Required for the integrations app.
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 # Add the key to .env.docker as: FERNET_ENCRYPTION_KEY=<generated-key>
+
+# ============================================================================
+# AWS DYNAMODB
+# ============================================================================
+DYNAMODB_REGION = os.getenv("DYNAMODB_REGION", "ap-south-1")
+DYNAMODB_ACCESS_KEY_ID = os.getenv("DYNAMODB_ACCESS_KEY_ID")
+DYNAMODB_SECRET_ACCESS_KEY = os.getenv("DYNAMODB_SECRET_ACCESS_KEY")
+
+# ============================================================================
+# AWS SQS — Push Notification Pipeline
+# ============================================================================
+SQS_REGION = os.getenv("SQS_REGION", "ap-south-1")
+SQS_PUSH_INCIDENTS_QUEUE_URL = os.getenv("SQS_PUSH_INCIDENTS_QUEUE_URL", "")
+SQS_PUSH_DISPATCH_QUEUE_URL = os.getenv("SQS_PUSH_DISPATCH_QUEUE_URL", "")
+
+# ============================================================================
+# WEB PUSH NOTIFICATIONS
+# ============================================================================
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:admin@neuralops.com")

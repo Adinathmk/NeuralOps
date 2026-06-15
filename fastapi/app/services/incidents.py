@@ -238,14 +238,14 @@ class IncidentService:
         """
         # The partial unique index uq_incidents_tenant_fingerprint_active
         # covers exactly this query (tenant_id, fingerprint) WHERE status
-        # NOT IN ('resolved', 'draft'). PostgreSQL will use it for an
+        # != 'resolved'. PostgreSQL will use it for an
         # index scan rather than a sequential scan.
         stmt = (
             select(Incident)
             .where(
                 Incident.tenant_id == tenant_id,
                 Incident.fingerprint == fingerprint,
-                Incident.status.not_in(["resolved", "draft"]),
+                Incident.status != "resolved",
             )
             .limit(1)
         )

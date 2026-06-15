@@ -53,7 +53,7 @@ class Incident(Base):
     creating a new row.
 
     The partial unique index uq_incidents_tenant_fingerprint_active
-    (tenant_id, fingerprint) WHERE status NOT IN ('resolved', 'draft')
+    (tenant_id, fingerprint) WHERE status != 'resolved'
     enforces at the DB layer that only one active incident per
     fingerprint per tenant can exist at any time.
     """
@@ -646,7 +646,7 @@ def _attach_incident_partial_index(target, connection, **kwargs) -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS
                 uq_incidents_tenant_fingerprint_active
             ON incidents (tenant_id, fingerprint)
-            WHERE status NOT IN ('resolved', 'draft');
+            WHERE status != 'resolved';
             """
         )
     )

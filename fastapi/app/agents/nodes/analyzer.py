@@ -62,21 +62,18 @@ _analyzer_cb = None
 
 
 def _get_client():
-    global _gemini_client
-    if _gemini_client is None:
-        import google.generativeai as genai
-        from app.core.config import get_settings
-        genai.configure(api_key=get_settings().GEMINI_API_KEY)
-        _gemini_client = genai.GenerativeModel(
-            "models/gemini-3.5-flash",
-            generation_config={
-                "response_mime_type": "application/json",
-                "response_schema": AnalyzerOutput,
-                "temperature": 0.1,
-                "max_output_tokens": 8192
-            }
-        )
-    return _gemini_client
+    import google.generativeai as genai
+    from app.core.config import get_settings
+    genai.configure(api_key=get_settings().GEMINI_API_KEY)
+    return genai.GenerativeModel(
+        "models/gemini-2.5-flash",
+        generation_config={
+            "response_mime_type": "application/json",
+            "response_schema": AnalyzerOutput,
+            "temperature": 0.1,
+            "max_output_tokens": 8192
+        }
+    )
 
 
 def _get_circuit_breaker():
@@ -351,7 +348,7 @@ class AnalyzerNode:
             )
 
             logger.warning(
-                "analyzer_fallback_used",
+                f"analyzer_fallback_used: {error_name} - {str(exc)[:300]}",
                 extra={
                     "error_type": error_type,
                     "exception_type": error_name,

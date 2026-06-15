@@ -15,7 +15,7 @@ Each table has:
   - Appropriate B-tree indexes for the expected query patterns
 
 The incidents table additionally has a partial unique index on
-(tenant_id, fingerprint) WHERE status NOT IN ('resolved', 'draft')
+(tenant_id, fingerprint) WHERE status != 'resolved'
 which enforces the DB-layer deduplication guarantee.
 
 Downgrade drops all policies, indexes, and tables in reverse dependency order.
@@ -291,7 +291,7 @@ def upgrade() -> None:
         """
         CREATE UNIQUE INDEX uq_incidents_tenant_fingerprint_active
         ON incidents (tenant_id, fingerprint)
-        WHERE status NOT IN ('resolved', 'draft');
+        WHERE status != 'resolved';
         """
     )
 

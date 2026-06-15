@@ -293,6 +293,7 @@ class Command(BaseCommand):
                 "source_version": 1,
                 "first_seen_at": data.get("first_seen_at"),
                 "last_seen_at": data.get("last_seen_at") or data.get("first_seen_at"),
+                "created_at": data.get("created_at") or data.get("first_seen_at"),
             },
         )
 

@@ -59,3 +59,9 @@ db.sqlite3
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ── AWS Lambda Artifacts ──────────────────────────────────────
+*.zip
+_stage_*/
+package/
+deps/

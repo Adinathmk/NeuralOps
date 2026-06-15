@@ -33,8 +33,8 @@ def get_es_client() -> AsyncElasticsearch:
         "retry_on_timeout": True,
         "max_retries": 3,
         "request_timeout": 10,
-        "sniff_on_start": True,
-        "sniff_on_node_failure": True,
+        "sniff_on_start": False,
+        "sniff_on_node_failure": False,
         "min_delay_between_sniffing": 60,
     }
 
