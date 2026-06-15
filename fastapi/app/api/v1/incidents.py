@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional
 import aioboto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -269,8 +269,12 @@ async def get_incident(
         select(Incident)
         .options(selectinload(Incident.analysis))
         .where(
-            Incident.id == incident_id,
             Incident.tenant_id == tenant_id,
+            or_(
+                Incident.id == incident_id,
+                Incident.source_log_id == incident_id,
+                Incident.occurrences.contains([f"logs/{tenant_id}/context/{incident_id}.json.gz"]),
+            ),
         )
     )
 

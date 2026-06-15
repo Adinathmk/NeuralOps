@@ -159,8 +159,33 @@ async def _execute_run_agent(
             tenant = tenant_snapshot.scalar_one_or_none()
             plan_tier = tenant.plan_tier if tenant else "standard"
             
+            from app.database.elasticsearch_client import get_settings
+            from elasticsearch import AsyncElasticsearch
+            es_settings = get_settings()
+            
+            es_kwargs = {
+                "hosts": es_settings.ELASTICSEARCH_HOSTS,
+                "connections_per_node": 10,
+                "retry_on_timeout": True,
+                "max_retries": 3,
+                "request_timeout": 10,
+                "sniff_on_start": False,
+                "sniff_on_node_failure": False,
+                "min_delay_between_sniffing": 60,
+            }
+            if es_settings.ELASTICSEARCH_USERNAME and es_settings.ELASTICSEARCH_PASSWORD:
+                es_kwargs["basic_auth"] = (es_settings.ELASTICSEARCH_USERNAME, es_settings.ELASTICSEARCH_PASSWORD)
+            if any(host.startswith("https") for host in es_settings.ELASTICSEARCH_HOSTS):
+                es_kwargs["verify_certs"] = True
+                if es_settings.ELASTICSEARCH_CA_CERT_PATH:
+                    es_kwargs["ca_certs"] = es_settings.ELASTICSEARCH_CA_CERT_PATH
+            else:
+                es_kwargs["verify_certs"] = False
+
+            es_client = AsyncElasticsearch(**es_kwargs)
+            
             from app.services.log_event_indexer import LogEventIndexer
-            es_indexer = LogEventIndexer()
+            es_indexer = LogEventIndexer(es_client=es_client)
             try:
                 await es_indexer.update_parsed_fields(
                     incident_id=incident_id_str,
@@ -172,10 +197,12 @@ async def _execute_run_agent(
                     severity=parsed_event.severity,
                 )
             except Exception as e:
-                logger.warning(
+                logger.exception(
                     "es_update_parsed_fields_failed",
                     extra={"error": str(e), "incident_id": incident_id_str}
                 )
+            finally:
+                await es_client.close()
 
             # ── Step 3: DB deduplication check (Layer 2) ─────────────────────
             incident_service = IncidentService(session)

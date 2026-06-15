@@ -238,40 +238,47 @@ class LogEventIndexer:
         """
         search_index = get_write_alias(tenant_id=tenant_id, plan_tier=plan_tier)
         
-        await self.es.update_by_query(
-            index=search_index,
-            body={
-                "query": {
-                    "bool": {
-                        "must": [
-                            {"term": {"tenant_id": tenant_id}},
-                            {"term": {"incident_id": incident_id}},
-                        ]
-                    }
-                },
-                "script": {
-                    "source": """
-                        ctx._source.error_type = params.error_type;
-                        if (params.file_path != null) {
-                            ctx._source.file_path = params.file_path;
+        import asyncio
+        max_retries = 5
+        for attempt in range(max_retries):
+            resp = await self.es.update_by_query(
+                index=search_index,
+                body={
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"tenant_id": tenant_id}},
+                                {"term": {"incident_id": incident_id}},
+                            ]
                         }
-                        if (params.line_number != null) {
-                            ctx._source.line_number = params.line_number;
-                        }
-                        ctx._source.severity = params.severity;
-                    """,
-                    "lang": "painless",
-                    "params": {
-                        "error_type": error_type,
-                        "file_path": file_path,
-                        "line_number": line_number,
-                        "severity": severity,
+                    },
+                    "script": {
+                        "source": """
+                            ctx._source.error_type = params.error_type;
+                            if (params.file_path != null) {
+                                ctx._source.file_path = params.file_path;
+                            }
+                            if (params.line_number != null) {
+                                ctx._source.line_number = params.line_number;
+                            }
+                            ctx._source.severity = params.severity;
+                        """,
+                        "lang": "painless",
+                        "params": {
+                            "error_type": error_type,
+                            "file_path": file_path,
+                            "line_number": line_number,
+                            "severity": severity,
+                        },
                     },
                 },
-            },
-            conflicts="proceed",
-            request_timeout=30,
-        )
+                conflicts="proceed",
+                request_timeout=30,
+            )
+            if resp.get("updated", 0) > 0:
+                break
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.5)
 
     # ── DOCUMENT BUILDER ───────────────────────────────────────────────────
 
