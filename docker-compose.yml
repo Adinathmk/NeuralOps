@@ -10,7 +10,7 @@ services:
 
   # ── DB-1 (Django Database) ───────────────────────────────────────────────────
   django_db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: db-django
     restart: unless-stopped
     command: postgres -c wal_level=logical -c max_wal_senders=10 -c max_replication_slots=10
@@ -33,7 +33,7 @@ services:
 
   # ── DB-2 (FastAPI Database) ──────────────────────────────────────────────────
   fastapi_db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: db-fastapi
     restart: unless-stopped
     command: postgres -c wal_level=logical -c max_wal_senders=10 -c max_replication_slots=10
@@ -355,7 +355,7 @@ services:
       celery -A app.worker.celery_app worker
       --loglevel=${CELERY_LOG_LEVEL:-info}
       --concurrency=4
-      --queues=celery
+      --queues=celery,embed
     env_file: .env.docker
     environment:
       # Celery isolated to Redis db 2 — never conflicts with Django (db 0)

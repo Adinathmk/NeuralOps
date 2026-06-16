@@ -94,3 +94,4 @@ celery_app.autodiscover_tasks(["app.worker"], force=True)
 import app.worker.tasks.index_code
 import app.worker.tasks.parse_log
 import app.worker.tasks.run_agent
+import app.worker.tasks.embed_playbook

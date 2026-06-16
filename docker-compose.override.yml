@@ -82,8 +82,8 @@ services:
     image: node:18-alpine
     container_name: localtunnel
     restart: unless-stopped
-    command: npx localtunnel --port 8001 --local-host fastapi
+    command: npx localtunnel --port 80 --local-host kong --subdomain vast-tires-press
     networks:
       - neuralops_network
     depends_on:
-      - fastapi
+      - kong

@@ -130,6 +130,15 @@ class Settings(BaseSettings):
         description="Google Gemini API Key for the LangGraph agent pipeline.",
     )
 
+    # ── Embedding ────────────────────────────────────────────────────────────
+    EMBEDDING_MODEL: str = "models/gemini-embedding-2"
+    EMBEDDING_DIMENSIONS: int = 768
+
+    # ── Playbook matching ────────────────────────────────────────────────────
+    PLAYBOOK_MATCH_TOP_K: int = 5
+    PLAYBOOK_MATCH_SCORE_THRESHOLD: float = 0.28   # cosine DISTANCE threshold
+    PLAYBOOK_HNSW_EF_SEARCH: int = 100             # Higher than default (40)
+
     # ── Elasticsearch ─────────────────────────────────────────────────────────
     ELASTICSEARCH_HOSTS: Any = Field(
         default=["http://localhost:9200"],

@@ -37,7 +37,6 @@ Relationship to other components:
 from __future__ import annotations
 
 import hashlib
-import logging
 import uuid as _uuid_module
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -46,11 +45,12 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.models.incidents import Alert, Analysis, Incident
 from app.models.outbox import write_outbox
 from app.schemas.parse_log import ParsedLogEvent
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 import aioboto3
 import json

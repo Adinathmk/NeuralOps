@@ -887,7 +887,26 @@ class ConfigSyncConsumer:
                         },
                     )
 
+        # Get plan tier to pass to embedding task
+        plan_tier = "standard"
+        async with AsyncSessionLocal() as session:
+            tenant = await self._get_tenant_snapshot(session, tenant_id)
+            if tenant:
+                plan_tier = tenant.plan_tier
+
         await self._invalidate_tenant_cache(str(tenant_id))
+
+        # ── Enqueue embedding task ────────────────────────────────────────────
+        from app.worker.tasks.embed_playbook import embed_playbook
+        embed_playbook.delay(
+            playbook_id=str(playbook_id),
+            tenant_id=str(tenant_id),
+            plan_tier=plan_tier,
+            error_pattern=playbook_data.get("error_pattern", ""),
+            instructions=playbook_data.get("instructions", ""),
+            source_version=incoming_version,
+            deleted=is_deleted,
+        )
 
     # ── Internal: DB query helpers ────────────────────────────────────────────
 

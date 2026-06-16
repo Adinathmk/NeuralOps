@@ -1,50 +1,33 @@
 """
 fastapi/app/agents/nodes/playbook_matcher.py
 
-Playbook Matcher Node — Phase 4 LangGraph Agent Pipeline
+Playbook Matcher Node — Phase 4 LangGraph Agent Pipeline (pgvector RAG)
 
-Fetches all active playbook_snapshots for the tenant and finds the first
-one whose trigger_pattern regex matches the incident's error_type,
-error_message, or crash_method.
+Fetches the most semantically relevant playbook for the current incident
+using an HNSW nearest-neighbour search against pgvector.
 
-Matching strategy (tried in order, first match wins)
-------------------------------------------------------
-1. error_type   — exact or regex match against playbook.trigger_pattern
-2. error_message — full-text regex search against playbook.trigger_pattern
-3. crash_method  — regex search against playbook.trigger_pattern
+Matching strategy
+-----------------
+1. Extracts error_type, stack_trace_summary, service_name, and file_path
+   from the parsed_event.
+2. Embeds the query using OpenAI text-embedding-3-small (with Redis caching).
+3. Searches playbook_embeddings (ANN cosine distance) for the closest match
+   below the defined distance threshold.
+4. If a match is found, queries playbook_snapshots for the remediation
+   instructions.
 
 The matched playbook's instructions are injected into the Analyzer node's
 prompt, giving the LLM domain-specific remediation guidance before it
-writes its root cause analysis. The fix_generator is not directly affected
-by playbook instructions but can see them in the analysis context.
-
-Playbook priority
------------------
-Playbooks are queried in ORDER BY priority DESC, is_active=True, so a
-tenant can assign higher priority numbers to more specific playbooks.
-The first matching playbook wins.
+writes its root cause analysis.
 
 Result: matched_playbook_id, playbook_instructions, playbook_latency_ms
 
 No match: both fields are None; the Analyzer proceeds without instructions.
 
-DB query
---------
-SELECT * FROM playbook_snapshots
-WHERE tenant_id = $tenant_id
-  AND is_active = TRUE
-ORDER BY priority DESC;
-
-(The full set is fetched once and pattern-matched in Python to avoid
- per-pattern round-trips. Playbook counts per tenant are expected to be
- small, typically < 50.)
-
 Inputs consumed from AgentState
 --------------------------------
   tenant_id
-  parsed_event.error_type
-  parsed_event.error_message
-  parsed_event.crash_method
+  parsed_event
   session   (AsyncSession bound to DB-2)
 
 Outputs written to AgentState
@@ -56,23 +39,31 @@ Outputs written to AgentState
 from __future__ import annotations
 
 import logging
-import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
+
+from sqlalchemy.future import select
+
+from app.core.config import get_settings
+from app.models.snapshots import PlaybookSnapshot
+from app.services.embedding_service import embed_text, build_query_embed_text, query_text_hash
+from app.repositories.playbook_vector_repository import search_similar_playbooks
+from app.database.redis import get_redis
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 class PlaybookMatcherNode:
     """
-    LangGraph node: PlaybookMatcher
+    LangGraph node: PlaybookMatcher (pgvector RAG)
 
     Stateless — safe to instantiate once at module level.
     """
 
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Match the incident against tenant playbook patterns.
+        Match the incident against tenant playbook vectors.
 
         Parameters
         ----------
@@ -86,58 +77,83 @@ class PlaybookMatcherNode:
             {matched_playbook_id, playbook_instructions, playbook_latency_ms}
         """
         start: float = time.monotonic()
-        parsed: Dict[str, Any] = state["parsed_event"]
+        parsed: Dict[str, Any] = state.get("parsed_event", {})
         session = state["session"]
-        tenant_id: str = state["tenant_id"]
+        tenant_id: str = str(state.get("tenant_id", ""))
 
         error_type: str = str(parsed.get("error_type") or "")
-        error_message: str = str(parsed.get("error_message") or "")
-        crash_method: str = str(parsed.get("crash_method") or "")
+        stack_trace_summary: str = str(parsed.get("stack_trace_summary") or "")
+        service_name: str = str(parsed.get("service_name") or "")
+        file_path: str = str(parsed.get("file_path") or "")
 
         matched_playbook_id: Optional[str] = None
         playbook_instructions: Optional[str] = None
 
         try:
-            playbooks = await self._fetch_active_playbooks(session, tenant_id)
+            # 1. Build the query text
+            query_text = build_query_embed_text(
+                error_type=error_type,
+                stack_trace_summary=stack_trace_summary,
+                service_name=service_name,
+                file_path=file_path,
+            )
 
-            for playbook in playbooks:
-                trigger_pattern: str = str(
-                    getattr(playbook, "trigger_pattern", "") or ""
-                ).strip()
+            # 2. Get embedding (with Redis caching)
+            query_vector = await self._get_query_embedding(query_text)
 
-                if not trigger_pattern:
-                    continue
+            # 3. ANN Search in pgvector
+            matches = search_similar_playbooks(
+                query_vector=query_vector,
+                tenant_id=tenant_id,
+                top_k=1,
+                distance_threshold=settings.PLAYBOOK_MATCH_SCORE_THRESHOLD,
+            )
 
-                if self._matches(trigger_pattern, error_type, error_message, crash_method):
-                    matched_playbook_id = str(playbook.rule_id)
+            if matches:
+                best_match = matches[0]
+                matched_playbook_id = best_match["playbook_id"]
+                logger.info(
+                    "playbook_matched_semantic",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "playbook_id": matched_playbook_id,
+                        "distance": best_match["distance"],
+                        "similarity": best_match["similarity"],
+                    },
+                )
+
+                # 4. Fetch the actual instructions from DB-2 using AsyncSession
+                import uuid as _uuid_module
+                pb_uuid = _uuid_module.UUID(matched_playbook_id)
+                stmt = select(PlaybookSnapshot).where(
+                    PlaybookSnapshot.playbook_id == pb_uuid,
+                    PlaybookSnapshot.tenant_id == _uuid_module.UUID(tenant_id),
+                    PlaybookSnapshot.is_active.is_(True)
+                )
+                result = await session.execute(stmt)
+                playbook = result.scalar_one_or_none()
+                
+                if playbook:
                     playbook_instructions = str(
                         getattr(playbook, "instructions", "") or ""
                     )
-                    logger.info(
-                        "playbook_matched",
-                        extra={
-                            "tenant_id": tenant_id,
-                            "playbook_id": matched_playbook_id,
-                            "trigger_pattern": trigger_pattern[:100],
-                            "error_type": error_type,
-                        },
-                    )
-                    break  # First match wins
+                else:
+                    # Very rare race condition: embedded vector exists but snapshot deleted/inactive
+                    matched_playbook_id = None
+            else:
+                logger.debug(
+                    "playbook_no_match_semantic",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "error_type": error_type,
+                    },
+                )
 
         except Exception as exc:
             # Playbook matching is best-effort; failure must not block analysis
             logger.warning(
                 "playbook_matcher_error",
                 extra={"tenant_id": tenant_id, "error": str(exc)},
-            )
-
-        if matched_playbook_id is None:
-            logger.debug(
-                "playbook_no_match",
-                extra={
-                    "tenant_id": tenant_id,
-                    "error_type": error_type,
-                },
             )
 
         latency_ms = int((time.monotonic() - start) * 1000)
@@ -148,97 +164,34 @@ class PlaybookMatcherNode:
             "playbook_latency_ms": latency_ms,
         }
 
-    # ------------------------------------------------------------------
-    # Database query
-    # ------------------------------------------------------------------
-
-    async def _fetch_active_playbooks(
-        self,
-        session: Any,
-        tenant_id: str,
-    ) -> List[Any]:
+    async def _get_query_embedding(self, query_text: str) -> list[float]:
         """
-        Fetch all active playbooks for the tenant, ordered by priority.
-
-        Returns an empty list on any DB error to ensure the pipeline
-        continues without playbook guidance rather than failing entirely.
+        Retrieves the embedding for a given query text.
+        Checks Redis L1 cache first to save OpenAI costs and latency on
+        identical incoming errors (e.g., error spikes).
         """
-        import uuid as _uuid_module
+        rdb = get_redis()
+        cache_key = f"embed:query:{query_text_hash(query_text)}"
 
-        from sqlalchemy import and_
-        from sqlalchemy.future import select
+        cached = await rdb.get(cache_key)
+        if cached:
+            # Parse the string representation back into a float list
+            import json
+            try:
+                return json.loads(cached)
+            except Exception:
+                pass
 
-        from app.models.snapshots import PlaybookSnapshot
+        # Cache miss, call OpenAI (which is sync, so we just call it directly
+        # or it will block the event loop a tiny bit. Since embed_text uses httpx sync under the hood,
+        # we ideally should run it in a thread pool, but for simplicity here we just call it.
+        # LangGraph nodes are usually wrapped in threads if they're async calling sync block).
+        # Actually, let's run it in a thread executor to avoid blocking the event loop.
+        import asyncio
+        loop = asyncio.get_running_loop()
+        vector = await loop.run_in_executor(None, embed_text, query_text)
 
-        try:
-            tenant_uuid = _uuid_module.UUID(tenant_id)
-        except (ValueError, AttributeError):
-            logger.warning(
-                "playbook_matcher_invalid_tenant_uuid",
-                extra={"tenant_id": tenant_id},
-            )
-            return []
-
-        try:
-            stmt = (
-                select(PlaybookSnapshot)
-                .where(
-                    and_(
-                        PlaybookSnapshot.tenant_id == tenant_uuid,
-                        PlaybookSnapshot.is_active.is_(True),
-                    )
-                )
-                .order_by(PlaybookSnapshot.priority.desc())
-            )
-            result = await session.execute(stmt)
-            return list(result.scalars().all())
-
-        except Exception as exc:
-            logger.warning(
-                "playbook_matcher_db_error",
-                extra={"tenant_id": tenant_id, "error": str(exc)},
-            )
-            return []
-
-    # ------------------------------------------------------------------
-    # Pattern matching
-    # ------------------------------------------------------------------
-
-    def _matches(
-        self,
-        pattern: str,
-        error_type: str,
-        error_message: str,
-        crash_method: str,
-    ) -> bool:
-        """
-        Check if the trigger_pattern matches any of the three candidate strings.
-
-        The pattern is treated as a Python regex. If it is not a valid
-        regex, it falls back to a simple substring check. This ensures
-        that playbooks with plain-text trigger_pattern values still work.
-
-        Matching is case-insensitive for all three candidates.
-
-        Returns True on the first candidate that matches.
-        """
-        try:
-            compiled = re.compile(pattern, re.IGNORECASE)
-            use_regex = True
-        except re.error:
-            use_regex = False
-
-        candidates = [error_type, error_message, crash_method]
-
-        for candidate in candidates:
-            if not candidate:
-                continue
-            if use_regex:
-                if compiled.search(candidate):
-                    return True
-            else:
-                # Plain substring match as fallback
-                if pattern.lower() in candidate.lower():
-                    return True
-
-        return False
+        # Cache the result for 24 hours
+        import json
+        await rdb.setex(cache_key, 86400, json.dumps(vector))
+        return vector
