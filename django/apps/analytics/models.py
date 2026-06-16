@@ -15,6 +15,7 @@ events published by FastAPI via Debezium.
 Row-Level Security is enforced via the existing RLS migration for this
 table. The TenantMiddleware sets app.current_tenant on each connection.
 """
+
 from __future__ import annotations
 
 import uuid

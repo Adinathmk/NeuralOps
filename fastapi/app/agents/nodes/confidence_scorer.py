@@ -53,6 +53,7 @@ Outputs written to AgentState
 ------------------------------
   confidence_score, retrieval_score, coherence_score, scorer_latency_ms
 """
+
 from __future__ import annotations
 
 import json
@@ -122,9 +123,7 @@ class ConfidenceScorerNode:
 
         # ── Composite score ───────────────────────────────────────────────────
         raw_score: float = (
-            retrieval_score * 0.35
-            + coherence_score * 0.45
-            + coverage_score * 0.20
+            retrieval_score * 0.35 + coherence_score * 0.45 + coverage_score * 0.20
         )
         confidence_score: float = round(max(0.0, min(1.0, raw_score)), 4)
 
@@ -154,6 +153,7 @@ class ConfidenceScorerNode:
 # ---------------------------------------------------------------------------
 # Sub-signal computation helpers
 # ---------------------------------------------------------------------------
+
 
 def _compute_retrieval_score(
     symbols_retrieved: int,

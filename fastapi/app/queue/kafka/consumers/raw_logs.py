@@ -1,4 +1,4 @@
-"""
+r"""
 fastapi/app/queue/kafka/consumers/raw_logs.py
 
 Kafka consumer for triggering the AI pipeline on new log ingestions.
@@ -114,7 +114,13 @@ class RawLogConsumer:
                 service_name = payload.get("service_name")
                 environment = payload.get("environment")
 
-                if tenant_id and incident_id and s3_path and service_name and environment:
+                if (
+                    tenant_id
+                    and incident_id
+                    and s3_path
+                    and service_name
+                    and environment
+                ):
                     logger.info(
                         "raw_log_triggering_parse_log",
                         extra={"tenant_id": tenant_id, "incident_id": incident_id},
@@ -128,5 +134,5 @@ class RawLogConsumer:
                     )
                 else:
                     logger.warning("raw_log_missing_fields", extra={"payload": payload})
-            
+
             await self._consumer.commit()

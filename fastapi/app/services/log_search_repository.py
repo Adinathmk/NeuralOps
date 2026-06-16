@@ -28,29 +28,31 @@ logger = logging.getLogger(__name__)
 
 # ── FILTER SCHEMA ─────────────────────────────────────────────────────────
 
+
 @dataclass
 class LogSearchFilters:
     """
     All possible filters the search page can send.
     All fields are optional except tenant_id.
     """
-    tenant_id: str                           # REQUIRED — always enforced
-    severity: Optional[str] = None          # "ERROR" | "CRITICAL"
-    service_name: Optional[str] = None      # e.g. "payment-api"
-    environment: Optional[str] = None       # "production" | "staging"
-    error_type: Optional[str] = None        # e.g. "NullPointerException"
-    file_path: Optional[str] = None         # e.g. "src/payment/service.py"
-    status: Optional[str] = None            # "open" | "resolved"
-    time_from: Optional[str] = None         # ISO 8601 e.g. "2026-06-13T00:00:00Z"
-    time_to: Optional[str] = None           # ISO 8601
+
+    tenant_id: str  # REQUIRED — always enforced
+    severity: Optional[str] = None  # "ERROR" | "CRITICAL"
+    service_name: Optional[str] = None  # e.g. "payment-api"
+    environment: Optional[str] = None  # "production" | "staging"
+    error_type: Optional[str] = None  # e.g. "NullPointerException"
+    file_path: Optional[str] = None  # e.g. "src/payment/service.py"
+    status: Optional[str] = None  # "open" | "resolved"
+    time_from: Optional[str] = None  # ISO 8601 e.g. "2026-06-13T00:00:00Z"
+    time_to: Optional[str] = None  # ISO 8601
     # Preset time windows (convenience — overrides time_from/time_to if set)
-    time_window: Optional[str] = None       # "1h" | "6h" | "24h" | "7d" | "30d"
+    time_window: Optional[str] = None  # "1h" | "6h" | "24h" | "7d" | "30d"
 
 
 @dataclass
 class LogSearchRequest:
     filters: LogSearchFilters
-    page_size: int = 50                     # Max 200 — enforced in the endpoint
+    page_size: int = 50  # Max 200 — enforced in the endpoint
     # search_after: the sort values of the last document from the previous page.
     # Frontend sends this back to get the next page.
     # Format: [timestamp_value, log_id_value] — matches the sort clause below.
@@ -68,6 +70,7 @@ class LogSearchResult:
 
 
 # ── REPOSITORY ─────────────────────────────────────────────────────────────
+
 
 class LogSearchRepository:
 
@@ -154,18 +157,10 @@ class LogSearchRepository:
                             "size": 100,  # Max 100 distinct service names
                         }
                     },
-                    "severities": {
-                        "terms": {"field": "severity", "size": 10}
-                    },
-                    "error_types": {
-                        "terms": {"field": "error_type", "size": 50}
-                    },
-                    "environments": {
-                        "terms": {"field": "environment", "size": 10}
-                    },
-                    "statuses": {
-                        "terms": {"field": "status", "size": 5}
-                    },
+                    "severities": {"terms": {"field": "severity", "size": 10}},
+                    "error_types": {"terms": {"field": "error_type", "size": 50}},
+                    "environments": {"terms": {"field": "environment", "size": 10}},
+                    "statuses": {"terms": {"field": "status", "size": 5}},
                 },
             },
             request_timeout=10,
@@ -197,9 +192,7 @@ class LogSearchRepository:
         - Slightly lower query cost than `must` for pure filtering
         """
         # tenant_id is ALWAYS in filter. This runs before any other clause.
-        filter_clauses = [
-            {"term": {"tenant_id": filters.tenant_id}}
-        ]
+        filter_clauses = [{"term": {"tenant_id": filters.tenant_id}}]
 
         # Optional exact-match filters — only added if the value is set
         exact_match_fields = {

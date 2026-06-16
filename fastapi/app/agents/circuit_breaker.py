@@ -44,6 +44,7 @@ Usage
         await breaker.record_failure(redis)
         raise
 """
+
 from __future__ import annotations
 
 import logging
@@ -66,9 +67,7 @@ class CircuitOpenError(RuntimeError):
     """Raised when a call is attempted against an OPEN circuit."""
 
     def __init__(self, name: str) -> None:
-        super().__init__(
-            f"Circuit breaker '{name}' is OPEN — request blocked."
-        )
+        super().__init__(f"Circuit breaker '{name}' is OPEN — request blocked.")
         self.name = name
 
 
@@ -166,9 +165,7 @@ class CircuitBreaker:
 
                 if elapsed >= self.timeout_seconds:
                     # Transition to HALF_OPEN to probe
-                    await redis.set(
-                        self._state_key(), CircuitState.HALF_OPEN.value
-                    )
+                    await redis.set(self._state_key(), CircuitState.HALF_OPEN.value)
                     await redis.set(self._successes_key(), "0")
                     logger.info(
                         "circuit_breaker_half_open",
@@ -184,9 +181,7 @@ class CircuitBreaker:
                     "circuit_breaker_open_blocking",
                     extra={
                         "circuit": self.name,
-                        "seconds_remaining": round(
-                            self.timeout_seconds - elapsed, 1
-                        ),
+                        "seconds_remaining": round(self.timeout_seconds - elapsed, 1),
                     },
                 )
                 return False

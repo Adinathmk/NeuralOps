@@ -9,8 +9,8 @@ _settings = get_settings()
 
 def get_redis() -> aioredis.Redis:
     """Return a new async Redis client instance.
-    
-    Not cached globally because Celery workers use asyncio.run() 
+
+    Not cached globally because Celery workers use asyncio.run()
     which creates a new event loop per execution, and global pools
     would bind to a closed event loop on subsequent tasks.
     """

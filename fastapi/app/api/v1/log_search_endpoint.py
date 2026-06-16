@@ -8,15 +8,16 @@ tenant_id is injected by the gateway (X-Tenant-ID header) — never from the cli
 plan_tier is read from tenant_snapshots — never from the client.
 """
 
-from fastapi import APIRouter, Depends, Query, HTTPException
 from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.api.dependencies.tenant import get_validated_tenant, ValidatedTenant
+from app.api.dependencies.tenant import ValidatedTenant, get_validated_tenant
 from app.services.log_search_repository import (
     LogSearchFilters,
-    LogSearchRequest,
     LogSearchRepository,
+    LogSearchRequest,
     LogSearchResult,
 )
 
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/api/v1/logs", tags=["logs"])
 
 
 # ── RESPONSE SCHEMA ────────────────────────────────────────────────────────
+
 
 class LogEventResponse(BaseModel):
     log_id: str
@@ -58,11 +60,11 @@ class FilterOptionsResponse(BaseModel):
 
 # ── SEARCH ENDPOINT ────────────────────────────────────────────────────────
 
+
 @router.get("/search", response_model=LogSearchResponse)
 async def search_logs(
     # ── Dependencies ──
     tenant_context: ValidatedTenant,
-
     # ── Filter params ──
     severity: Optional[str] = Query(None, description="ERROR | CRITICAL"),
     service_name: Optional[str] = Query(None),
@@ -70,7 +72,6 @@ async def search_logs(
     error_type: Optional[str] = Query(None),
     file_path: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="open | resolved"),
-
     # ── Time filters ──
     # Use time_window for preset ranges (recommended for the UI)
     # Use time_from/time_to for custom ranges (e.g. date picker)
@@ -81,13 +82,11 @@ async def search_logs(
     ),
     time_from: Optional[str] = Query(None, description="ISO 8601 timestamp"),
     time_to: Optional[str] = Query(None, description="ISO 8601 timestamp"),
-
     # ── Pagination ──
     page_size: int = Query(50, ge=1, le=200),
     # cursor is the search_after value from the previous response.
     # It's a JSON-serialised list — decode on receipt.
     cursor: Optional[str] = Query(None),
-
     # ── Repo ──
     repo: LogSearchRepository = Depends(lambda: LogSearchRepository()),
 ):
@@ -101,6 +100,7 @@ async def search_logs(
     search_after = None
     if cursor:
         import json
+
         try:
             search_after = json.loads(cursor)
         except (ValueError, TypeError):
@@ -132,7 +132,10 @@ async def search_logs(
 
     # Serialise next_cursor to JSON string for the client
     import json
-    next_cursor_str = json.dumps(result.next_search_after) if result.next_search_after else None
+
+    next_cursor_str = (
+        json.dumps(result.next_search_after) if result.next_search_after else None
+    )
 
     return LogSearchResponse(
         results=result.hits,
@@ -143,6 +146,7 @@ async def search_logs(
 
 
 # ── FILTER OPTIONS ENDPOINT ────────────────────────────────────────────────
+
 
 @router.get("/search/filters", response_model=FilterOptionsResponse)
 async def get_filter_options(

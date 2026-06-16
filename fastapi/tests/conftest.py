@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # In Docker/CI the real wheels are present and take precedence (the `if` guard
 # means we never overwrite an already-imported real module).
 
-import importlib
 
 def _stub(name: str) -> MagicMock:
     """Insert a MagicMock into sys.modules under *name* and return it."""
@@ -43,7 +43,6 @@ _consumer_stop_patcher = patch(
 )
 _consumer_start_patcher.start()
 _consumer_stop_patcher.start()
-
 
 
 import pytest

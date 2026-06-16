@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, ForeignKey, BigInteger, DateTime
-from sqlalchemy.dialects.postgresql import UUID
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.database.base import Base
 
@@ -20,20 +20,21 @@ class PlaybookEmbedding(Base):
     The embedding column uses pgvector's Vector(1536) type, which maps to
     PostgreSQL's vector(1536) and supports the <=> cosine distance operator.
     """
+
     __tablename__ = "playbook_embeddings"
 
-    id             = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    playbook_id    = Column(
-                        UUID(as_uuid=True),
-                        ForeignKey("playbook_snapshots.playbook_id", ondelete="CASCADE"),
-                        nullable=False,
-                        unique=True,
-                     )
-    tenant_id      = Column(UUID(as_uuid=True), nullable=False)
-    embedding      = Column(Vector(768), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    playbook_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("playbook_snapshots.playbook_id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    tenant_id = Column(UUID(as_uuid=True), nullable=False)
+    embedding = Column(Vector(768), nullable=False)
     source_version = Column(BigInteger, nullable=False)
-    embedded_at    = Column(
-                        DateTime(timezone=True),
-                        nullable=False,
-                        default=lambda: datetime.now(timezone.utc),
-                     )
+    embedded_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )

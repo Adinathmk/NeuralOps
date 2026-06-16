@@ -43,7 +43,7 @@ from app.api.v1.log_search_endpoint import router as logs_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.database.elasticsearch_client import get_es_client, close_es_client
+from app.database.elasticsearch_client import close_es_client, get_es_client
 from app.database.session import engine
 from app.middleware.auth import JWTAuthMiddleware
 from app.middleware.error_handler import register_exception_handlers
@@ -51,10 +51,10 @@ from app.middleware.tenant_rls import TenantRLSMiddleware
 
 # ── Model imports (register with SQLAlchemy metadata before Alembic / queries) ─
 from app.models import code_index  # noqa: F401
+from app.models import incidents  # noqa: F401
 from app.models import logs  # noqa: F401
 from app.models import outbox  # noqa: F401
 from app.models import snapshots  # noqa: F401
-from app.models import incidents   # noqa: F401 
 
 # ── Background consumers ──────────────────────────────────────────────────────
 from app.queue.kafka.consumers.config_sync import ConfigSyncConsumer
@@ -107,12 +107,11 @@ async def lifespan(app: FastAPI):
 
     get_es_client()
 
-
     _consumer_task = asyncio.create_task(
         _config_sync_consumer.start(),
         name="config_sync_consumer",
     )
-    
+
     _raw_log_task = asyncio.create_task(
         _raw_log_consumer.start(),
         name="raw_log_consumer",

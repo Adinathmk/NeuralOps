@@ -15,8 +15,9 @@ import asyncio
 import logging
 import time
 from enum import Enum
-from typing import Callable, Any, Optional
-from prometheus_client import Counter, Histogram, Gauge
+from typing import Any, Callable, Optional
+
+from prometheus_client import Counter, Gauge, Histogram
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,11 @@ es_circuit_state = Gauge(
 
 # ── CIRCUIT BREAKER ────────────────────────────────────────────────────────
 
+
 class CircuitState(Enum):
-    CLOSED = "closed"       # Normal operation
-    OPEN = "open"           # ES is down — fast-fail all calls
-    HALF_OPEN = "half_open" # Testing if ES recovered
+    CLOSED = "closed"  # Normal operation
+    OPEN = "open"  # ES is down — fast-fail all calls
+    HALF_OPEN = "half_open"  # Testing if ES recovered
 
 
 class ElasticsearchCircuitBreaker:

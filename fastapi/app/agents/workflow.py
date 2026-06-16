@@ -49,6 +49,7 @@ AgentState field ownership
 
   total_latency_ms is set by run_agent AFTER ainvoke() returns.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -64,10 +65,10 @@ from app.agents.nodes.confidence_scorer import ConfidenceScorerNode
 from app.agents.nodes.fix_generator import FixGeneratorNode
 from app.agents.nodes.playbook_matcher import PlaybookMatcherNode
 
-
 # ---------------------------------------------------------------------------
 # Shared state schema
 # ---------------------------------------------------------------------------
+
 
 class AgentState(TypedDict, total=False):
     """
@@ -82,16 +83,16 @@ class AgentState(TypedDict, total=False):
     tenant_id: str
     parsed_event: Dict[str, Any]
     fingerprint: str
-    session: Any          # sqlalchemy.ext.asyncio.AsyncSession
-    redis: Any            # redis.asyncio.Redis
+    session: Any  # sqlalchemy.ext.asyncio.AsyncSession
+    redis: Any  # redis.asyncio.Redis
 
     # ── Classifier outputs ──────────────────────────────────────────────────
-    severity: str                    # critical | high | medium | low | unknown
+    severity: str  # critical | high | medium | low | unknown
     actionable: bool
     classifier_latency_ms: int
 
     # ── CodeRetriever outputs ───────────────────────────────────────────────
-    code_context: str                # assembled and token-capped snippets
+    code_context: str  # assembled and token-capped snippets
     code_retriever_meta: Dict[str, Any]
     # keys: files_fetched, tokens, cache_hits, cache_misses,
     #       symbols_retrieved, latency_ms
@@ -113,16 +114,16 @@ class AgentState(TypedDict, total=False):
     raw_fix_output: str
     fix_generator_latency_ms: int
     fix_fallback_used: bool
-    fix_tokens: Dict[str, int]       # prompt, completion, total
+    fix_tokens: Dict[str, int]  # prompt, completion, total
 
     # ── ConfidenceScorer outputs ────────────────────────────────────────────
-    confidence_score: float          # composite score in [0.0, 1.0]
+    confidence_score: float  # composite score in [0.0, 1.0]
     retrieval_score: float
     coherence_score: float
     scorer_latency_ms: int
 
     # ── ActionDecision outputs ──────────────────────────────────────────────
-    action: str                      # "create_incident" | "store_draft"
+    action: str  # "create_incident" | "store_draft"
     confidence_threshold: float
 
     # ── Set by run_agent after ainvoke() ───────────────────────────────────
@@ -132,6 +133,7 @@ class AgentState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 # Conditional routing
 # ---------------------------------------------------------------------------
+
 
 def _route_after_classifier(state: AgentState) -> str:
     """
@@ -149,6 +151,7 @@ def _route_after_classifier(state: AgentState) -> str:
 # ---------------------------------------------------------------------------
 # Workflow factory
 # ---------------------------------------------------------------------------
+
 
 def build_agent_workflow():
     """
@@ -175,13 +178,13 @@ def build_agent_workflow():
     graph: StateGraph = StateGraph(AgentState)
 
     # ── Register nodes ─────────────────────────────────────────────────────
-    graph.add_node("classifier",        classifier_node.invoke)
-    graph.add_node("code_retriever",    code_retriever_node.invoke)
-    graph.add_node("playbook_matcher",  playbook_matcher_node.invoke)
-    graph.add_node("analyzer",          analyzer_node.invoke)
-    graph.add_node("fix_generator",     fix_generator_node.invoke)
+    graph.add_node("classifier", classifier_node.invoke)
+    graph.add_node("code_retriever", code_retriever_node.invoke)
+    graph.add_node("playbook_matcher", playbook_matcher_node.invoke)
+    graph.add_node("analyzer", analyzer_node.invoke)
+    graph.add_node("fix_generator", fix_generator_node.invoke)
     graph.add_node("confidence_scorer", confidence_scorer_node.invoke)
-    graph.add_node("action_decision",   action_decision_node.invoke)
+    graph.add_node("action_decision", action_decision_node.invoke)
 
     # ── Entry point ────────────────────────────────────────────────────────
     graph.set_entry_point("classifier")
@@ -197,12 +200,12 @@ def build_agent_workflow():
     )
 
     # ── Linear edges for the remaining nodes ───────────────────────────────
-    graph.add_edge("code_retriever",    "playbook_matcher")
-    graph.add_edge("playbook_matcher",  "analyzer")
-    graph.add_edge("analyzer",          "fix_generator")
-    graph.add_edge("fix_generator",     "confidence_scorer")
+    graph.add_edge("code_retriever", "playbook_matcher")
+    graph.add_edge("playbook_matcher", "analyzer")
+    graph.add_edge("analyzer", "fix_generator")
+    graph.add_edge("fix_generator", "confidence_scorer")
     graph.add_edge("confidence_scorer", "action_decision")
-    graph.add_edge("action_decision",   END)
+    graph.add_edge("action_decision", END)
 
     return graph.compile()
 

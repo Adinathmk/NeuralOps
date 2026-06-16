@@ -41,6 +41,7 @@ Outputs written to AgentState
   root_cause, raw_analysis_output, analyzer_latency_ms,
   analyzer_fallback_used, analyzer_tokens
 """
+
 from __future__ import annotations
 
 import json
@@ -63,7 +64,9 @@ _analyzer_cb = None
 
 def _get_client():
     import google.generativeai as genai
+
     from app.core.config import get_settings
+
     genai.configure(api_key=get_settings().GEMINI_API_KEY)
     return genai.GenerativeModel(
         "models/gemini-2.5-flash",
@@ -71,8 +74,8 @@ def _get_client():
             "response_mime_type": "application/json",
             "response_schema": AnalyzerOutput,
             "temperature": 0.1,
-            "max_output_tokens": 8192
-        }
+            "max_output_tokens": 8192,
+        },
     )
 
 
@@ -80,6 +83,7 @@ def _get_circuit_breaker():
     global _analyzer_cb
     if _analyzer_cb is None:
         from app.agents.circuit_breaker import CircuitBreaker
+
         _analyzer_cb = CircuitBreaker(
             name="openai_analyzer",
             failure_threshold=5,
@@ -141,9 +145,7 @@ def _build_user_prompt(
     parts.append(f"**Service:** {service_name}  **Environment:** {environment}")
     parts.append(f"**Error Type:** {error_type}")
     parts.append(f"**Error Message:** {error_message or '(none)'}")
-    parts.append(
-        f"**Crash Location:** `{crash_file}:{crash_line}` in `{crash_method}`"
-    )
+    parts.append(f"**Crash Location:** `{crash_file}:{crash_line}` in `{crash_method}`")
     parts.append(f"**Context Log Entries:** {context_log_count}")
 
     if stack_trace_str:
@@ -163,9 +165,7 @@ def _build_user_prompt(
         parts.append("\n## Runbook Instructions (Matched Playbook)")
         parts.append(playbook_instructions)
 
-    parts.append(
-        "\nAnalyse this incident and return the JSON object as specified."
-    )
+    parts.append("\nAnalyse this incident and return the JSON object as specified.")
 
     return "\n\n".join(parts)
 
@@ -173,6 +173,7 @@ def _build_user_prompt(
 # ---------------------------------------------------------------------------
 # Output schema
 # ---------------------------------------------------------------------------
+
 
 class AnalyzerOutput(BaseModel):
     root_cause: str = Field(
@@ -206,6 +207,7 @@ class AnalyzerOutput(BaseModel):
 # ---------------------------------------------------------------------------
 # Node implementation
 # ---------------------------------------------------------------------------
+
 
 class AnalyzerNode:
     """
@@ -300,13 +302,16 @@ class AnalyzerNode:
             if cleaned_output.endswith("```"):
                 cleaned_output = cleaned_output[:-3]
             cleaned_output = cleaned_output.strip()
-            
+
             try:
                 output_dict = json.loads(cleaned_output)
             except json.JSONDecodeError:
                 output_dict = {}
 
-            root_cause = output_dict.get("root_cause", "Automated analysis completed, but root cause extraction failed. Please check raw output.")
+            root_cause = output_dict.get(
+                "root_cause",
+                "Automated analysis completed, but root cause extraction failed. Please check raw output.",
+            )
             root_cause_confidence = output_dict.get("root_cause_confidence", 0.5)
             try:
                 root_cause_confidence = float(root_cause_confidence)
@@ -371,6 +376,7 @@ class AnalyzerNode:
 # ---------------------------------------------------------------------------
 # Fallback helper
 # ---------------------------------------------------------------------------
+
 
 def _build_fallback_root_cause(
     exc: Exception,

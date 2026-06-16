@@ -53,6 +53,7 @@ Failure semantics
   The lock auto-releases after DEDUP_LOCK_TTL_SECONDS seconds.
   This prevents permanent lock starvation.
 """
+
 from __future__ import annotations
 
 import logging
@@ -81,6 +82,7 @@ _LOCK_KEY_PREFIX: str = "dedup:lock:"
 # Key builder
 # ---------------------------------------------------------------------------
 
+
 def dedup_lock_key(fingerprint: str) -> str:
     """
     Build the Redis key for a deduplication lock.
@@ -101,6 +103,7 @@ def dedup_lock_key(fingerprint: str) -> str:
 # ---------------------------------------------------------------------------
 # Acquire / release (explicit API — used by run_agent directly)
 # ---------------------------------------------------------------------------
+
 
 async def acquire_dedup_lock(
     redis: aioredis.Redis,
@@ -148,7 +151,7 @@ async def acquire_dedup_lock(
         result = await redis.set(
             lock_key,
             owner_id,
-            nx=True,            # Only set if Not eXists
+            nx=True,  # Only set if Not eXists
             ex=DEDUP_LOCK_TTL_SECONDS,
         )
 
@@ -236,6 +239,7 @@ async def release_dedup_lock(
 # ---------------------------------------------------------------------------
 # Context manager API (alternative usage pattern)
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def dedup_lock(

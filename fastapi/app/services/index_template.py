@@ -6,6 +6,7 @@ to write to based on tenant_snapshots.plan_tier. The search service queries
 the right alias. No change in the FastAPI or Django routing logic.
 """
 
+
 def get_write_alias(tenant_id: str, plan_tier: str) -> str:
     """
     Returns the Elasticsearch alias to write to for a given tenant.

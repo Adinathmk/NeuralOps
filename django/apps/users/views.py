@@ -205,11 +205,12 @@ class ListTeamMembersView(APIView):
     )
     def get(self, request):
         # Fetch all active users in the same tenant, ordered by creation date or role
-        users = User.objects.filter(tenant=request.user.tenant, is_active=True).order_by("created_at")
+        users = User.objects.filter(
+            tenant=request.user.tenant, is_active=True
+        ).order_by("created_at")
         serializer = UserSerializer(users, many=True)
         return APIResponse.success(
-            data=serializer.data,
-            message="Team members retrieved successfully."
+            data=serializer.data, message="Team members retrieved successfully."
         )
 
 

@@ -48,11 +48,10 @@ import signal
 import time
 import uuid
 
+from confluent_kafka import Consumer, KafkaError, KafkaException
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import IntegrityError, transaction
-from confluent_kafka import Consumer, KafkaError, KafkaException
-
 from integrations.models import GitHubIntegration
 from outbox.models import ProcessedEvent
 
@@ -184,7 +183,10 @@ class Command(BaseCommand):
                         # End of partition — not an error, just caught up.
                         logger.debug(
                             "indexing_status_consumer_partition_eof",
-                            extra={"partition": msg.partition(), "offset": msg.offset()},
+                            extra={
+                                "partition": msg.partition(),
+                                "offset": msg.offset(),
+                            },
                         )
                         continue
                     if err.code() == KafkaError.UNKNOWN_TOPIC_OR_PART:
@@ -273,7 +275,11 @@ class Command(BaseCommand):
         except ValueError as exc:
             logger.error(
                 "indexing_status_invalid_uuid",
-                extra={"error": str(exc), "event_id": event_id_str, "tenant_id": tenant_id_str},
+                extra={
+                    "error": str(exc),
+                    "event_id": event_id_str,
+                    "tenant_id": tenant_id_str,
+                },
             )
             return
 

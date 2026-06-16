@@ -41,6 +41,7 @@ Architecture note:
   The parsed event is also published to parsed.logs.{tenant_id} for
   audit and replay purposes ONLY (see _publish_parsed_event).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -80,44 +81,34 @@ _SEVERITY_ORDER: Dict[str, int] = {
 # These cover Java, Python, JavaScript, and Go error conventions.
 _ERROR_TYPE_PATTERNS: List[re.Pattern] = [
     # Java / Kotlin: com.example.SomeException: message
-    re.compile(
-        r"^(?:[\w.]+\.)?([A-Z][A-Za-z0-9]*(?:Exception|Error|Fault|Panic))"
-    ),
+    re.compile(r"^(?:[\w.]+\.)?([A-Z][A-Za-z0-9]*(?:Exception|Error|Fault|Panic))"),
     # Python: ValueError: message  or  SomeError: message
-    re.compile(
-        r"^([A-Z][A-Za-z0-9]*(?:Exception|Error|Warning|Fault))"
-    ),
+    re.compile(r"^([A-Z][A-Za-z0-9]*(?:Exception|Error|Warning|Fault))"),
     # Go: panic: runtime error: ...  →  RuntimeError
-    re.compile(
-        r"^panic:\s+(?:runtime error:\s+)?([A-Za-z][A-Za-z0-9 ]+)"
-    ),
+    re.compile(r"^panic:\s+(?:runtime error:\s+)?([A-Za-z][A-Za-z0-9 ]+)"),
     # JavaScript: TypeError: ...
-    re.compile(
-        r"^([A-Z][A-Za-z0-9]*Error)"
-    ),
+    re.compile(r"^([A-Z][A-Za-z0-9]*Error)"),
     # Generic: any PascalCase word followed by colon
-    re.compile(
-        r"^([A-Z][A-Za-z0-9]{2,})\s*:"
-    ),
+    re.compile(r"^([A-Z][A-Za-z0-9]{2,})\s*:"),
 ]
 
 # Java-style stack frame pattern:
 # "at com.example.ClassName.methodName(FileName.java:42)"
 _JAVA_FRAME_RE = re.compile(
     r"^\s*at\s+"
-    r"([\w$.<>]+)"           # fully-qualified method name
+    r"([\w$.<>]+)"  # fully-qualified method name
     r"\("
-    r"([^:)]+)"              # file name
-    r"(?::(\d+))?"           # optional line number
+    r"([^:)]+)"  # file name
+    r"(?::(\d+))?"  # optional line number
     r"\)\s*$"
 )
 
 # Python-style stack frame pattern:
 # '  File "path/to/file.py", line 42, in method_name'
 _PYTHON_FRAME_RE = re.compile(
-    r'^\s*File\s+"([^"]+)"'   # file path
-    r",\s+line\s+(\d+)"       # line number
-    r",\s+in\s+(.+)\s*$"      # method name
+    r'^\s*File\s+"([^"]+)"'  # file path
+    r",\s+line\s+(\d+)"  # line number
+    r",\s+in\s+(.+)\s*$"  # method name
 )
 
 # Python "module.ClassName.method" dotted path pattern
@@ -135,6 +126,7 @@ _MAX_SCAN_ENTRIES = 500
 # ---------------------------------------------------------------------------
 # S3 fetch helper
 # ---------------------------------------------------------------------------
+
 
 async def _fetch_compressed_context(
     s3_path: str,
@@ -182,8 +174,7 @@ async def _fetch_compressed_context(
                 f"S3 object not found: s3://{bucket_name}/{s3_path}"
             ) from exc
         raise RuntimeError(
-            f"S3 fetch failed for key '{s3_path}' "
-            f"(error code: {error_code}): {exc}"
+            f"S3 fetch failed for key '{s3_path}' " f"(error code: {error_code}): {exc}"
         ) from exc
 
 
@@ -191,7 +182,10 @@ async def _fetch_compressed_context(
 # Decompression helper
 # ---------------------------------------------------------------------------
 
-def _decompress_and_parse(compressed_bytes: bytes, s3_path: str) -> List[Dict[str, Any]]:
+
+def _decompress_and_parse(
+    compressed_bytes: bytes, s3_path: str
+) -> List[Dict[str, Any]]:
     """
     Decompress gzip bytes and parse the JSON array of log entries.
 
@@ -201,23 +195,17 @@ def _decompress_and_parse(compressed_bytes: bytes, s3_path: str) -> List[Dict[st
     try:
         raw_json_bytes: bytes = gzip.decompress(compressed_bytes)
     except (OSError, gzip.BadGzipFile) as exc:
-        raise ValueError(
-            f"Failed to decompress S3 object '{s3_path}': {exc}"
-        ) from exc
+        raise ValueError(f"Failed to decompress S3 object '{s3_path}': {exc}") from exc
 
     try:
         raw_json_str: str = raw_json_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise ValueError(
-            f"S3 object '{s3_path}' is not valid UTF-8: {exc}"
-        ) from exc
+        raise ValueError(f"S3 object '{s3_path}' is not valid UTF-8: {exc}") from exc
 
     try:
         entries = json.loads(raw_json_str)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"S3 object '{s3_path}' is not valid JSON: {exc}"
-        ) from exc
+        raise ValueError(f"S3 object '{s3_path}' is not valid JSON: {exc}") from exc
 
     if not isinstance(entries, list):
         raise ValueError(
@@ -231,6 +219,7 @@ def _decompress_and_parse(compressed_bytes: bytes, s3_path: str) -> List[Dict[st
 # ---------------------------------------------------------------------------
 # Trigger log identification
 # ---------------------------------------------------------------------------
+
 
 def _find_trigger_log(
     entries: List[Dict[str, Any]],
@@ -271,6 +260,7 @@ def _find_trigger_log(
 # Error type extraction
 # ---------------------------------------------------------------------------
 
+
 def _extract_error_type(message: str) -> str:
     """
     Extract the error type (exception class name) from a log message string.
@@ -302,6 +292,7 @@ def _extract_error_type(message: str) -> str:
 # ---------------------------------------------------------------------------
 # Stack trace parsing
 # ---------------------------------------------------------------------------
+
 
 def _parse_stack_frames_from_list(
     raw_frames: List[Any],
@@ -357,7 +348,7 @@ def _parse_stack_frames_from_java_text(text: str) -> List[StackFrame]:
             continue
 
         full_method = match.group(1)  # e.g. com.example.Service.method
-        file_name = match.group(2)    # e.g. Service.java
+        file_name = match.group(2)  # e.g. Service.java
         line_number_str = match.group(3)  # e.g. "142" or None
 
         line_number = int(line_number_str) if line_number_str else 0
@@ -407,7 +398,7 @@ def _parse_stack_frames_from_python_text(text: str) -> List[StackFrame]:
         if not match:
             continue
 
-        file_path = match.group(1)    # e.g. src/payment/charge.py
+        file_path = match.group(1)  # e.g. src/payment/charge.py
         line_number = int(match.group(2))
         method_name = match.group(3).strip()  # e.g. charge
 
@@ -483,6 +474,7 @@ def _parse_stack_frames(
 # ---------------------------------------------------------------------------
 # ParsedLogEvent construction
 # ---------------------------------------------------------------------------
+
 
 def _build_parsed_event(
     tenant_id: str,
@@ -563,6 +555,7 @@ def _build_parsed_event(
 # Kafka publish helper (audit / replay path)
 # ---------------------------------------------------------------------------
 
+
 async def _publish_parsed_event_to_kafka(
     parsed_event: ParsedLogEvent,
 ) -> None:
@@ -580,7 +573,8 @@ async def _publish_parsed_event_to_kafka(
     Failures here are logged and swallowed; they do not fail the task.
     """
     import uuid as _uuid_module
-    from datetime import timezone as _tz, datetime as _dt
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
 
     from app.database.session import AsyncSessionLocal
     from app.models.outbox import write_outbox
@@ -621,6 +615,7 @@ async def _publish_parsed_event_to_kafka(
 # Celery task
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(
     name="app.worker.tasks.parse_log.parse_log",
     bind=True,
@@ -639,8 +634,8 @@ async def _publish_parsed_event_to_kafka(
     # Celery applies exponential backoff when autoretry_for is used:
     # attempt 1: 5s, attempt 2: 10s, attempt 3: 20s, attempt 4: 40s, attempt 5: 80s
     default_retry_delay=5,
-    soft_time_limit=60,   # Raise SoftTimeLimitExceeded after 60s
-    time_limit=120,       # Hard kill after 120s
+    soft_time_limit=60,  # Raise SoftTimeLimitExceeded after 60s
+    time_limit=120,  # Hard kill after 120s
 )
 def parse_log(
     self,
@@ -738,9 +733,7 @@ def parse_log(
 
     # ── Step 2: Decompress and parse JSON ─────────────────────────────────────
     try:
-        entries: List[Dict[str, Any]] = _decompress_and_parse(
-            compressed_bytes, s3_path
-        )
+        entries: List[Dict[str, Any]] = _decompress_and_parse(compressed_bytes, s3_path)
     except ValueError as exc:
         # Invalid gzip or JSON — permanent failure, do not retry.
         logger.error(
@@ -812,9 +805,7 @@ def parse_log(
 
     # ── Step 5: Publish to parsed.logs Kafka topic (audit/replay — non-fatal) ─
     try:
-        asyncio.run(
-            _publish_parsed_event_to_kafka(parsed_event)
-        )
+        asyncio.run(_publish_parsed_event_to_kafka(parsed_event))
     except Exception as exc:
         # This is intentionally caught and swallowed here because the
         # Kafka publish is an audit path, not required for correctness.

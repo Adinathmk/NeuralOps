@@ -41,6 +41,7 @@ fields may or may not be present depending on which version of
 0001_initial.py was generated. All AddField operations are safe
 to run even if the field was already added under a different name.
 """
+
 from __future__ import annotations
 
 import django.db.models.deletion
@@ -59,7 +60,6 @@ class Migration(migrations.Migration):
 
     operations = [
         # ── New fields not present in Phase 2 initial migration ───────────────
-
         migrations.AddField(
             model_name="incidentsnapshot",
             name="fingerprint",
@@ -169,9 +169,7 @@ class Migration(migrations.Migration):
                 help_text="Timestamp when status transitioned to resolved.",
             ),
         ),
-
         # ── New indexes for Phase 4 query patterns ────────────────────────────
-
         migrations.AddIndex(
             model_name="incidentsnapshot",
             index=models.Index(

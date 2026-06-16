@@ -49,7 +49,6 @@ import uuid
 from typing import Any, Dict, Optional
 
 import httpx
-
 import redis.asyncio as aioredis
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import KafkaError
@@ -59,6 +58,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.database.session import AsyncSessionLocal
 from app.models.snapshots import AlertRuleSnapshot, PlaybookSnapshot, TenantSnapshot
+from app.worker.tasks.wipe_data import wipe_tenant_data
 
 logger = logging.getLogger(__name__)
 
@@ -591,22 +591,32 @@ class ConfigSyncConsumer:
                     if "github_integration" in tenant_data:
                         if github_data is None:
                             # Explicit null means the integration was deleted
-                            _apply_github_fields(existing, {
-                                "repo_url": None,
-                                "repo_owner": None,
-                                "repo_name": None,
-                                "encrypted_pat": None,
-                                "webhook_secret": None,
-                                "default_branch": None,
-                                "indexing_status": None,
-                                "last_indexed_commit": None,
-                            })
+                            _apply_github_fields(
+                                existing,
+                                {
+                                    "repo_url": None,
+                                    "repo_owner": None,
+                                    "repo_name": None,
+                                    "encrypted_pat": None,
+                                    "webhook_secret": None,
+                                    "default_branch": None,
+                                    "indexing_status": None,
+                                    "last_indexed_commit": None,
+                                },
+                            )
+                            # Wipe all tenant logs, incidents, and AST data
+                            logger.info(
+                                "config_sync_triggering_tenant_wipe",
+                                extra={"tenant_id": str(tenant_id)},
+                            )
+                            wipe_tenant_data.delay(str(tenant_id))
                             logger.info(
                                 "config_sync_tenant_github_cleared",
                                 extra={"tenant_id": str(tenant_id)},
                             )
                             # Dispatch cleanup task
                             from app.worker.tasks.index_code import cleanup_code_index
+
                             cleanup_code_index.delay(tenant_id=str(tenant_id))
                         else:
                             _apply_github_fields(existing, github_data)
@@ -615,7 +625,9 @@ class ConfigSyncConsumer:
                                 extra={
                                     "tenant_id": str(tenant_id),
                                     "repo": f"{github_data.get('repo_owner')}/{github_data.get('repo_name')}",
-                                    "indexing_status": github_data.get("indexing_status"),
+                                    "indexing_status": github_data.get(
+                                        "indexing_status"
+                                    ),
                                 },
                             )
 
@@ -898,6 +910,7 @@ class ConfigSyncConsumer:
 
         # ── Enqueue embedding task ────────────────────────────────────────────
         from app.worker.tasks.embed_playbook import embed_playbook
+
         embed_playbook.delay(
             playbook_id=str(playbook_id),
             tenant_id=str(tenant_id),

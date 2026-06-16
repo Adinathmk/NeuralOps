@@ -53,8 +53,8 @@ from app.models.logs import IngestedLogMetadata
 from app.models.outbox import write_outbox
 from app.models.snapshots import TenantSnapshot
 from app.schemas.ingest import LogIngestRequest, LogIngestResponse
-from app.services.log_event_indexer import LogEventIndexer
 from app.services.circuit_breaker import get_es_circuit_breaker
+from app.services.log_event_indexer import LogEventIndexer
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["ingest"])
@@ -110,7 +110,7 @@ async def _upload_to_s3(
                             the database is never left in a partial state.
     """
     from botocore.config import Config
-    
+
     session = aioboto3.Session(
         aws_access_key_id=_settings.AWS_ACCESS_KEY_ID,
         aws_secret_access_key=_settings.AWS_SECRET_ACCESS_KEY,
@@ -121,7 +121,9 @@ async def _upload_to_s3(
         async with session.client(
             "s3",
             endpoint_url=_settings.AWS_S3_ENDPOINT_URL,
-            config=Config(connect_timeout=3, read_timeout=5, retries={'max_attempts': 1})
+            config=Config(
+                connect_timeout=3, read_timeout=5, retries={"max_attempts": 1}
+            ),
         ) as s3_client:
             await s3_client.put_object(
                 Bucket=_settings.AWS_S3_BUCKET_NAME,
@@ -299,7 +301,7 @@ async def ingest_logs(
             key=str(incident_id),
             payload=outbox_payload,
         )
-        
+
         await db.commit()
 
     except Exception as exc:

@@ -11,6 +11,7 @@ automatically when SQLAlchemy creates the tables (or via Alembic).
 Relationships use lazy="raise" throughout to prevent accidental
 N+1 loads — all joins must be explicit in query code.
 """
+
 from __future__ import annotations
 
 import uuid as _uuid_module
@@ -38,10 +39,10 @@ from sqlalchemy.sql import func
 
 from app.database.base import Base
 
-
 # ---------------------------------------------------------------------------
 # Incident
 # ---------------------------------------------------------------------------
+
 
 class Incident(Base):
     """
@@ -275,7 +276,9 @@ class Incident(Base):
             "tenant_id",
             sa.text("last_seen_at DESC"),
         ),
-        {"comment": "Phase 4 — AI incident records. One row per unique error identity."},
+        {
+            "comment": "Phase 4 — AI incident records. One row per unique error identity."
+        },
     )
 
     # ── Relationships ─────────────────────────────────────────────────────────
@@ -306,6 +309,7 @@ class Incident(Base):
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
+
 
 class Analysis(Base):
     """
@@ -464,6 +468,7 @@ class Analysis(Base):
 # Alert
 # ---------------------------------------------------------------------------
 
+
 class Alert(Base):
     """
     Notification dispatch record created by the action_decision node
@@ -594,6 +599,7 @@ class Alert(Base):
 # PostgreSQL RLS policies that enforce tenant isolation at the DB layer.
 # The pattern mirrors the existing implementation in app/models/snapshots.py.
 
+
 def _attach_rls_policy(target, connection, **kwargs) -> None:
     """
     Enable RLS and create the tenant isolation policy on the target table.
@@ -607,16 +613,10 @@ def _attach_rls_policy(target, connection, **kwargs) -> None:
     table_name: str = target.name
     policy_name: str = f"rls_{table_name}_tenant_isolation"
 
-    connection.execute(
-        text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;")
-    )
-    connection.execute(
-        text(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY;")
-    )
+    connection.execute(text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;"))
+    connection.execute(text(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY;"))
     # Idempotent: drop before create so migration reruns do not fail.
-    connection.execute(
-        text(f"DROP POLICY IF EXISTS {policy_name} ON {table_name};")
-    )
+    connection.execute(text(f"DROP POLICY IF EXISTS {policy_name} ON {table_name};"))
     connection.execute(
         text(
             f"""

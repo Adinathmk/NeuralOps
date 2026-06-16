@@ -21,9 +21,9 @@ from typing import Optional
 from elasticsearch import AsyncElasticsearch, BadRequestError, ConnectionError
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
 from app.database.elasticsearch_client import get_es_client
@@ -237,8 +237,9 @@ class LogEventIndexer:
         Update the parsed fields on the log event after Celery parsing.
         """
         search_index = get_write_alias(tenant_id=tenant_id, plan_tier=plan_tier)
-        
+
         import asyncio
+
         max_retries = 5
         for attempt in range(max_retries):
             resp = await self.es.update_by_query(
@@ -302,21 +303,17 @@ class LogEventIndexer:
             "log_id": str(uuid.uuid4()),
             "tenant_id": str(tenant_id),
             "incident_id": str(incident_id),
-
             # Filter fields — all normalised to lowercase
             "service_name": parsed_log.service_name.lower().strip(),
             "environment": parsed_log.environment.lower().strip(),
-            "severity": parsed_log.severity.upper(),   # Severity stays uppercase: ERROR
+            "severity": parsed_log.severity.upper(),  # Severity stays uppercase: ERROR
             "error_type": parsed_log.error_type.strip(),
             "file_path": parsed_log.file_path.strip() if parsed_log.file_path else None,
             "line_number": parsed_log.line_number,
-
             # Time
             "timestamp": datetime.now(timezone.utc).isoformat(),
-
             # State
             "status": "open",  # Always starts as open
-
             # S3 pointer
             "s3_key": s3_key,
         }

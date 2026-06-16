@@ -31,6 +31,7 @@ Retry policy
   max_retries: 5  |  default_retry_delay: 10s  |  exponential backoff
   ValueError, sqlalchemy.exc.IntegrityError: handled inline, NOT retried.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -67,6 +68,7 @@ _AGENT_HARD_TIME_LIMIT: int = 600
 # Core async logic
 # ---------------------------------------------------------------------------
 
+
 async def _execute_run_agent(
     task_id: str,
     parsed_event_dict: Dict[str, Any],
@@ -91,9 +93,7 @@ async def _execute_run_agent(
     try:
         tenant_uuid: _uuid_module.UUID = _uuid_module.UUID(tenant_id_str)
     except ValueError as exc:
-        raise ValueError(
-            f"Invalid tenant_id UUID: '{tenant_id_str}': {exc}"
-        ) from exc
+        raise ValueError(f"Invalid tenant_id UUID: '{tenant_id_str}': {exc}") from exc
 
     # ── Step 1: Compute fingerprint ───────────────────────────────────────────
     fingerprint: str = compute_fingerprint(
@@ -152,17 +152,21 @@ async def _execute_run_agent(
 
             # ── Step 2.5: Update Elasticsearch log document with parsed fields ───────
             from sqlalchemy import select
+
             from app.models.snapshots import TenantSnapshot
+
             tenant_snapshot = await session.execute(
                 select(TenantSnapshot).where(TenantSnapshot.tenant_id == tenant_uuid)
             )
             tenant = tenant_snapshot.scalar_one_or_none()
             plan_tier = tenant.plan_tier if tenant else "standard"
-            
-            from app.database.elasticsearch_client import get_settings
+
             from elasticsearch import AsyncElasticsearch
+
+            from app.database.elasticsearch_client import get_settings
+
             es_settings = get_settings()
-            
+
             es_kwargs = {
                 "hosts": es_settings.ELASTICSEARCH_HOSTS,
                 "connections_per_node": 10,
@@ -173,9 +177,17 @@ async def _execute_run_agent(
                 "sniff_on_node_failure": False,
                 "min_delay_between_sniffing": 60,
             }
-            if es_settings.ELASTICSEARCH_USERNAME and es_settings.ELASTICSEARCH_PASSWORD:
-                es_kwargs["basic_auth"] = (es_settings.ELASTICSEARCH_USERNAME, es_settings.ELASTICSEARCH_PASSWORD)
-            if any(host.startswith("https") for host in es_settings.ELASTICSEARCH_HOSTS):
+            if (
+                es_settings.ELASTICSEARCH_USERNAME
+                and es_settings.ELASTICSEARCH_PASSWORD
+            ):
+                es_kwargs["basic_auth"] = (
+                    es_settings.ELASTICSEARCH_USERNAME,
+                    es_settings.ELASTICSEARCH_PASSWORD,
+                )
+            if any(
+                host.startswith("https") for host in es_settings.ELASTICSEARCH_HOSTS
+            ):
                 es_kwargs["verify_certs"] = True
                 if es_settings.ELASTICSEARCH_CA_CERT_PATH:
                     es_kwargs["ca_certs"] = es_settings.ELASTICSEARCH_CA_CERT_PATH
@@ -183,8 +195,9 @@ async def _execute_run_agent(
                 es_kwargs["verify_certs"] = False
 
             es_client = AsyncElasticsearch(**es_kwargs)
-            
+
             from app.services.log_event_indexer import LogEventIndexer
+
             es_indexer = LogEventIndexer(es_client=es_client)
             try:
                 await es_indexer.update_parsed_fields(
@@ -199,7 +212,7 @@ async def _execute_run_agent(
             except Exception as e:
                 logger.exception(
                     "es_update_parsed_fields_failed",
-                    extra={"error": str(e), "incident_id": incident_id_str}
+                    extra={"error": str(e), "incident_id": incident_id_str},
                 )
             finally:
                 await es_client.close()
@@ -219,13 +232,16 @@ async def _execute_run_agent(
                 )
 
                 from app.services.ws_publisher import notify_duplicate_recorded
+
                 try:
                     await notify_duplicate_recorded(
                         incident_id=str(existing_incident.id),
                         occurrence_count=new_count,
                     )
                 except Exception as exc:
-                    logger.warning("ws_duplicate_notification_failed", extra={"error": str(exc)})
+                    logger.warning(
+                        "ws_duplicate_notification_failed", extra={"error": str(exc)}
+                    )
 
                 logger.info(
                     "run_agent_duplicate_recorded",
@@ -265,22 +281,20 @@ async def _execute_run_agent(
             agent_result: Dict[str, Any] = await workflow.ainvoke(initial_state)
 
             # Record total wall-clock time from task start to DB write
-            total_latency_ms: int = int(
-                (time.monotonic() - agent_start_time) * 1000
-            )
+            total_latency_ms: int = int((time.monotonic() - agent_start_time) * 1000)
             agent_result["total_latency_ms"] = total_latency_ms
 
             # ── Step 5: Determine action from agent result ────────────────────
             action: str = agent_result.get("action", "store_draft")
             confidence_score: Optional[float] = agent_result.get("confidence_score")
-            confidence_threshold: float = float(agent_result.get(
-                "confidence_threshold", 0.70
-            ))
+            confidence_threshold: float = float(
+                agent_result.get("confidence_threshold", 0.70)
+            )
 
             # Sanity check: enforce is_draft based on confidence_score
             if confidence_score is not None and confidence_score < confidence_threshold:
                 action = "store_draft"
-            is_draft: bool = (action == "store_draft")
+            is_draft: bool = action == "store_draft"
 
             # Check if classifier marked the event as non-actionable
             if not agent_result.get("actionable", True):
@@ -312,6 +326,7 @@ async def _execute_run_agent(
                 )
 
                 from app.services.ws_publisher import notify_incident_analysis_complete
+
                 ws_payload = {
                     "incident_id": str(persistence_result["incident_id"]),
                     "tenant_id": tenant_id_str,
@@ -337,7 +352,10 @@ async def _execute_run_agent(
                 except Exception as exc:
                     logger.warning(
                         "ws_notification_failed",
-                        extra={"incident_id": str(persistence_result["incident_id"]), "error": str(exc)}
+                        extra={
+                            "incident_id": str(persistence_result["incident_id"]),
+                            "error": str(exc),
+                        },
                     )
 
             except sqlalchemy.exc.IntegrityError as exc:
@@ -400,6 +418,7 @@ async def _execute_run_agent(
 # ---------------------------------------------------------------------------
 # Celery task entry point
 # ---------------------------------------------------------------------------
+
 
 @celery_app.task(
     name="app.worker.tasks.run_agent.run_agent",

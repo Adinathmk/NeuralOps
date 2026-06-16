@@ -38,9 +38,11 @@ Outputs written to AgentState
   suggested_fix, raw_fix_output, fix_generator_latency_ms,
   fix_fallback_used, fix_tokens
 """
+
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -58,11 +60,17 @@ _fix_cb = None
 
 def _get_client():
     import google.generativeai as genai
+
     from app.core.config import get_settings
+
     genai.configure(api_key=get_settings().GEMINI_API_KEY)
     return genai.GenerativeModel(
         "models/gemini-2.5-flash",
-        generation_config={"response_mime_type": "application/json", "temperature": 0.15, "max_output_tokens": 1200}
+        generation_config={
+            "response_mime_type": "application/json",
+            "temperature": 0.15,
+            "max_output_tokens": 2048,
+        },
     )
 
 
@@ -70,6 +78,7 @@ def _get_circuit_breaker():
     global _fix_cb
     if _fix_cb is None:
         from app.agents.circuit_breaker import CircuitBreaker
+
         _fix_cb = CircuitBreaker(
             name="openai_fix_generator",
             failure_threshold=5,
@@ -128,9 +137,7 @@ def _build_user_prompt(
     parts.append("\n## Error Details")
     parts.append(f"**Type:** {error_type}")
     parts.append(f"**Message:** {error_message or '(none)'}")
-    parts.append(
-        f"**Location:** `{crash_file}:{crash_line}` in `{crash_method}`"
-    )
+    parts.append(f"**Location:** `{crash_file}:{crash_line}` in `{crash_method}`")
 
     if code_context:
         parts.append("\n## Source Code at Crash Location")
@@ -141,9 +148,7 @@ def _build_user_prompt(
             "*(Not available — generate a descriptive fix without code.)*"
         )
 
-    parts.append(
-        "\nGenerate the fix and return the JSON object as specified."
-    )
+    parts.append("\nGenerate the fix and return the JSON object as specified.")
 
     return "\n\n".join(parts)
 
@@ -151,6 +156,7 @@ def _build_user_prompt(
 # ---------------------------------------------------------------------------
 # Output schema
 # ---------------------------------------------------------------------------
+
 
 class FixGeneratorOutput(BaseModel):
     suggested_fix: str = Field(
@@ -192,6 +198,7 @@ class FixGeneratorOutput(BaseModel):
 # ---------------------------------------------------------------------------
 # Node implementation
 # ---------------------------------------------------------------------------
+
 
 class FixGeneratorNode:
     """
@@ -263,7 +270,11 @@ class FixGeneratorNode:
             usage = getattr(response, "usage_metadata", None)
 
             # ── Pydantic validation ───────────────────────────────────────────
-            output = FixGeneratorOutput.model_validate_json(raw_output)
+            # Strip markdown fences (```json ... ```) that the model sometimes
+            # wraps around its JSON response despite being asked not to.
+            json_match = re.search(r"\{.*\}", raw_output, re.DOTALL)
+            clean_json = json_match.group(0) if json_match else raw_output
+            output = FixGeneratorOutput.model_validate_json(clean_json)
             suggested_fix = output.suggested_fix
 
             tokens = {
@@ -321,6 +332,7 @@ class FixGeneratorNode:
 # ---------------------------------------------------------------------------
 # Fallback helper
 # ---------------------------------------------------------------------------
+
 
 def _build_fallback_fix(
     exc: Exception,

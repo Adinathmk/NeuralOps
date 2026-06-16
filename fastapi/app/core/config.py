@@ -136,8 +136,8 @@ class Settings(BaseSettings):
 
     # ── Playbook matching ────────────────────────────────────────────────────
     PLAYBOOK_MATCH_TOP_K: int = 5
-    PLAYBOOK_MATCH_SCORE_THRESHOLD: float = 0.28   # cosine DISTANCE threshold
-    PLAYBOOK_HNSW_EF_SEARCH: int = 100             # Higher than default (40)
+    PLAYBOOK_MATCH_SCORE_THRESHOLD: float = 0.28  # cosine DISTANCE threshold
+    PLAYBOOK_HNSW_EF_SEARCH: int = 100  # Higher than default (40)
 
     # ── Elasticsearch ─────────────────────────────────────────────────────────
     ELASTICSEARCH_HOSTS: Any = Field(

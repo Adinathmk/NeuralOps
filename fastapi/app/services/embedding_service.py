@@ -3,8 +3,11 @@ import logging
 import os
 
 import google.generativeai as genai
-from google.api_core.exceptions import RetryError, InternalServerError, ResourceExhausted
-
+from google.api_core.exceptions import (
+    InternalServerError,
+    ResourceExhausted,
+    RetryError,
+)
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -19,6 +22,7 @@ settings = get_settings()
 
 _configured = False
 
+
 def configure_gemini():
     global _configured
     if not _configured:
@@ -29,6 +33,7 @@ def configure_gemini():
             _configured = True
         else:
             logger.warning("GEMINI_API_KEY is not set. Embeddings will fail if called.")
+
 
 def build_playbook_embed_text(error_pattern: str, instructions: str) -> str:
     """
@@ -61,9 +66,7 @@ def build_query_embed_text(
 
 
 @retry(
-    retry=retry_if_exception_type(
-        (RetryError, InternalServerError, ResourceExhausted)
-    ),
+    retry=retry_if_exception_type((RetryError, InternalServerError, ResourceExhausted)),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     stop=stop_after_attempt(4),
     reraise=True,
@@ -79,14 +82,14 @@ def embed_text(text_input: str) -> list[float]:
         raise ValueError("Cannot embed empty text")
 
     configure_gemini()
-    
+
     response = genai.embed_content(
         model=settings.EMBEDDING_MODEL,
         content=text_input.strip(),
         task_type="retrieval_document",
-        output_dimensionality=settings.EMBEDDING_DIMENSIONS
+        output_dimensionality=settings.EMBEDDING_DIMENSIONS,
     )
-    return response['embedding']
+    return response["embedding"]
 
 
 def query_text_hash(text_input: str) -> str:

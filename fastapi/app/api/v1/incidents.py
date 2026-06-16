@@ -22,17 +22,18 @@ Tenant isolation:
 Architecture reference:
     Phase 4 Technical Documentation — Section 4 (API Contracts)
 """
+
 from __future__ import annotations
 
 import math
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import aioboto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select, update, or_
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -91,7 +92,8 @@ async def list_incidents(
     db: AsyncSession = Depends(get_db),
     # ── Query parameters ──────────────────────────────────────────────────
     status_filter: Optional[str] = Query(
-        None, alias="status",
+        None,
+        alias="status",
         description="Filter by status: open, investigating, resolved, draft",
     ),
     severity: Optional[str] = Query(
@@ -111,11 +113,14 @@ async def list_incidents(
         description="Include draft incidents. Defaults to false.",
     ),
     page: int = Query(
-        1, ge=1,
+        1,
+        ge=1,
         description="1-based page number.",
     ),
     page_size: int = Query(
-        20, ge=1, le=100,
+        20,
+        ge=1,
+        le=100,
         description="Results per page. Max 100.",
     ),
     sort_by: SortBy = Query(
@@ -209,10 +214,7 @@ async def list_incidents(
     incidents: List[Incident] = list(result.scalars().all())
 
     # ── Serialise ─────────────────────────────────────────────────────────
-    items = [
-        IncidentListItem.model_validate(inc)
-        for inc in incidents
-    ]
+    items = [IncidentListItem.model_validate(inc) for inc in incidents]
 
     pagination = PaginationMeta(
         page=page,
@@ -273,7 +275,9 @@ async def get_incident(
             or_(
                 Incident.id == incident_id,
                 Incident.source_log_id == incident_id,
-                Incident.occurrences.contains([f"logs/{tenant_id}/context/{incident_id}.json.gz"]),
+                Incident.occurrences.contains(
+                    [f"logs/{tenant_id}/context/{incident_id}.json.gz"]
+                ),
             ),
         )
     )
@@ -293,9 +297,9 @@ async def get_incident(
     # Serialise analysis (may be None for very early incidents)
     analysis_data = None
     if incident.analysis is not None:
-        analysis_data = AnalysisDetail.model_validate(
-            incident.analysis
-        ).model_dump(mode="json")
+        analysis_data = AnalysisDetail.model_validate(incident.analysis).model_dump(
+            mode="json"
+        )
 
     logger.debug(
         "get_incident_success",
@@ -362,7 +366,8 @@ async def update_incident(
 
         # Draft incidents cannot be moved to investigating/resolved directly
         if current_status == "draft" and payload.status.value in (
-            "investigating", "resolved",
+            "investigating",
+            "resolved",
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -402,15 +407,16 @@ async def update_incident(
     # (unassign).  Pydantic sends None for both "not provided" and
     # "explicitly null", so we check the raw body.
     raw_body = await request.body()
-    if b'"assigned_user_id": null' in raw_body or b'"assigned_user_id":null' in raw_body:
+    if (
+        b'"assigned_user_id": null' in raw_body
+        or b'"assigned_user_id":null' in raw_body
+    ):
         update_values["assigned_user_id"] = None
         new_assigned = None
 
     # ── Step 4: Execute update ────────────────────────────────────────────
     update_stmt = (
-        update(Incident)
-        .where(Incident.id == incident_id)
-        .values(**update_values)
+        update(Incident).where(Incident.id == incident_id).values(**update_values)
     )
     await db.execute(update_stmt)
 
@@ -425,8 +431,7 @@ async def update_incident(
             "event_type": "incident.updated",
             "version": 1,
             "idempotency_key": (
-                f"tenant:{tenant_id}:incident:{incident_id}:"
-                f"v{now.timestamp():.0f}"
+                f"tenant:{tenant_id}:incident:{incident_id}:" f"v{now.timestamp():.0f}"
             ),
             "source_version": 2,
             "occurred_at": now.isoformat(),
@@ -452,6 +457,7 @@ async def update_incident(
     if payload.status is not None:
         try:
             from app.services.log_event_indexer import LogEventIndexer
+
             indexer = LogEventIndexer()
             # We don't wrap this in circuit_breaker because update_by_query
             # takes longer and we don't want to trip the global ingest circuit
@@ -463,9 +469,7 @@ async def update_incident(
             )
         except Exception as exc:
             logger.warning(
-                "es_status_update_failed",
-                incident_id=str(incident_id),
-                error=str(exc)
+                "es_status_update_failed", incident_id=str(incident_id), error=str(exc)
             )
 
     return IncidentUpdateResponse(

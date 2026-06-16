@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+
 from sqlalchemy import text
 
 from app.core.config import get_settings

@@ -36,6 +36,7 @@ Outputs written to AgentState
   playbook_instructions : str | None
   playbook_latency_ms   : int
 """
+
 from __future__ import annotations
 
 import logging
@@ -45,10 +46,14 @@ from typing import Any, Dict, Optional
 from sqlalchemy.future import select
 
 from app.core.config import get_settings
-from app.models.snapshots import PlaybookSnapshot
-from app.services.embedding_service import embed_text, build_query_embed_text, query_text_hash
-from app.repositories.playbook_vector_repository import search_similar_playbooks
 from app.database.redis import get_redis
+from app.models.snapshots import PlaybookSnapshot
+from app.repositories.playbook_vector_repository import search_similar_playbooks
+from app.services.embedding_service import (
+    build_query_embed_text,
+    embed_text,
+    query_text_hash,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -124,15 +129,16 @@ class PlaybookMatcherNode:
 
                 # 4. Fetch the actual instructions from DB-2 using AsyncSession
                 import uuid as _uuid_module
+
                 pb_uuid = _uuid_module.UUID(matched_playbook_id)
                 stmt = select(PlaybookSnapshot).where(
                     PlaybookSnapshot.playbook_id == pb_uuid,
                     PlaybookSnapshot.tenant_id == _uuid_module.UUID(tenant_id),
-                    PlaybookSnapshot.is_active.is_(True)
+                    PlaybookSnapshot.is_active.is_(True),
                 )
                 result = await session.execute(stmt)
                 playbook = result.scalar_one_or_none()
-                
+
                 if playbook:
                     playbook_instructions = str(
                         getattr(playbook, "instructions", "") or ""
@@ -177,6 +183,7 @@ class PlaybookMatcherNode:
         if cached:
             # Parse the string representation back into a float list
             import json
+
             try:
                 return json.loads(cached)
             except Exception:
@@ -188,10 +195,12 @@ class PlaybookMatcherNode:
         # LangGraph nodes are usually wrapped in threads if they're async calling sync block).
         # Actually, let's run it in a thread executor to avoid blocking the event loop.
         import asyncio
+
         loop = asyncio.get_running_loop()
         vector = await loop.run_in_executor(None, embed_text, query_text)
 
         # Cache the result for 24 hours
         import json
+
         await rdb.setex(cache_key, 86400, json.dumps(vector))
         return vector

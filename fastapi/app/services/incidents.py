@@ -34,6 +34,7 @@ Relationship to other components:
   - Uses:       fastapi/app/models/outbox.py     (write_outbox)
   - Uses:       fastapi/app/schemas/parse_log.py (ParsedLogEvent)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -52,8 +53,10 @@ from app.schemas.parse_log import ParsedLogEvent
 
 logger = get_logger(__name__)
 
-import aioboto3
 import json
+
+import aioboto3
+
 
 async def _publish_to_sqs(
     tenant_id: str,
@@ -68,27 +71,28 @@ async def _publish_to_sqs(
     Push Notifications queue. This natively triggers the push router Lambda.
     """
     queue_url = "https://sqs.ap-south-1.amazonaws.com/160823835768/neuralops-push-incidents.fifo"
-    
+
     import os
+
     session = aioboto3.Session(
-        aws_access_key_id=os.environ.get('DYNAMODB_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.environ.get('DYNAMODB_SECRET_ACCESS_KEY'),
-        region_name=os.environ.get('SQS_REGION', 'ap-south-1'),
+        aws_access_key_id=os.environ.get("DYNAMODB_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.environ.get("DYNAMODB_SECRET_ACCESS_KEY"),
+        region_name=os.environ.get("SQS_REGION", "ap-south-1"),
     )
-    
+
     event_id = str(_uuid_module.uuid4())
     message = {
-        'event_id':       event_id,
-        'tenant_id':      str(tenant_id),
-        'incident_id':    str(incident_id),
-        'severity':       severity,
-        'error_type':     error_type,
-        'service_name':   service_name,
-        'environment':    environment,
+        "event_id": event_id,
+        "tenant_id": str(tenant_id),
+        "incident_id": str(incident_id),
+        "severity": severity,
+        "error_type": error_type,
+        "service_name": service_name,
+        "environment": environment,
     }
-    
+
     try:
-        async with session.client('sqs', endpoint_url=None) as sqs_client:
+        async with session.client("sqs", endpoint_url=None) as sqs_client:
             await sqs_client.send_message(
                 QueueUrl=queue_url,
                 MessageBody=json.dumps(message),
@@ -98,14 +102,14 @@ async def _publish_to_sqs(
         logger.info(
             "sqs_push_notification_queued",
             tenant_id=tenant_id,
-            incident_id=str(incident_id)
+            incident_id=str(incident_id),
         )
     except Exception as exc:
         logger.error(
             "sqs_push_notification_failed",
             tenant_id=tenant_id,
             incident_id=str(incident_id),
-            error=str(exc)
+            error=str(exc),
         )
 
 
@@ -195,7 +199,9 @@ def compute_fingerprint(
     - crash_line of 0 (unparseable) normalises to 0.
     """
     # Normalise line number: round down to nearest bucket
-    normalised_line: int = (crash_line // FINGERPRINT_LINE_BUCKET) * FINGERPRINT_LINE_BUCKET
+    normalised_line: int = (
+        crash_line // FINGERPRINT_LINE_BUCKET
+    ) * FINGERPRINT_LINE_BUCKET
 
     # Build the raw string from all six components
     # Use a separator that cannot appear in any component value
@@ -227,6 +233,7 @@ def compute_fingerprint(
 # ---------------------------------------------------------------------------
 # IncidentService
 # ---------------------------------------------------------------------------
+
 
 class IncidentService:
     """
@@ -393,9 +400,7 @@ class IncidentService:
                     occurrence_count=Incident.occurrence_count + 1,
                     # PostgreSQL array_append equivalent via || operator:
                     # occurrences = occurrences || ARRAY[new_s3_key]
-                    occurrences=Incident.occurrences.op("||")(
-                        [new_s3_key]
-                    ),
+                    occurrences=Incident.occurrences.op("||")([new_s3_key]),
                     last_seen_at=now,
                     updated_at=now,
                 )
@@ -404,7 +409,7 @@ class IncidentService:
 
             result = await self._session.execute(update_stmt)
             new_count: Optional[int] = result.scalar()
-            
+
             if new_count is None:
                 # Edge case: The incident was deleted between the SELECT and UPDATE
                 logger.warning(
@@ -537,28 +542,19 @@ class IncidentService:
         suggested_fix: str = agent_result.get("suggested_fix") or ""
         confidence_score: Optional[float] = agent_result.get("confidence_score")
         severity: str = (
-            agent_result.get("severity")
-            or parsed_event.severity
-            or "unknown"
+            agent_result.get("severity") or parsed_event.severity or "unknown"
         )
         status: str = "draft" if is_draft else "open"
 
         # Token usage (sum across analyzer + fix_generator nodes)
-        analyzer_tokens: Dict[str, int] = (
-            agent_result.get("analyzer_tokens") or {}
+        analyzer_tokens: Dict[str, int] = agent_result.get("analyzer_tokens") or {}
+        fix_tokens: Dict[str, int] = agent_result.get("fix_tokens") or {}
+        total_tokens: int = analyzer_tokens.get("total", 0) + fix_tokens.get("total", 0)
+        prompt_tokens: int = analyzer_tokens.get("prompt", 0) + fix_tokens.get(
+            "prompt", 0
         )
-        fix_tokens: Dict[str, int] = (
-            agent_result.get("fix_tokens") or {}
-        )
-        total_tokens: int = (
-            analyzer_tokens.get("total", 0) + fix_tokens.get("total", 0)
-        )
-        prompt_tokens: int = (
-            analyzer_tokens.get("prompt", 0) + fix_tokens.get("prompt", 0)
-        )
-        completion_tokens: int = (
-            analyzer_tokens.get("completion", 0)
-            + fix_tokens.get("completion", 0)
+        completion_tokens: int = analyzer_tokens.get("completion", 0) + fix_tokens.get(
+            "completion", 0
         )
 
         # Per-node results for the analyses.node_results JSONB column
@@ -584,10 +580,14 @@ class IncidentService:
                 crash_file=parsed_event.crash_file,
                 crash_line=parsed_event.crash_line,
                 crash_method=parsed_event.crash_method,
-                stack_frames=[
-                    f.to_dict() if hasattr(f, "to_dict") else f
-                    for f in parsed_event.stack_frames
-                ] if parsed_event.stack_frames else [],
+                stack_frames=(
+                    [
+                        f.to_dict() if hasattr(f, "to_dict") else f
+                        for f in parsed_event.stack_frames
+                    ]
+                    if parsed_event.stack_frames
+                    else []
+                ),
                 root_cause=root_cause,
                 suggested_fix=suggested_fix,
                 confidence_score=confidence_score,
@@ -618,9 +618,7 @@ class IncidentService:
                 raw_analysis_output=agent_result.get("raw_analysis_output") or None,
                 raw_fix_output=agent_result.get("raw_fix_output") or None,
                 code_context_snapshot=agent_result.get("code_context") or None,
-                matched_playbook_id=_safe_uuid(
-                    agent_result.get("matched_playbook_id")
-                ),
+                matched_playbook_id=_safe_uuid(agent_result.get("matched_playbook_id")),
                 created_at=now,
             )
             self._session.add(analysis)
@@ -704,6 +702,7 @@ class IncidentService:
 # Private helpers
 # ---------------------------------------------------------------------------
 
+
 def _safe_uuid(value: Any) -> Optional[_uuid_module.UUID]:
     """
     Convert a value to uuid.UUID, returning None if conversion fails.
@@ -736,9 +735,7 @@ def _build_node_results(
     Each node key will be populated with actual values in Parts 4.
     For now, we store empty/zero values for nodes not yet run.
     """
-    code_retriever_meta: Dict[str, Any] = (
-        agent_result.get("code_retriever_meta") or {}
-    )
+    code_retriever_meta: Dict[str, Any] = agent_result.get("code_retriever_meta") or {}
 
     return {
         "classifier": {
@@ -756,9 +753,11 @@ def _build_node_results(
         },
         "playbook_matcher": {
             "latency_ms": agent_result.get("playbook_latency_ms", 0),
-            "matched_playbook_id": str(
-                agent_result.get("matched_playbook_id")
-            ) if agent_result.get("matched_playbook_id") else None,
+            "matched_playbook_id": (
+                str(agent_result.get("matched_playbook_id"))
+                if agent_result.get("matched_playbook_id")
+                else None
+            ),
         },
         "analyzer": {
             "latency_ms": agent_result.get("analyzer_latency_ms", 0),
@@ -810,9 +809,7 @@ def _build_incident_created_payload(
         "event_id": str(_uuid_module.uuid4()),
         "event_type": "incident.created",
         "version": 1,
-        "idempotency_key": (
-            f"tenant:{tenant_id}:incident:{incident_id}"
-        ),
+        "idempotency_key": (f"tenant:{tenant_id}:incident:{incident_id}"),
         "source_version": 1,
         "occurred_at": occurred_at.isoformat(),
         "payload": {
@@ -860,9 +857,7 @@ def _build_incident_analyzed_payload(
         "event_id": str(_uuid_module.uuid4()),
         "event_type": "incident.analyzed",
         "version": 1,
-        "idempotency_key": (
-            f"tenant:{tenant_id}:analysis:{analysis_id}"
-        ),
+        "idempotency_key": (f"tenant:{tenant_id}:analysis:{analysis_id}"),
         "source_version": 1,
         "occurred_at": occurred_at.isoformat(),
         "payload": {

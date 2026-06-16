@@ -31,6 +31,7 @@ Usage:
 Architecture reference:
     Phase 4 Technical Documentation — Section 5.4 (Django Kafka Consumer)
 """
+
 from __future__ import annotations
 
 import json
@@ -39,14 +40,12 @@ import signal
 import time
 import uuid
 
+from analytics.models import IncidentSnapshot
+from confluent_kafka import Consumer, KafkaError, KafkaException
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import IntegrityError, transaction
 from django.utils import timezone as django_timezone
-
-from confluent_kafka import Consumer, KafkaError, KafkaException
-
-from analytics.models import IncidentSnapshot
 from outbox.models import ProcessedEvent
 
 logger = logging.getLogger(__name__)
@@ -118,16 +117,18 @@ class Command(BaseCommand):
 
     def _run_consumer_loop(self) -> None:
         """Create a Kafka consumer, subscribe, and poll in a loop."""
-        consumer = Consumer({
-            "bootstrap.servers": BOOTSTRAP_SERVERS,
-            "group.id": CONSUMER_GROUP,
-            "auto.offset.reset": "earliest",
-            "enable.auto.commit": False,
-            "allow.auto.create.topics": True,
-            "session.timeout.ms": 30000,
-            "heartbeat.interval.ms": 10000,
-            "max.poll.interval.ms": 300000,
-        })
+        consumer = Consumer(
+            {
+                "bootstrap.servers": BOOTSTRAP_SERVERS,
+                "group.id": CONSUMER_GROUP,
+                "auto.offset.reset": "earliest",
+                "enable.auto.commit": False,
+                "allow.auto.create.topics": True,
+                "session.timeout.ms": 30000,
+                "heartbeat.interval.ms": 10000,
+                "max.poll.interval.ms": 300000,
+            }
+        )
         consumer.subscribe(TOPICS)
 
         logger.info(
@@ -318,9 +319,7 @@ class Command(BaseCommand):
             )
             return
 
-        updated = IncidentSnapshot.objects.filter(
-            incident_id=incident_id
-        ).update(
+        updated = IncidentSnapshot.objects.filter(incident_id=incident_id).update(
             occurrence_count=data.get("new_occurrence_count", 1),
             last_seen_at=data.get("last_seen_at"),
         )
@@ -393,9 +392,9 @@ class Command(BaseCommand):
             )
 
         if update_fields:
-            updated = IncidentSnapshot.objects.filter(
-                incident_id=incident_id
-            ).update(**update_fields)
+            updated = IncidentSnapshot.objects.filter(incident_id=incident_id).update(
+                **update_fields
+            )
 
             if updated == 0:
                 logger.warning(

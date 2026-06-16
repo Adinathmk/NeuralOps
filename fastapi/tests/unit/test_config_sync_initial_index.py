@@ -32,6 +32,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.queue.kafka.consumers.config_sync import (
+    _maybe_dispatch_initial_index,
+    _resolve_branch_sha,
+)
+
 # ---------------------------------------------------------------------------
 # Ensure app.worker.tasks.index_code is importable despite aiokafka stub.
 # The stub in conftest stubs aiokafka at the top level; index_code also uses
@@ -40,10 +45,6 @@ import pytest
 # (These are already handled by the conftest sys.modules stubs for aiokafka
 #  and asyncpg.  celery is now installed in fvenv, so no extra stub needed.)
 
-from app.queue.kafka.consumers.config_sync import (
-    _maybe_dispatch_initial_index,
-    _resolve_branch_sha,
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
@@ -177,7 +178,7 @@ class TestResolveBranchSha:
 
 # Correct patch targets (names live in the SOURCE module, not config_sync):
 _PATCH_RESOLVE = "app.queue.kafka.consumers.config_sync._resolve_branch_sha"
-_PATCH_TASK    = "app.worker.tasks.index_code.index_code"
+_PATCH_TASK = "app.worker.tasks.index_code.index_code"
 
 
 class TestMaybeDispatchInitialIndex:

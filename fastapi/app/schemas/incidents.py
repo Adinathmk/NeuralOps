@@ -12,22 +12,23 @@ Endpoints served:
 All response schemas use `from_attributes = True` to allow direct
 construction from SQLAlchemy ORM instances via `.model_validate()`.
 """
+
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
-import re
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
-
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
 
 class IncidentStatus(str, Enum):
     """Valid incident lifecycle states."""
+
     open = "open"
     investigating = "investigating"
     resolved = "resolved"
@@ -37,6 +38,7 @@ class IncidentStatus(str, Enum):
 
 class Severity(str, Enum):
     """Valid severity levels."""
+
     critical = "critical"
     high = "high"
     medium = "medium"
@@ -47,6 +49,7 @@ class Severity(str, Enum):
 
 class SortBy(str, Enum):
     """Allowed sort fields for incident list queries."""
+
     created_at = "created_at"
     last_seen_at = "last_seen_at"
     confidence_score = "confidence_score"
@@ -55,6 +58,7 @@ class SortBy(str, Enum):
 
 class SortOrder(str, Enum):
     """Sort direction."""
+
     asc = "asc"
     desc = "desc"
 
@@ -64,6 +68,7 @@ class SortOrder(str, Enum):
 
 class StackFrame(BaseModel):
     """A single frame from a parsed stack trace."""
+
     file: str
     line: int
     method: str
@@ -75,6 +80,7 @@ class StackFrame(BaseModel):
 
 class IncidentListItem(BaseModel):
     """Single incident row in the paginated list response."""
+
     id: UUID
     tenant_id: UUID
     fingerprint: str
@@ -103,6 +109,7 @@ class IncidentListItem(BaseModel):
 
 class PaginationMeta(BaseModel):
     """Standard pagination metadata."""
+
     page: int
     page_size: int
     total: int
@@ -113,6 +120,7 @@ class PaginationMeta(BaseModel):
 
 class IncidentListResponse(BaseModel):
     """Paginated list of incidents."""
+
     success: bool = True
     data: List[IncidentListItem]
     pagination: PaginationMeta
@@ -123,6 +131,7 @@ class IncidentListResponse(BaseModel):
 
 class AnalysisDetail(BaseModel):
     """Full analysis record associated with an incident."""
+
     id: UUID
     agent_version: str
     total_tokens_used: Optional[int] = None
@@ -139,6 +148,7 @@ class AnalysisDetail(BaseModel):
 
 class IncidentDetail(BaseModel):
     """Complete incident record with all fields."""
+
     id: UUID
     tenant_id: UUID
     fingerprint: str
@@ -178,12 +188,14 @@ class IncidentDetail(BaseModel):
                 line_match = re.search(r"line=(\d+)", frame)
                 method_match = re.search(r"method='([^']+)'", frame)
                 module_match = re.search(r"module='([^']+)'", frame)
-                parsed.append({
-                    "file": file_match.group(1) if file_match else "unknown",
-                    "line": int(line_match.group(1)) if line_match else 0,
-                    "method": method_match.group(1) if method_match else "unknown",
-                    "module": module_match.group(1) if module_match else None
-                })
+                parsed.append(
+                    {
+                        "file": file_match.group(1) if file_match else "unknown",
+                        "line": int(line_match.group(1)) if line_match else 0,
+                        "method": method_match.group(1) if method_match else "unknown",
+                        "module": module_match.group(1) if module_match else None,
+                    }
+                )
             else:
                 parsed.append(frame)
         return parsed
@@ -194,6 +206,7 @@ class IncidentDetail(BaseModel):
 
 class IncidentDetailResponse(BaseModel):
     """Response wrapper for a single incident with its analysis."""
+
     success: bool = True
     data: Dict[str, Any]
     # data = {"incident": IncidentDetail, "analysis": AnalysisDetail | None}
@@ -208,6 +221,7 @@ class IncidentUpdateRequest(BaseModel):
 
     Both fields are optional — the caller sends only the fields to update.
     """
+
     status: Optional[IncidentStatus] = None
     assigned_user_id: Optional[UUID] = None
 
@@ -225,6 +239,7 @@ class IncidentUpdateRequest(BaseModel):
 
 class IncidentUpdateResponse(BaseModel):
     """Response for a successful incident update."""
+
     success: bool = True
     message: str = "Incident updated."
     data: Dict[str, Any]
@@ -236,6 +251,7 @@ class IncidentUpdateResponse(BaseModel):
 
 class ContextLogsResponse(BaseModel):
     """Response containing a pre-signed S3 URL for context log download."""
+
     success: bool = True
     data: Dict[str, Any]
     # data = {"incident_id": UUID, "s3_path": str, "download_url": str, "expires_at": datetime}

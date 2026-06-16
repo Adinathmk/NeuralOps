@@ -12,6 +12,7 @@ Unit tests for Phase 4 Part 3:
 All tests are pure unit tests — no real DB, no real Redis, no S3.
 Async DB operations are mocked via AsyncMock + MagicMock.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -37,7 +38,6 @@ from app.services.incidents import (
     compute_fingerprint,
 )
 from app.worker.tasks.run_agent import _execute_run_agent
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -100,8 +100,16 @@ def _make_mock_incident(
 def _make_mock_session() -> MagicMock:
     """Create a mock AsyncSession with async context manager support."""
     session = MagicMock()
-    session.execute = AsyncMock()
+    
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_result.scalar.return_value = None
+    mock_result.fetchone.return_value = None
+    session.execute = AsyncMock(return_value=mock_result)
+    
     session.add = MagicMock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
 
     # Make session.begin() work as async context manager
     begin_ctx = AsyncMock()
@@ -163,12 +171,17 @@ def _make_skeleton_agent_result() -> Dict[str, Any]:
 # compute_fingerprint tests
 # ---------------------------------------------------------------------------
 
+
 class TestComputeFingerprint:
 
     def test_returns_64_char_hex_string(self):
         result = compute_fingerprint(
-            TENANT_ID, SERVICE_NAME, ERROR_TYPE,
-            CRASH_FILE, CRASH_LINE, CRASH_METHOD,
+            TENANT_ID,
+            SERVICE_NAME,
+            ERROR_TYPE,
+            CRASH_FILE,
+            CRASH_LINE,
+            CRASH_METHOD,
         )
         assert isinstance(result, str)
         assert len(result) == 64
@@ -176,12 +189,20 @@ class TestComputeFingerprint:
 
     def test_deterministic_same_inputs(self):
         result1 = compute_fingerprint(
-            TENANT_ID, SERVICE_NAME, ERROR_TYPE,
-            CRASH_FILE, CRASH_LINE, CRASH_METHOD,
+            TENANT_ID,
+            SERVICE_NAME,
+            ERROR_TYPE,
+            CRASH_FILE,
+            CRASH_LINE,
+            CRASH_METHOD,
         )
         result2 = compute_fingerprint(
-            TENANT_ID, SERVICE_NAME, ERROR_TYPE,
-            CRASH_FILE, CRASH_LINE, CRASH_METHOD,
+            TENANT_ID,
+            SERVICE_NAME,
+            ERROR_TYPE,
+            CRASH_FILE,
+            CRASH_LINE,
+            CRASH_METHOD,
         )
         assert result1 == result2
 
@@ -221,35 +242,59 @@ class TestComputeFingerprint:
 
     def test_different_services_different_fingerprints(self):
         fp1 = compute_fingerprint(
-            TENANT_ID, "payment-service", ERROR_TYPE,
-            CRASH_FILE, CRASH_LINE, CRASH_METHOD,
+            TENANT_ID,
+            "payment-service",
+            ERROR_TYPE,
+            CRASH_FILE,
+            CRASH_LINE,
+            CRASH_METHOD,
         )
         fp2 = compute_fingerprint(
-            TENANT_ID, "auth-service", ERROR_TYPE,
-            CRASH_FILE, CRASH_LINE, CRASH_METHOD,
+            TENANT_ID,
+            "auth-service",
+            ERROR_TYPE,
+            CRASH_FILE,
+            CRASH_LINE,
+            CRASH_METHOD,
         )
         assert fp1 != fp2
 
     def test_different_error_types_different_fingerprints(self):
         fp1 = compute_fingerprint(
-            TENANT_ID, SERVICE_NAME, "NullPointerException",
-            CRASH_FILE, CRASH_LINE, CRASH_METHOD,
+            TENANT_ID,
+            SERVICE_NAME,
+            "NullPointerException",
+            CRASH_FILE,
+            CRASH_LINE,
+            CRASH_METHOD,
         )
         fp2 = compute_fingerprint(
-            TENANT_ID, SERVICE_NAME, "DatabaseError",
-            CRASH_FILE, CRASH_LINE, CRASH_METHOD,
+            TENANT_ID,
+            SERVICE_NAME,
+            "DatabaseError",
+            CRASH_FILE,
+            CRASH_LINE,
+            CRASH_METHOD,
         )
         assert fp1 != fp2
 
     def test_different_methods_different_fingerprints(self):
         """Even in the same file/line bucket, different methods produce different fingerprints."""
         fp1 = compute_fingerprint(
-            TENANT_ID, SERVICE_NAME, ERROR_TYPE,
-            CRASH_FILE, CRASH_LINE, "ChargeService.charge",
+            TENANT_ID,
+            SERVICE_NAME,
+            ERROR_TYPE,
+            CRASH_FILE,
+            CRASH_LINE,
+            "ChargeService.charge",
         )
         fp2 = compute_fingerprint(
-            TENANT_ID, SERVICE_NAME, ERROR_TYPE,
-            CRASH_FILE, CRASH_LINE, "ChargeService.refund",
+            TENANT_ID,
+            SERVICE_NAME,
+            ERROR_TYPE,
+            CRASH_FILE,
+            CRASH_LINE,
+            "ChargeService.refund",
         )
         assert fp1 != fp2
 
@@ -262,22 +307,26 @@ class TestComputeFingerprint:
 
     def test_empty_crash_file_and_method(self):
         """Empty strings produce a valid but coarser fingerprint."""
-        result = compute_fingerprint(
-            TENANT_ID, SERVICE_NAME, ERROR_TYPE, "", 0, ""
-        )
+        result = compute_fingerprint(TENANT_ID, SERVICE_NAME, ERROR_TYPE, "", 0, "")
         assert len(result) == 64
 
     def test_sha256_value_correctness(self):
         """Verify the fingerprint matches manual SHA-256 computation."""
-        normalised_line = (CRASH_LINE // FINGERPRINT_LINE_BUCKET) * FINGERPRINT_LINE_BUCKET
+        normalised_line = (
+            CRASH_LINE // FINGERPRINT_LINE_BUCKET
+        ) * FINGERPRINT_LINE_BUCKET
         raw = (
             f"{TENANT_ID}:{SERVICE_NAME}:{ERROR_TYPE}:"
             f"{CRASH_FILE}:{normalised_line}:{CRASH_METHOD}"
         )
         expected = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         result = compute_fingerprint(
-            TENANT_ID, SERVICE_NAME, ERROR_TYPE,
-            CRASH_FILE, CRASH_LINE, CRASH_METHOD,
+            TENANT_ID,
+            SERVICE_NAME,
+            ERROR_TYPE,
+            CRASH_FILE,
+            CRASH_LINE,
+            CRASH_METHOD,
         )
         assert result == expected
 
@@ -302,6 +351,7 @@ class TestComputeFingerprint:
 # ---------------------------------------------------------------------------
 # Redis lock tests
 # ---------------------------------------------------------------------------
+
 
 class TestDedupLockKey:
 
@@ -346,6 +396,7 @@ class TestAcquireDedupLock:
     @pytest.mark.asyncio
     async def test_acquire_fails_open_on_redis_error(self):
         import redis.asyncio as aioredis
+
         mock_redis = _make_mock_redis()
         mock_redis.set = AsyncMock(
             side_effect=aioredis.ConnectionError("connection refused")
@@ -378,10 +429,9 @@ class TestReleaseDedupLock:
     @pytest.mark.asyncio
     async def test_release_does_not_raise_on_redis_error(self):
         import redis.asyncio as aioredis
+
         mock_redis = _make_mock_redis()
-        mock_redis.delete = AsyncMock(
-            side_effect=aioredis.ConnectionError("gone")
-        )
+        mock_redis.delete = AsyncMock(side_effect=aioredis.ConnectionError("gone"))
 
         # Must NOT raise
         await release_dedup_lock(mock_redis, "a" * 64)
@@ -398,6 +448,7 @@ class TestReleaseDedupLock:
 # ---------------------------------------------------------------------------
 # IncidentService tests
 # ---------------------------------------------------------------------------
+
 
 class TestFindActiveByFingerprint:
 
@@ -462,11 +513,8 @@ class TestRecordDuplicateOccurrence:
         session = _make_mock_session()
         mock_incident = _make_mock_incident(occurrence_count=2)
 
-        # Mock RETURNING result
-        mock_returning_row = MagicMock()
-        mock_returning_row.__getitem__ = MagicMock(return_value=3)
         mock_update_result = MagicMock()
-        mock_update_result.fetchone = MagicMock(return_value=mock_returning_row)
+        mock_update_result.scalar.return_value = 3
         session.execute = AsyncMock(return_value=mock_update_result)
 
         with patch("app.services.incidents.write_outbox") as mock_write_outbox:
@@ -487,10 +535,8 @@ class TestRecordDuplicateOccurrence:
             occurrence_count=1,
         )
 
-        mock_returning_row = MagicMock()
-        mock_returning_row.__getitem__ = MagicMock(return_value=2)
         mock_update_result = MagicMock()
-        mock_update_result.fetchone = MagicMock(return_value=mock_returning_row)
+        mock_update_result.scalar.return_value = 2
         session.execute = AsyncMock(return_value=mock_update_result)
 
         captured_payloads = []
@@ -507,7 +553,7 @@ class TestRecordDuplicateOccurrence:
 
         assert len(captured_payloads) == 1
         outbox = captured_payloads[0]
-        assert outbox["topic"] == "incidents.created"
+        assert outbox["topic"] == "incidents.duplicate_recorded"
         assert outbox["payload"]["event_type"] == "incident.duplicate_detected"
         assert outbox["payload"]["payload"]["new_occurrence_count"] == 2
         assert outbox["payload"]["payload"]["new_s3_key"] == (
@@ -515,13 +561,13 @@ class TestRecordDuplicateOccurrence:
         )
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_increment_when_returning_is_none(self):
-        """If RETURNING returns no row, falls back to incident.count + 1."""
+    async def test_falls_back_to_current_count_when_returning_is_none(self):
+        """If RETURNING returns no row, falls back to incident.count."""
         session = _make_mock_session()
         mock_incident = _make_mock_incident(occurrence_count=5)
 
         mock_update_result = MagicMock()
-        mock_update_result.fetchone = MagicMock(return_value=None)
+        mock_update_result.scalar.return_value = None
         session.execute = AsyncMock(return_value=mock_update_result)
 
         with patch("app.services.incidents.write_outbox"):
@@ -531,7 +577,7 @@ class TestRecordDuplicateOccurrence:
                 new_s3_key="logs/tenant/context/new.json.gz",
             )
 
-        assert new_count == 6
+        assert new_count == 5
 
 
 class TestPersistNewIncident:
@@ -550,8 +596,12 @@ class TestPersistNewIncident:
             "classifier_latency_ms": 45,
             "playbook_latency_ms": 12,
             "code_retriever_meta": {
-                "latency_ms": 230, "files_fetched": 2, "tokens": 480,
-                "cache_hits": 1, "cache_misses": 1, "symbols_retrieved": 3,
+                "latency_ms": 230,
+                "files_fetched": 2,
+                "tokens": 480,
+                "cache_hits": 1,
+                "cache_misses": 1,
+                "symbols_retrieved": 3,
             },
             "scorer_latency_ms": 8,
             "confidence_threshold": 0.70,
@@ -593,6 +643,7 @@ class TestPersistNewIncident:
 
         # Should have added Incident and Analysis
         from app.models.incidents import Analysis, Incident
+
         types_added = [type(obj).__name__ for obj in added_objects]
         assert "Incident" in types_added
         assert "Analysis" in types_added
@@ -680,6 +731,7 @@ class TestPersistNewIncident:
 
         def capture_add(obj):
             from app.models.incidents import Incident
+
             if isinstance(obj, Incident):
                 added_incidents.append(obj)
 
@@ -709,6 +761,7 @@ class TestPersistNewIncident:
 
         def capture_add(obj):
             from app.models.incidents import Incident
+
             if isinstance(obj, Incident):
                 added_incidents.append(obj)
 
@@ -741,6 +794,7 @@ class TestPersistNewIncident:
 
         def capture_add(obj):
             from app.models.incidents import Analysis
+
             if isinstance(obj, Analysis):
                 added_analyses.append(obj)
 
@@ -759,13 +813,14 @@ class TestPersistNewIncident:
         assert len(added_analyses) == 1
         analysis = added_analyses[0]
         assert analysis.total_tokens_used == 2100  # 1200 + 900
-        assert analysis.prompt_tokens == 1400      # 800 + 600
-        assert analysis.completion_tokens == 700   # 400 + 300
+        assert analysis.prompt_tokens == 1400  # 800 + 600
+        assert analysis.completion_tokens == 700  # 400 + 300
 
 
 # ---------------------------------------------------------------------------
 # _safe_uuid helper tests
 # ---------------------------------------------------------------------------
+
 
 class TestSafeUuid:
 
@@ -796,6 +851,7 @@ class TestSafeUuid:
 # ---------------------------------------------------------------------------
 # _execute_run_agent integration tests
 # ---------------------------------------------------------------------------
+
 
 class TestExecuteRunAgent:
 
@@ -855,12 +911,10 @@ class TestExecuteRunAgent:
             patch(
                 "app.worker.tasks.run_agent.AsyncSessionLocal",
             ) as mock_session_local,
-            patch(
-                "app.worker.tasks.run_agent.IncidentService"
-            ) as MockIncidentService,
+            patch("app.worker.tasks.run_agent.IncidentService") as MockIncidentService,
         ):
             # Configure session context manager
-            mock_session = MagicMock()
+            mock_session = _make_mock_session()
             mock_session_local.return_value.__aenter__ = AsyncMock(
                 return_value=mock_session
             )
@@ -912,11 +966,27 @@ class TestExecuteRunAgent:
             patch(
                 "app.worker.tasks.run_agent.AsyncSessionLocal",
             ) as mock_session_local,
-            patch(
-                "app.worker.tasks.run_agent.IncidentService"
-            ) as MockIncidentService,
+            patch("app.worker.tasks.run_agent.IncidentService") as MockIncidentService,
+            patch("app.agents.workflow.get_agent_workflow") as mock_get_workflow,
         ):
-            mock_session = MagicMock()
+            mock_workflow = MagicMock()
+            mock_workflow.ainvoke = AsyncMock(
+                return_value={
+                    "confidence_score": 0.90,
+                    "confidence_threshold": 0.70,
+                    "action": "create_incident",
+                    "actionable": True,
+                    "severity": "low",
+                    "root_cause": "test",
+                    "suggested_fix": "test",
+                    "code_context": "",
+                    "analyzer_tokens": {"prompt": 0, "completion": 0, "total": 0},
+                    "fix_tokens": {"prompt": 0, "completion": 0, "total": 0},
+                    "total_latency_ms": 0,
+                }
+            )
+            mock_get_workflow.return_value = mock_workflow
+            mock_session = _make_mock_session()
             mock_session_local.return_value.__aenter__ = AsyncMock(
                 return_value=mock_session
             )
@@ -962,11 +1032,9 @@ class TestExecuteRunAgent:
             patch(
                 "app.worker.tasks.run_agent.AsyncSessionLocal",
             ) as mock_session_local,
-            patch(
-                "app.worker.tasks.run_agent.IncidentService"
-            ) as MockIncidentService,
+            patch("app.worker.tasks.run_agent.IncidentService") as MockIncidentService,
         ):
-            mock_session = MagicMock()
+            mock_session = _make_mock_session()
             mock_session_local.return_value.__aenter__ = AsyncMock(
                 return_value=mock_session
             )
@@ -992,6 +1060,7 @@ class TestExecuteRunAgent:
     async def test_handles_integrity_error_as_late_duplicate(self):
         """IntegrityError during persist = late duplicate, not a failure."""
         import sqlalchemy.exc
+
         parsed_event_dict = self._make_event_dict()
         mock_redis = _make_mock_redis()
 
@@ -1012,11 +1081,27 @@ class TestExecuteRunAgent:
             patch(
                 "app.worker.tasks.run_agent.AsyncSessionLocal",
             ) as mock_session_local,
-            patch(
-                "app.worker.tasks.run_agent.IncidentService"
-            ) as MockIncidentService,
+            patch("app.worker.tasks.run_agent.IncidentService") as MockIncidentService,
+            patch("app.agents.workflow.get_agent_workflow") as mock_get_workflow,
         ):
-            mock_session = MagicMock()
+            mock_workflow = MagicMock()
+            mock_workflow.ainvoke = AsyncMock(
+                return_value={
+                    "confidence_score": 0.90,
+                    "confidence_threshold": 0.70,
+                    "action": "create_incident",
+                    "actionable": True,
+                    "severity": "low",
+                    "root_cause": "test",
+                    "suggested_fix": "test",
+                    "code_context": "",
+                    "analyzer_tokens": {"prompt": 0, "completion": 0, "total": 0},
+                    "fix_tokens": {"prompt": 0, "completion": 0, "total": 0},
+                    "total_latency_ms": 0,
+                }
+            )
+            mock_get_workflow.return_value = mock_workflow
+            mock_session = _make_mock_session()
             mock_session_local.return_value.__aenter__ = AsyncMock(
                 return_value=mock_session
             )
@@ -1076,12 +1161,11 @@ class TestExecuteRunAgent:
             patch(
                 "app.worker.tasks.run_agent.AsyncSessionLocal",
             ) as mock_session_local,
-            patch(
-                "app.worker.tasks.run_agent.IncidentService"
-            ) as MockIncidentService,
-            patch(
-                "app.worker.tasks.run_agent._run_agent_workflow_skeleton",
-                new_callable=AsyncMock,
+            patch("app.worker.tasks.run_agent.IncidentService") as MockIncidentService,
+            patch("app.agents.workflow.get_agent_workflow") as mock_get_workflow,
+        ):
+            mock_workflow = MagicMock()
+            mock_workflow.ainvoke = AsyncMock(
                 return_value={
                     # Confidence BELOW threshold
                     "confidence_score": 0.40,
@@ -1095,10 +1179,11 @@ class TestExecuteRunAgent:
                     "analyzer_tokens": {"prompt": 0, "completion": 0, "total": 0},
                     "fix_tokens": {"prompt": 0, "completion": 0, "total": 0},
                     "total_latency_ms": 0,
-                },
-            ),
-        ):
-            mock_session = MagicMock()
+                }
+            )
+            mock_get_workflow.return_value = mock_workflow
+
+            mock_session = _make_mock_session()
             mock_session_local.return_value.__aenter__ = AsyncMock(
                 return_value=mock_session
             )

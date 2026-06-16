@@ -42,6 +42,7 @@ Outputs written to AgentState
   actionable          : bool
   classifier_latency_ms : int
 """
+
 from __future__ import annotations
 
 import logging
@@ -57,81 +58,89 @@ logger = logging.getLogger(__name__)
 
 # Error types that always map to critical severity regardless of log level.
 # These represent process-terminating or data-loss events.
-_CRITICAL_ERROR_TYPES: frozenset[str] = frozenset({
-    "OutOfMemoryError",
-    "StackOverflowError",
-    "SystemExit",
-    "FatalError",
-    "PanicError",
-    "KernelPanic",
-    "OutOfMemoryException",
-    "MemoryError",
-    "SystemError",
-    "AssertionError",         # Python: only raised by assert; indicates invariant violation
-    "RuntimePanic",
-    "UnrecoverableError",
-})
+_CRITICAL_ERROR_TYPES: frozenset[str] = frozenset(
+    {
+        "OutOfMemoryError",
+        "StackOverflowError",
+        "SystemExit",
+        "FatalError",
+        "PanicError",
+        "KernelPanic",
+        "OutOfMemoryException",
+        "MemoryError",
+        "SystemError",
+        "AssertionError",  # Python: only raised by assert; indicates invariant violation
+        "RuntimePanic",
+        "UnrecoverableError",
+    }
+)
 
 # Error types that map to high severity.
 # These represent data integrity or availability failures.
-_HIGH_ERROR_TYPES: frozenset[str] = frozenset({
-    "NullPointerException",
-    "NullReferenceException",
-    "DatabaseError",
-    "OperationalError",
-    "ConnectionRefusedError",
-    "DeadlockError",
-    "TransactionError",
-    "IntegrityError",
-    "DataCorruptionError",
-    "PaymentError",
-    "AuthenticationError",
-    "AuthorizationError",
-    "PermissionError",
-    "TimeoutError",
-    "ReadTimeoutError",
-    "ConnectTimeoutError",
-    "ServiceUnavailableError",
-    "CircuitBreakerOpenError",
-    "NullReferenceError",
-    "AccessViolation",
-    "SegmentationFault",
-    "IOException",
-})
+_HIGH_ERROR_TYPES: frozenset[str] = frozenset(
+    {
+        "NullPointerException",
+        "NullReferenceException",
+        "DatabaseError",
+        "OperationalError",
+        "ConnectionRefusedError",
+        "DeadlockError",
+        "TransactionError",
+        "IntegrityError",
+        "DataCorruptionError",
+        "PaymentError",
+        "AuthenticationError",
+        "AuthorizationError",
+        "PermissionError",
+        "TimeoutError",
+        "ReadTimeoutError",
+        "ConnectTimeoutError",
+        "ServiceUnavailableError",
+        "CircuitBreakerOpenError",
+        "NullReferenceError",
+        "AccessViolation",
+        "SegmentationFault",
+        "IOException",
+    }
+)
 
 # Error types that map to medium severity.
 # These represent programmer errors that are typically recoverable.
-_MEDIUM_ERROR_TYPES: frozenset[str] = frozenset({
-    "ValueError",
-    "KeyError",
-    "IndexError",
-    "AttributeError",
-    "TypeError",
-    "NotImplementedError",
-    "InvalidArgumentError",
-    "BadRequestError",
-    "ValidationError",
-    "SerializationError",
-    "DeserializationError",
-    "ParseError",
-    "FormatError",
-    "IllegalArgumentException",
-    "IllegalStateException",
-    "UnsupportedOperationException",
-    "ClassCastException",
-    "NumberFormatException",
-    "StringIndexOutOfBoundsException",
-    "ArrayIndexOutOfBoundsException",
-})
+_MEDIUM_ERROR_TYPES: frozenset[str] = frozenset(
+    {
+        "ValueError",
+        "KeyError",
+        "IndexError",
+        "AttributeError",
+        "TypeError",
+        "NotImplementedError",
+        "InvalidArgumentError",
+        "BadRequestError",
+        "ValidationError",
+        "SerializationError",
+        "DeserializationError",
+        "ParseError",
+        "FormatError",
+        "IllegalArgumentException",
+        "IllegalStateException",
+        "UnsupportedOperationException",
+        "ClassCastException",
+        "NumberFormatException",
+        "StringIndexOutOfBoundsException",
+        "ArrayIndexOutOfBoundsException",
+    }
+)
 
 # Raw severity strings that are considered non-actionable.
-_NON_ACTIONABLE_LEVELS: frozenset[str] = frozenset({
-    "debug",
-    "trace",
-    "info",
-    "information",
-    "verbose",
-})
+_NON_ACTIONABLE_LEVELS: frozenset[str] = frozenset(
+    {
+        "debug",
+        "trace",
+        "info",
+        "information",
+        "verbose",
+    }
+)
 
 
 class ClassifierNode:
@@ -161,9 +170,7 @@ class ClassifierNode:
         start: float = time.monotonic()
         parsed: Dict[str, Any] = state["parsed_event"]
 
-        raw_severity: str = (
-            str(parsed.get("severity") or "unknown").lower().strip()
-        )
+        raw_severity: str = str(parsed.get("severity") or "unknown").lower().strip()
         error_type: str = str(parsed.get("error_type") or "").strip()
         service_name: str = str(parsed.get("service_name") or "")
         environment: str = str(parsed.get("environment") or "")

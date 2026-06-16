@@ -52,6 +52,7 @@ Outputs written to AgentState
   code_retriever_meta : dict — files_fetched, tokens, cache_hits,
                                cache_misses, symbols_retrieved, latency_ms
 """
+
 from __future__ import annotations
 
 import logging
@@ -80,6 +81,7 @@ _SNIPPET_SEPARATOR: str = "\n\n---\n\n"
 def _get_encoding():
     """Lazy-load tiktoken encoding to avoid import cost at module level."""
     import tiktoken
+
     return tiktoken.encoding_for_model("gpt-4o")
 
 
@@ -320,9 +322,7 @@ class CodeRetrieverNode:
                         CodeIndex.end_line >= line_number,
                     )
                 )
-                .order_by(
-                    (CodeIndex.end_line - CodeIndex.start_line).asc()
-                )
+                .order_by((CodeIndex.end_line - CodeIndex.start_line).asc())
                 .limit(1)
             )
             result = await session.execute(stmt)

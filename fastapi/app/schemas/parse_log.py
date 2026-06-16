@@ -14,6 +14,7 @@ Using a Pydantic model (rather than a plain dataclass) gives us:
   - JSON schema generation for API documentation
   - Validation on both construction and from_dict()
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -147,8 +148,7 @@ class ParsedLogEvent(BaseModel):
         default=0,
         ge=0,
         description=(
-            "Line number from the top frame of the stack trace. "
-            "0 if not parseable."
+            "Line number from the top frame of the stack trace. " "0 if not parseable."
         ),
     )
     crash_method: str = Field(

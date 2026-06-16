@@ -10,7 +10,9 @@ The client handles connection pooling, sniffing, and retries internally.
 
 import logging
 from functools import lru_cache
+
 from elasticsearch import AsyncElasticsearch
+
 from app.core.config import get_settings
 
 settings = get_settings()

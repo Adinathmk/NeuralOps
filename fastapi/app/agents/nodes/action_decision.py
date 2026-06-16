@@ -33,6 +33,7 @@ Outputs written to AgentState
   action               : "create_incident" | "store_draft"
   confidence_threshold : float  (the threshold that was applied)
 """
+
 from __future__ import annotations
 
 import logging
@@ -103,6 +104,7 @@ class ActionDecisionNode:
 # Threshold fetch helper
 # ---------------------------------------------------------------------------
 
+
 async def _fetch_tenant_threshold(
     session: Any,
     tenant_id: str,
@@ -131,14 +133,11 @@ async def _fetch_tenant_threshold(
         return DEFAULT_THRESHOLD
 
     try:
-        stmt = (
-            select(func.min(AlertRuleSnapshot.confidence_threshold))
-            .where(
-                and_(
-                    AlertRuleSnapshot.tenant_id == tenant_uuid,
-                    AlertRuleSnapshot.enabled.is_(True),
-                    AlertRuleSnapshot.confidence_threshold.is_not(None),
-                )
+        stmt = select(func.min(AlertRuleSnapshot.confidence_threshold)).where(
+            and_(
+                AlertRuleSnapshot.tenant_id == tenant_uuid,
+                AlertRuleSnapshot.enabled.is_(True),
+                AlertRuleSnapshot.confidence_threshold.is_not(None),
             )
         )
         result = await session.execute(stmt)

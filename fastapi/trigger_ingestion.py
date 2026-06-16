@@ -1,8 +1,10 @@
-import requests
 import uuid
+
+import requests
 
 tenant_id = "6654ef13-8b08-40fc-9baf-9e9713a361db"
 import os
+
 api_key = os.getenv("API_KEY", "your_api_key_here")
 
 url = "http://localhost:8001/api/v1/ingest/logs"
@@ -21,10 +23,10 @@ payload = {
             "exception": {
                 "type": "ValueError",
                 "message": "Invalid credit card format",
-                "stacktrace": "Traceback (most recent call last):\n  File \"charge.py\", line 42, in process\nValueError: Invalid credit card format"
-            }
+                "stacktrace": 'Traceback (most recent call last):\n  File "charge.py", line 42, in process\nValueError: Invalid credit card format',
+            },
         }
-    ]
+    ],
 }
 
 response = requests.post(url, json=payload, headers=headers)

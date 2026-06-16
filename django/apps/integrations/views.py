@@ -50,6 +50,7 @@ def _build_outbox_payload(integration: GitHubIntegration) -> dict:
     GitHub at index time.  The plaintext is never transmitted.
     """
     import time
+
     tenant = integration.tenant
     return {
         "event_type": "tenant.updated",
@@ -237,6 +238,7 @@ class GitHubIntegrationView(APIView):
             404 if no integration exists.
         """
         import time
+
         tenant_id = request.tenant_id
 
         try:

@@ -48,6 +48,8 @@ import shutil
 import tarfile
 import tempfile
 import uuid
+from datetime import datetime as _dt
+from datetime import timezone as _tz
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -57,7 +59,6 @@ from botocore.exceptions import BotoCoreError, ClientError
 from celery import shared_task
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import delete, select, update
-from datetime import timezone as _tz, datetime as _dt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -962,6 +963,7 @@ def index_code(
 # Cleanup Task
 # ---------------------------------------------------------------------------
 
+
 async def _cleanup_index_async(tenant_id_str: str) -> None:
     """
     Asynchronously purge all code indexes, S3 source files, and Redis cache
@@ -979,29 +981,42 @@ async def _cleanup_index_async(tenant_id_str: str) -> None:
                     delete(CodeIndex).where(CodeIndex.tenant_id == tenant_uuid)
                 )
     except Exception as exc:
-        logger.error("cleanup_db_failed", extra={"tenant_id": tenant_id_str, "error": str(exc)}, exc_info=True)
+        logger.error(
+            "cleanup_db_failed",
+            extra={"tenant_id": tenant_id_str, "error": str(exc)},
+            exc_info=True,
+        )
 
     # 2. S3 Cleanup: delete all objects under `code/{tenant_id}/`
     logger.info("cleanup_s3_started", extra={"tenant_id": tenant_id_str})
     boto_session = aioboto3.Session()
     prefix = f"code/{tenant_id_str}/"
     try:
-        async with boto_session.client("s3", endpoint_url=settings.AWS_S3_ENDPOINT_URL) as s3:
+        async with boto_session.client(
+            "s3", endpoint_url=settings.AWS_S3_ENDPOINT_URL
+        ) as s3:
             paginator = s3.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=settings.AWS_S3_BUCKET_NAME, Prefix=prefix):
+            async for page in paginator.paginate(
+                Bucket=settings.AWS_S3_BUCKET_NAME, Prefix=prefix
+            ):
                 if "Contents" in page:
-                    objects_to_delete = [{"Key": obj["Key"]} for obj in page["Contents"]]
+                    objects_to_delete = [
+                        {"Key": obj["Key"]} for obj in page["Contents"]
+                    ]
                     if objects_to_delete:
                         await s3.delete_objects(
                             Bucket=settings.AWS_S3_BUCKET_NAME,
-                            Delete={"Objects": objects_to_delete}
+                            Delete={"Objects": objects_to_delete},
                         )
     except (BotoCoreError, ClientError) as exc:
-        logger.error("cleanup_s3_failed", extra={"tenant_id": tenant_id_str, "error": str(exc)})
+        logger.error(
+            "cleanup_s3_failed", extra={"tenant_id": tenant_id_str, "error": str(exc)}
+        )
 
     # 3. Redis Cleanup: scan and delete L1 cache keys
     logger.info("cleanup_redis_started", extra={"tenant_id": tenant_id_str})
     import redis.asyncio as aioredis
+
     try:
         client = aioredis.from_url(
             settings.REDIS_URL,
@@ -1019,7 +1034,29 @@ async def _cleanup_index_async(tenant_id_str: str) -> None:
                 break
         await client.aclose()
     except Exception as exc:
-        logger.error("cleanup_redis_failed", extra={"tenant_id": tenant_id_str, "error": str(exc)})
+        logger.error(
+            "cleanup_redis_failed",
+            extra={"tenant_id": tenant_id_str, "error": str(exc)},
+        )
+
+    # 4. Elasticsearch Cleanup: delete all logs for this tenant
+    logger.info("cleanup_elasticsearch_started", extra={"tenant_id": tenant_id_str})
+    from app.database.elasticsearch_client import get_es_client
+
+    try:
+        es_client = get_es_client()
+        await es_client.delete_by_query(
+            index="neuralops-logs*",
+            body={
+                "query": {"match": {"tenant_id": tenant_id_str}}
+            },
+            conflicts="proceed",
+        )
+    except Exception as exc:
+        logger.error(
+            "cleanup_elasticsearch_failed",
+            extra={"tenant_id": tenant_id_str, "error": str(exc)},
+        )
 
 
 @celery_app.task(

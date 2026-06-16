@@ -18,6 +18,7 @@ Test coverage:
   - ParsedLogEvent.to_dict / from_dict: round-trip serialisation
   - StackFrame: line coercion, cap at 20
 """
+
 from __future__ import annotations
 
 import json
@@ -38,10 +39,10 @@ from app.worker.tasks.parse_log import (
     _parse_stack_frames_from_python_text,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_log_entry(
     level: str = "info",
@@ -67,9 +68,9 @@ def _make_python_stack_trace() -> str:
     return (
         "Traceback (most recent call last):\n"
         '  File "src/payment/charge.py", line 78, in process_payment\n'
-        '    result = charge_service.charge(amount)\n'
+        "    result = charge_service.charge(amount)\n"
         '  File "src/payment/charge_service.py", line 142, in charge\n'
-        '    return self.client.charge(amount)\n'
+        "    return self.client.charge(amount)\n"
     )
 
 
@@ -93,6 +94,7 @@ def _make_structured_frames() -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # _extract_error_type tests
 # ---------------------------------------------------------------------------
+
 
 class TestExtractErrorType:
 
@@ -158,6 +160,7 @@ class TestExtractErrorType:
 # _find_trigger_log tests
 # ---------------------------------------------------------------------------
 
+
 class TestFindTriggerLog:
 
     def test_finds_error_over_info(self):
@@ -220,6 +223,7 @@ class TestFindTriggerLog:
 # ---------------------------------------------------------------------------
 # Stack frame parsing tests
 # ---------------------------------------------------------------------------
+
 
 class TestParseStackFramesFromList:
 
@@ -286,8 +290,7 @@ class TestParseStackFramesFromJavaText:
 
     def test_caps_at_max_frames(self):
         lines = [
-            f"\tat com.example.Service.method{i}(Service.java:{i})\n"
-            for i in range(30)
+            f"\tat com.example.Service.method{i}(Service.java:{i})\n" for i in range(30)
         ]
         frames = _parse_stack_frames_from_java_text("".join(lines))
         assert len(frames) == _MAX_STACK_FRAMES
@@ -349,6 +352,7 @@ class TestParseStackFramesDispatch:
 # ---------------------------------------------------------------------------
 # _build_parsed_event integration tests
 # ---------------------------------------------------------------------------
+
 
 class TestBuildParsedEvent:
 
@@ -428,6 +432,7 @@ class TestBuildParsedEvent:
 # ---------------------------------------------------------------------------
 # ParsedLogEvent serialisation tests
 # ---------------------------------------------------------------------------
+
 
 class TestParsedLogEventSerialization:
 

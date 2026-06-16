@@ -20,6 +20,7 @@ which enforces the DB-layer deduplication guarantee.
 
 Downgrade drops all policies, indexes, and tables in reverse dependency order.
 """
+
 from __future__ import annotations
 
 from typing import Sequence, Union
@@ -41,6 +42,7 @@ depends_on: Union[str, Sequence[str], None] = None
 # ---------------------------------------------------------------------------
 # Upgrade
 # ---------------------------------------------------------------------------
+
 
 def upgrade() -> None:
     # =========================================================================
@@ -598,15 +600,14 @@ def upgrade() -> None:
 # Downgrade
 # ---------------------------------------------------------------------------
 
+
 def downgrade() -> None:
     # Drop in reverse FK dependency order:
     # alerts → analyses → incidents
     # (alerts and analyses both FK to incidents)
 
     # ── Drop alerts ───────────────────────────────────────────────────────────
-    op.execute(
-        "DROP POLICY IF EXISTS rls_alerts_tenant_isolation ON alerts;"
-    )
+    op.execute("DROP POLICY IF EXISTS rls_alerts_tenant_isolation ON alerts;")
     op.drop_index("ix_alerts_status_pending", table_name="alerts")
     op.drop_index("ix_alerts_tenant_incident", table_name="alerts")
     op.drop_index("ix_alerts_incident_id", table_name="alerts")
@@ -614,17 +615,13 @@ def downgrade() -> None:
     op.drop_table("alerts")
 
     # ── Drop analyses ─────────────────────────────────────────────────────────
-    op.execute(
-        "DROP POLICY IF EXISTS rls_analyses_tenant_isolation ON analyses;"
-    )
+    op.execute("DROP POLICY IF EXISTS rls_analyses_tenant_isolation ON analyses;")
     op.drop_index("ix_analyses_incident_id", table_name="analyses")
     op.drop_index("ix_analyses_tenant_id", table_name="analyses")
     op.drop_table("analyses")
 
     # ── Drop incidents ────────────────────────────────────────────────────────
-    op.execute(
-        "DROP POLICY IF EXISTS rls_incidents_tenant_isolation ON incidents;"
-    )
+    op.execute("DROP POLICY IF EXISTS rls_incidents_tenant_isolation ON incidents;")
     op.drop_index(
         "uq_incidents_tenant_fingerprint_active",
         table_name="incidents",
