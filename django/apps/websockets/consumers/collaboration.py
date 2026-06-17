@@ -57,3 +57,10 @@ class CollaborationConsumer(AsyncWebsocketConsumer):
                 {"type": "collaboration.assignment", "data": event["data"]}
             )
         )
+
+    async def collaboration_github_indexing(self, event):
+        await self.send(
+            text_data=json.dumps(
+                {"type": "collaboration.github_indexing", "data": event["data"]}
+            )
+        )

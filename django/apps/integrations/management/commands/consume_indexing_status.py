@@ -54,6 +54,7 @@ from django.core.management.base import BaseCommand
 from django.db import IntegrityError, transaction
 from integrations.models import GitHubIntegration
 from outbox.models import ProcessedEvent
+from apps.websockets.publisher import push_collaboration_event
 
 logger = logging.getLogger(__name__)
 
@@ -323,6 +324,19 @@ class Command(BaseCommand):
                     # Still commit — retrying won't help if the integration
                     # row doesn't exist yet (race between consumer and create).
                     return
+
+                # Push real-time update to the frontend via WebSockets
+                try:
+                    push_collaboration_event(
+                        tenant_id_str,
+                        "github_indexing",
+                        {"status": status, "commit_sha": commit_sha}
+                    )
+                except Exception as wsexc:
+                    logger.error(
+                        "indexing_status_websocket_push_failed",
+                        extra={"error": str(wsexc), "tenant_id": tenant_id_str}
+                    )
 
         except Exception as exc:
             logger.error(
