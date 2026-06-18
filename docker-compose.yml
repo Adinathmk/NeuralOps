@@ -3,7 +3,7 @@
 # Services: PostgreSQL (x2), Redis, Django/Gunicorn, FastAPI/Uvicorn,
 #           Kong API Gateway, Kafka, Debezium, Elasticsearch,
 #           Celery Worker (Django), Celery Beat (Django),
-#           Celery Worker (FastAPI) ← Phase 3 addition, MinIO
+#           Celery Worker (FastAPI), MinIO
 # ============================================================
 
 services:
