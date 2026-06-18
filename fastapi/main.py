@@ -194,7 +194,7 @@ app.add_middleware(TenantRLSMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health_router)
-app.include_router(incidents_router, prefix="/api/v1")  # ← Phase 4 wired in
-app.include_router(ingest_router, prefix="/api/v1")  # ← Phase 2 wired in
+app.include_router(incidents_router, prefix="/api/v1")  
+app.include_router(ingest_router, prefix="/api/v1")  
 app.include_router(logs_router)
 app.include_router(webhooks_router, prefix="/api/v1")
