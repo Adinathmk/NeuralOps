@@ -291,10 +291,11 @@ services:
     build:
       context: ./django
       dockerfile: Dockerfile
-      target: worker
+      target: production
     container_name: celery-beat-django
     restart: unless-stopped
     env_file: .env.docker
+    entrypoint: ["/entrypoint.sh"]
     command: >
       celery -A config beat
       --loglevel=${CELERY_LOG_LEVEL:-info}
