@@ -230,6 +230,7 @@ services:
       django_db:
         condition: service_healthy
     environment:
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
       BOOTSTRAP_SERVERS: kafka:9092
       GROUP_ID: debezium-django-db1
       CONFIG_STORAGE_TOPIC: debezium_configs
@@ -254,7 +255,7 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     networks:
@@ -275,6 +276,7 @@ services:
       target: worker
     container_name: celery-worker-django
     restart: unless-stopped
+    command: celery -A config worker -c 1 --loglevel=${CELERY_LOG_LEVEL:-info}
     env_file: .env.docker
     networks:
       - neuralops_network
@@ -355,7 +357,7 @@ services:
     command: >
       celery -A app.worker.celery_app worker
       --loglevel=${CELERY_LOG_LEVEL:-info}
-      --concurrency=4
+      --concurrency=1
       --queues=celery,embed
     env_file: .env.docker
     environment:
