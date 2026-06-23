@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from uuid import UUID
 
 from django.core.cache import cache
@@ -62,7 +63,7 @@ def invalidate_cache_on_plan_change(sender, instance, created, **kwargs):
                 "vector_namespace": instance.vector_namespace,
                 "kafka_group_id": instance.kafka_group_id,
                 "is_suspended": instance.is_suspended,
-                "source_version": 1,  # Simplified for signal, ideally comes from version field
+                "source_version": int(time.time() * 1000),
             },
         }
 

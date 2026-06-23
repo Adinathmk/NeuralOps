@@ -20,6 +20,7 @@ urlpatterns = [
                 path("playbooks/", include("playbooks.urls")),
                 path("integrations/", include("integrations.urls")),
                 path("push/", include("push.urls")),
+                path("billing/", include("billing.urls")),
                 path("schema/", SpectacularAPIView.as_view(), name="schema"),
                 path(
                     "schema/swagger-ui/",

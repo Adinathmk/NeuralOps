@@ -17,6 +17,10 @@
 #   elasticsearch        — Search engine
 # ============================================================
 
+# Tell docker compose CLI to always read .env.docker even when called directly
+# (i.e. without make). This eliminates "variable is not set" warnings.
+export COMPOSE_ENV_FILES := .env.docker
+
 DC = docker compose --env-file .env.docker
 
 .PHONY: help \
@@ -136,7 +140,7 @@ build:
 	$(DC) build --no-cache
 
 up:
-	$(DC) up -d
+	$(DC) up -d --remove-orphans
 	@echo "  Verifying Debezium CDC connectors..."
 	@$(MAKE) debezium-register
 	@echo ""
@@ -144,7 +148,7 @@ up:
 	@echo "  Admin:      http://localhost:8000/admin/"
 	@echo "  FastAPI Swagger:    http://127.0.0.1:8001/docs#/"
 	@echo "  Django Swagger:    http://localhost:8000/api/v1/schema/swagger-ui/"
-	@echo "  Webhook:    Run 'docker compose logs -f localtunnel' for URL"
+	@echo "  Webhook:    Visit http://localhost:4040 to see your Ngrok URL"
 	@echo ""
 
 down:

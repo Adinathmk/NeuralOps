@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python deps into a local prefix (not site-packages)
 COPY requirements.txt .
 RUN pip install --upgrade pip \
-    && pip install --prefix=/install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt
 
 # ============================================================
 # Stage 2: Production — lean final image
@@ -40,7 +40,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
-COPY --from=builder /install /usr/local
+COPY --from=builder /usr/local /usr/local
+
+# pkg_resources is patched at build time via sed in the builder stage
 
 # Copy project source (venv/sqlite/cache excluded via .dockerignore)
 COPY . .

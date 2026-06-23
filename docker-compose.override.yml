@@ -37,6 +37,21 @@ services:
       GUNICORN_WORKERS: "1"
       GUNICORN_LOG_LEVEL: "debug"
 
+  celery-worker:
+    user: root
+    volumes:
+      - ./django:/app             # ← same source as django, catches shim + code changes
+
+  celery-beat:
+    user: root
+    volumes:
+      - ./django:/app             # ← same source as django
+
+  django-kafka-consumer:
+    user: root
+    volumes:
+      - ./django:/app             # ← same source as django
+
   django_db:
     ports:
       - "5433:5432"               # expose Postgres for local tools (DBeaver, pgAdmin)
@@ -77,12 +92,17 @@ services:
     ports:
       - "8083:8083"
 
-  # ── LocalTunnel (Webhook Testing) ───────────────────────────────────────────
-  localtunnel:
-    image: node:18-alpine
-    container_name: localtunnel
+  # ── Ngrok (Webhook Testing) ───────────────────────────────────────────
+  # NOTE: You must add NGROK_AUTHTOKEN=your_token to your .env.docker file!
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ngrok
     restart: unless-stopped
-    command: npx localtunnel --port 80 --local-host kong --subdomain vast-tires-press
+    command: http kong:80
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"               # expose ngrok inspector UI on host
     networks:
       - neuralops_network
     depends_on:

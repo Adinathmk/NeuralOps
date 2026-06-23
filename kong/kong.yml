@@ -75,6 +75,8 @@ services:
           - /api/v1/integrations
           - /api/v1/team
           - /api/v1/push
+          - /api/v1/billing/subscribe
+          - /api/v1/billing/verify
         strip_path: false
         preserve_host: true
         protocols: [http, https]
@@ -101,6 +103,13 @@ services:
       - name: invitations-route
         paths:
           - /api/v1/invitations
+        strip_path: false
+        preserve_host: true
+        protocols: [http, https]
+
+      - name: billing-webhook-route
+        paths:
+          - /api/v1/billing/webhook/razorpay
         strip_path: false
         preserve_host: true
         protocols: [http, https]

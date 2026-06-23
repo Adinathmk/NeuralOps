@@ -42,7 +42,7 @@ PLAN_QUOTAS: dict[str, PlanQuota] = {
         max_retention_days=90,
         rate_limit="500/minute",
     ),
-    "enterprise": PlanQuota(
+    "max": PlanQuota(
         max_users=-1,  # unlimited
         max_api_keys=-1,  # unlimited
         max_retention_days=365,

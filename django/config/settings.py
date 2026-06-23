@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "channels",
     "websockets",
     "push",
+    "billing",
 ]
 
 # ============================================================================
@@ -405,6 +406,10 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute=30, hour="*"),  # hourly at minute 30
         "kwargs": {"is_superadmin": True},
     },
+    "sync-razorpay-subscription-status-daily": {
+        "task": "billing.tasks.sync_subscription_statuses",
+        "schedule": crontab(minute=0, hour=2),
+    },
 }
 
 
@@ -453,3 +458,7 @@ SQS_PUSH_DISPATCH_QUEUE_URL = os.getenv("SQS_PUSH_DISPATCH_QUEUE_URL", "")
 # ============================================================================
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:admin@neuralops.com")
+
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "rzp_test_123")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "secret")
+RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "secret")

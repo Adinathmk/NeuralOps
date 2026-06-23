@@ -12,7 +12,7 @@ class Tenant(models.Model):
     PLAN_CHOICES = [
         ("free", "Free"),
         ("pro", "Pro"),
-        ("enterprise", "Enterprise"),
+        ("max", "Max"),
     ]
 
     STATUS_CHOICES = [
@@ -26,7 +26,8 @@ class Tenant(models.Model):
     slug = models.SlugField(max_length=255, unique=True)
     plan_tier = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active")
-    stripe_customer_id = models.CharField(max_length=255, null=True, blank=True)
+    razorpay_customer_id = models.CharField(max_length=255, null=True, blank=True)
+    razorpay_subscription_id = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
