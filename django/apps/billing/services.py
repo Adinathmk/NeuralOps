@@ -62,3 +62,15 @@ def verify_payment_signature(payment_id, subscription_id, signature):
         'razorpay_signature': signature
     }
     return client.utility.verify_payment_signature(params_dict)
+
+def update_subscription(subscription_id, plan_id, schedule_change_at="cycle_end"):
+    """
+    Updates an existing Razorpay subscription to a new plan.
+    Default behavior is to schedule the change at the end of the current billing cycle.
+    """
+    update_data = {
+        "plan_id": plan_id,
+        "schedule_change_at": schedule_change_at
+    }
+    return client.subscription.edit(subscription_id, data=update_data)
+
