@@ -831,3 +831,47 @@ class MFAVerificationToken(models.Model):
     def is_valid(self):
         """Check if token is still valid."""
         return timezone.now() <= self.expires_at
+
+
+class Notification(models.Model):
+    """
+    In-app notifications for users (e.g. mentions, assignments).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    tenant = models.ForeignKey(
+        "tenants.Tenant",
+        on_delete=models.CASCADE,
+        related_name="notifications",
+        db_index=True,
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+        db_index=True,
+    )
+
+    # E.g., 'mention', 'assignment'
+    type = models.CharField(max_length=50, db_index=True)
+    
+    title = models.CharField(max_length=255)
+    body = models.TextField()
+    
+    # Optional incident context
+    incident_id = models.UUIDField(null=True, blank=True, db_index=True)
+    
+    is_read = models.BooleanField(default=False, db_index=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "notifications"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["tenant", "user", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Notification(user={self.user_id}, type={self.type}, read={self.is_read})"

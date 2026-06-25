@@ -108,6 +108,10 @@ async def list_incidents(
         None,
         description="Exact match on environment.",
     ),
+    assigned_user_id: Optional[UUID] = Query(
+        None,
+        description="Filter incidents assigned to this user.",
+    ),
     is_draft: bool = Query(
         False,
         description="Include draft incidents. Defaults to false.",
@@ -185,6 +189,10 @@ async def list_incidents(
     # Environment filter
     if environment:
         base_filter.append(Incident.environment == environment)
+
+    # Assigned User filter
+    if assigned_user_id:
+        base_filter.append(Incident.assigned_user_ids.any(assigned_user_id))
 
     # ── Count total matching rows ─────────────────────────────────────────
     count_stmt = select(func.count()).select_from(Incident).where(*base_filter)
@@ -361,8 +369,8 @@ async def update_incident(
         )
 
     # ── Step 2: Validate status transition ────────────────────────────────
+    current_status = incident.status
     if payload.status is not None:
-        current_status = incident.status
 
         # Draft incidents cannot be moved to investigating/resolved directly
         if current_status == "draft" and payload.status.value in (
@@ -378,11 +386,19 @@ async def update_incident(
                 ),
             )
 
-        # Resolved incidents cannot go back to open
-        if current_status == "resolved" and payload.status.value == "open":
+        # Enforce strict state machine transitions
+        allowed_transitions = {
+            "open": ["investigating"],
+            "investigating": ["resolved"],
+            "resolved": ["closed"],
+            "closed": ["open", "investigating", "resolved"],
+        }
+        
+        new_status_val = payload.status.value
+        if current_status in allowed_transitions and new_status_val not in allowed_transitions[current_status]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot re-open a resolved incident.",
+                detail=f"Invalid status transition from '{current_status}' to '{new_status_val}'.",
             )
 
     # ── Step 3: Build update values ───────────────────────────────────────
@@ -398,21 +414,56 @@ async def update_incident(
         if payload.status == IncidentStatus.resolved:
             update_values["resolved_at"] = now
 
-    new_assigned = incident.assigned_user_id
-    if payload.assigned_user_id is not None:
-        update_values["assigned_user_id"] = payload.assigned_user_id
-        new_assigned = payload.assigned_user_id
+    new_assigned = list(incident.assigned_user_ids) if incident.assigned_user_ids else []
+    if payload.assigned_user_ids is not None:
+        update_values["assigned_user_ids"] = payload.assigned_user_ids
+        new_assigned = payload.assigned_user_ids
+        
+    if (
+        payload.status == IncidentStatus.investigating 
+        and current_status == "open" 
+        and payload.actor_id is not None
+        and payload.actor_id not in new_assigned
+    ):
+        # Auto-assign the actor when acknowledging the incident
+        new_assigned.append(payload.actor_id)
+        update_values["assigned_user_ids"] = new_assigned
 
-    # Check if a field named assigned_user_id was explicitly set to None
-    # (unassign).  Pydantic sends None for both "not provided" and
-    # "explicitly null", so we check the raw body.
+    # Check if a field named assigned_user_ids was explicitly set to null
     raw_body = await request.body()
     if (
-        b'"assigned_user_id": null' in raw_body
-        or b'"assigned_user_id":null' in raw_body
+        b'"assigned_user_ids": null' in raw_body
+        or b'"assigned_user_ids":null' in raw_body
     ):
-        update_values["assigned_user_id"] = None
-        new_assigned = None
+        update_values["assigned_user_ids"] = []
+        new_assigned = []
+
+    # Enforce unassignment restrictions
+    if payload.actor_id and incident.assigned_user_ids:
+        # Rule 1: Cannot leave 0 assignees if you are unassigning yourself
+        was_assigned = payload.actor_id in incident.assigned_user_ids
+        is_assigned_now = payload.actor_id in new_assigned
+        
+        if was_assigned and not is_assigned_now and len(new_assigned) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot unassign yourself unless there is at least one other assigned engineer.",
+            )
+
+        # Rule 2: Cannot unassign other users
+        for uid in incident.assigned_user_ids:
+            if uid != payload.actor_id and uid not in new_assigned:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not have permission to unassign other responders.",
+                )
+
+    # Calculate newly assigned users to trigger notifications downstream (BEFORE update)
+    newly_assigned_user_ids = []
+    old_assigned = set(incident.assigned_user_ids) if incident.assigned_user_ids else set()
+    for uid in new_assigned:
+        if uid not in old_assigned:
+            newly_assigned_user_ids.append(str(uid))
 
     # ── Step 4: Execute update ────────────────────────────────────────────
     update_stmt = (
@@ -439,7 +490,11 @@ async def update_incident(
                 "incident_id": str(incident_id),
                 "tenant_id": str(tenant_id),
                 "status": new_status,
-                "assigned_user_id": str(new_assigned) if new_assigned else None,
+                "from_status": current_status,
+                "assigned_user_ids": [str(uid) for uid in new_assigned] if new_assigned else [],
+                "newly_assigned_user_ids": newly_assigned_user_ids,
+                "actor_id": str(payload.actor_id) if payload.actor_id else None,
+                "note": payload.note,
                 "updated_at": now.isoformat(),
             },
         },
@@ -450,7 +505,7 @@ async def update_incident(
         tenant_id=str(tenant_id),
         incident_id=str(incident_id),
         new_status=new_status,
-        assigned_user_id=str(new_assigned) if new_assigned else None,
+        assigned_user_ids=[str(uid) for uid in new_assigned] if new_assigned else [],
     )
 
     # ── Step 6: Update Elasticsearch status (non-fatal) ───────────────────
@@ -478,7 +533,7 @@ async def update_incident(
         data={
             "id": str(incident_id),
             "status": new_status,
-            "assigned_user_id": str(new_assigned) if new_assigned else None,
+            "assigned_user_ids": [str(uid) for uid in new_assigned] if new_assigned else [],
             "updated_at": now.isoformat(),
         },
     )
@@ -558,6 +613,10 @@ async def get_context_logs(
                 },
                 ExpiresIn=expiry_seconds,
             )
+            
+            # Rewrite internal docker hostname to localhost for the browser
+            if "http://minio:9000" in download_url:
+                download_url = download_url.replace("http://minio:9000", "http://localhost:9000")
     except (ClientError, BotoCoreError) as exc:
         logger.error(
             "context_logs_presign_error",

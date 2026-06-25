@@ -119,7 +119,7 @@ def push_notification(tenant_id: str, user_id: str, data: dict):
     # Trigger background push via SQS → lambda-push-router → lambda-push-dispatch
     incident_id = data.get("incident_id", data.get("id", f"notif-{uuid.uuid4()}"))
     _publish_to_sqs(
-        tenant_id=tenant_id,
+        tenant_id=str(tenant_id),
         incident_id=str(incident_id),
         severity=data.get("severity", "HIGH"),
         error_type=data.get("title", "New Notification"),

@@ -32,6 +32,7 @@ class IncidentStatus(str, Enum):
     open = "open"
     investigating = "investigating"
     resolved = "resolved"
+    closed = "closed"
     draft = "draft"
     duplicate = "duplicate"
 
@@ -98,7 +99,7 @@ class IncidentListItem(BaseModel):
     confidence_score: Optional[float] = None
     occurrence_count: int
     is_draft: bool
-    assigned_user_id: Optional[UUID] = None
+    assigned_user_ids: List[UUID] = Field(default_factory=list)
     first_seen_at: datetime
     last_seen_at: datetime
     created_at: datetime
@@ -168,7 +169,7 @@ class IncidentDetail(BaseModel):
     occurrence_count: int
     occurrences: List[str]
     is_draft: bool
-    assigned_user_id: Optional[UUID] = None
+    assigned_user_ids: List[UUID] = Field(default_factory=list)
     source_log_id: Optional[UUID] = None
     first_seen_at: datetime
     last_seen_at: datetime
@@ -223,7 +224,9 @@ class IncidentUpdateRequest(BaseModel):
     """
 
     status: Optional[IncidentStatus] = None
-    assigned_user_id: Optional[UUID] = None
+    assigned_user_ids: Optional[List[UUID]] = None
+    actor_id: Optional[UUID] = None
+    note: Optional[str] = Field(None, max_length=280)
 
     @field_validator("status")
     @classmethod
@@ -243,7 +246,7 @@ class IncidentUpdateResponse(BaseModel):
     success: bool = True
     message: str = "Incident updated."
     data: Dict[str, Any]
-    # data = {"id": UUID, "status": str, "assigned_user_id": UUID|None, "updated_at": datetime}
+    # data = {"id": UUID, "status": str, "assigned_user_ids": List[UUID], "updated_at": datetime}
 
 
 # ── Context logs endpoint ─────────────────────────────────────────────────────

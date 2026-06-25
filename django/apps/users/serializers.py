@@ -542,3 +542,25 @@ class DisableMFASerializer(serializers.Serializer):
         if value and not value.replace("-", "").isalnum():
             raise serializers.ValidationError("Invalid code format.")
         return value
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """Serializer for in-app notifications."""
+    
+    # Send user_id directly to match frontend Notification interface
+    user_id = serializers.UUIDField(source='user.id', read_only=True)
+    
+    class Meta:
+        from .models import Notification
+        model = Notification
+        fields = (
+            "id",
+            "user_id",
+            "type",
+            "title",
+            "body",
+            "incident_id",
+            "is_read",
+            "created_at",
+        )
+        read_only_fields = fields

@@ -1052,3 +1052,51 @@ class DisableMFAView(APIView):
             return APIResponse.error(message=msg, status_code=status, code=code)
 
         return APIResponse.success(message="MFA disabled successfully")
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+class ListNotificationsView(APIView):
+    """List notifications for the user."""
+    
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    
+    @extend_schema(
+        summary="List Notifications",
+        responses={200: OpenApiResponse(description="List of notifications")},
+    )
+    def get(self, request, user_id):
+        if str(request.user.id) != str(user_id):
+            return APIResponse.error(message="Forbidden", status_code=403, code="forbidden")
+            
+        from .models import Notification
+        from .serializers import NotificationSerializer
+        
+        notifications = Notification.objects.filter(user_id=user_id).order_by("-created_at")[:50]
+        serializer = NotificationSerializer(notifications, many=True)
+        return APIResponse.success(data=serializer.data)
+
+class MarkNotificationReadView(APIView):
+    """Mark a single notification as read."""
+    
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    
+    @extend_schema(
+        summary="Mark Notification as Read",
+        responses={200: OpenApiResponse(description="Notification marked as read")},
+    )
+    def patch(self, request, notification_id):
+        from .models import Notification
+        from .serializers import NotificationSerializer
+        
+        try:
+            notification = Notification.objects.get(id=notification_id, user=request.user)
+            notification.is_read = True
+            notification.save()
+            return APIResponse.success(data=NotificationSerializer(notification).data)
+        except Notification.DoesNotExist:
+            return APIResponse.error(message="Not found", status_code=404, code="not_found")

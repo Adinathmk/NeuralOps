@@ -541,10 +541,16 @@ class IncidentService:
         root_cause: str = agent_result.get("root_cause") or ""
         suggested_fix: str = agent_result.get("suggested_fix") or ""
         confidence_score: Optional[float] = agent_result.get("confidence_score")
-        severity: str = (
-            agent_result.get("severity") or parsed_event.severity or "unknown"
-        )
-        status: str = "draft" if is_draft else "open"
+        
+        # Always promote to "open" to ensure collaboration threads sync via Kafka.
+        # If the confidence was low (is_draft), flag severity as "unknown".
+        if is_draft:
+            severity: str = "unknown"
+            is_draft = False
+        else:
+            severity: str = agent_result.get("severity") or parsed_event.severity or "unknown"
+            
+        status: str = "open"
 
         # Token usage (sum across analyzer + fix_generator nodes)
         analyzer_tokens: Dict[str, int] = agent_result.get("analyzer_tokens") or {}

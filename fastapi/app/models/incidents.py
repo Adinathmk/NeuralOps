@@ -192,7 +192,7 @@ class Incident(Base):
         server_default="open",
         comment=(
             "Incident lifecycle status: "
-            "open | investigating | resolved | draft | duplicate."
+            "open | investigating | resolved | closed | draft | duplicate."
         ),
     )
     is_draft = Column(
@@ -205,10 +205,12 @@ class Incident(Base):
             "Draft incidents are stored but not published to Kafka."
         ),
     )
-    assigned_user_id = Column(
-        UUID(as_uuid=True),
-        nullable=True,
-        comment="UUID of the assigned engineer (references users table in DB-1).",
+    assigned_user_ids = Column(
+        ARRAY(UUID(as_uuid=True)),
+        nullable=False,
+        default=list,
+        server_default="{}",
+        comment="UUIDs of the assigned engineers",
     )
 
     # ── Source log reference ──────────────────────────────────────────────────

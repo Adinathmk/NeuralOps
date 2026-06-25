@@ -77,6 +77,9 @@ services:
           - /api/v1/push
           - /api/v1/billing/subscribe
           - /api/v1/billing/verify
+          - /api/v1/collaboration
+          - /api/v1/notifications
+          - /api/v1/users
         strip_path: false
         preserve_host: true
         protocols: [http, https]

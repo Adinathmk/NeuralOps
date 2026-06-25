@@ -20,15 +20,26 @@ class CollaborationConsumer(AsyncWebsocketConsumer):
             return
 
         self.group_name = f"collaboration_{self.tenant_id}"
+        self.notification_group = f"notifications_{self.tenant_id}_{self.user_id}"
         await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.channel_layer.group_add(self.notification_group, self.channel_name)
         await self.accept()
 
     async def disconnect(self, close_code):
         if hasattr(self, "group_name"):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        if hasattr(self, "notification_group"):
+            await self.channel_layer.group_discard(self.notification_group, self.channel_name)
 
     async def receive(self, text_data):
         pass
+
+    async def notification_new(self, event):
+        await self.send(
+            text_data=json.dumps(
+                {"type": "notification.new", "data": event["data"]}
+            )
+        )
 
     async def collaboration_message(self, event):
         await self.send(
