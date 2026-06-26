@@ -839,7 +839,7 @@ class Notification(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
+
     tenant = models.ForeignKey(
         "tenants.Tenant",
         on_delete=models.CASCADE,
@@ -855,15 +855,15 @@ class Notification(models.Model):
 
     # E.g., 'mention', 'assignment'
     type = models.CharField(max_length=50, db_index=True)
-    
+
     title = models.CharField(max_length=255)
     body = models.TextField()
-    
+
     # Optional incident context
     incident_id = models.UUIDField(null=True, blank=True, db_index=True)
-    
+
     is_read = models.BooleanField(default=False, db_index=True)
-    
+
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
@@ -874,4 +874,6 @@ class Notification(models.Model):
         ]
 
     def __str__(self):
-        return f"Notification(user={self.user_id}, type={self.type}, read={self.is_read})"
+        return (
+            f"Notification(user={self.user_id}, type={self.type}, read={self.is_read})"
+        )

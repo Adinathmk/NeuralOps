@@ -108,7 +108,7 @@ async def list_incidents(
         None,
         description="Exact match on environment.",
     ),
-    assigned_user_id: Optional[UUID] = Query(
+    assigned_user_id: Optional[uuid.UUID] = Query(
         None,
         description="Filter incidents assigned to this user.",
     ),
@@ -356,8 +356,14 @@ async def update_incident(
 
     # ── Step 1: Fetch current incident ────────────────────────────────────
     stmt = select(Incident).where(
-        Incident.id == incident_id,
         Incident.tenant_id == tenant_id,
+        or_(
+            Incident.id == incident_id,
+            Incident.source_log_id == incident_id,
+            Incident.occurrences.contains(
+                [f"logs/{tenant_id}/context/{incident_id}.json.gz"]
+            ),
+        ),
     )
     result = await db.execute(stmt)
     incident: Optional[Incident] = result.scalar_one_or_none()
@@ -393,9 +399,12 @@ async def update_incident(
             "resolved": ["closed"],
             "closed": ["open", "investigating", "resolved"],
         }
-        
+
         new_status_val = payload.status.value
-        if current_status in allowed_transitions and new_status_val not in allowed_transitions[current_status]:
+        if (
+            current_status in allowed_transitions
+            and new_status_val not in allowed_transitions[current_status]
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status transition from '{current_status}' to '{new_status_val}'.",
@@ -414,14 +423,16 @@ async def update_incident(
         if payload.status == IncidentStatus.resolved:
             update_values["resolved_at"] = now
 
-    new_assigned = list(incident.assigned_user_ids) if incident.assigned_user_ids else []
+    new_assigned = (
+        list(incident.assigned_user_ids) if incident.assigned_user_ids else []
+    )
     if payload.assigned_user_ids is not None:
         update_values["assigned_user_ids"] = payload.assigned_user_ids
         new_assigned = payload.assigned_user_ids
-        
+
     if (
-        payload.status == IncidentStatus.investigating 
-        and current_status == "open" 
+        payload.status == IncidentStatus.investigating
+        and current_status == "open"
         and payload.actor_id is not None
         and payload.actor_id not in new_assigned
     ):
@@ -443,7 +454,7 @@ async def update_incident(
         # Rule 1: Cannot leave 0 assignees if you are unassigning yourself
         was_assigned = payload.actor_id in incident.assigned_user_ids
         is_assigned_now = payload.actor_id in new_assigned
-        
+
         if was_assigned and not is_assigned_now and len(new_assigned) == 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -460,14 +471,16 @@ async def update_incident(
 
     # Calculate newly assigned users to trigger notifications downstream (BEFORE update)
     newly_assigned_user_ids = []
-    old_assigned = set(incident.assigned_user_ids) if incident.assigned_user_ids else set()
+    old_assigned = (
+        set(incident.assigned_user_ids) if incident.assigned_user_ids else set()
+    )
     for uid in new_assigned:
         if uid not in old_assigned:
             newly_assigned_user_ids.append(str(uid))
 
     # ── Step 4: Execute update ────────────────────────────────────────────
     update_stmt = (
-        update(Incident).where(Incident.id == incident_id).values(**update_values)
+        update(Incident).where(Incident.id == incident.id).values(**update_values)
     )
     await db.execute(update_stmt)
 
@@ -482,16 +495,18 @@ async def update_incident(
             "event_type": "incident.updated",
             "version": 1,
             "idempotency_key": (
-                f"tenant:{tenant_id}:incident:{incident_id}:" f"v{now.timestamp():.0f}"
+                f"tenant:{tenant_id}:incident:{incident.id}:" f"v{now.timestamp():.0f}"
             ),
             "source_version": 2,
             "occurred_at": now.isoformat(),
             "payload": {
-                "incident_id": str(incident_id),
+                "incident_id": str(incident.id),
                 "tenant_id": str(tenant_id),
                 "status": new_status,
                 "from_status": current_status,
-                "assigned_user_ids": [str(uid) for uid in new_assigned] if new_assigned else [],
+                "assigned_user_ids": (
+                    [str(uid) for uid in new_assigned] if new_assigned else []
+                ),
                 "newly_assigned_user_ids": newly_assigned_user_ids,
                 "actor_id": str(payload.actor_id) if payload.actor_id else None,
                 "note": payload.note,
@@ -517,7 +532,7 @@ async def update_incident(
             # We don't wrap this in circuit_breaker because update_by_query
             # takes longer and we don't want to trip the global ingest circuit
             await indexer.update_incident_status(
-                incident_id=str(incident_id),
+                incident_id=str(incident.id),
                 tenant_id=str(tenant_id),
                 plan_tier=tenant.plan_tier,
                 new_status=new_status,
@@ -531,9 +546,11 @@ async def update_incident(
         success=True,
         message="Incident updated.",
         data={
-            "id": str(incident_id),
+            "id": str(incident.id),
             "status": new_status,
-            "assigned_user_ids": [str(uid) for uid in new_assigned] if new_assigned else [],
+            "assigned_user_ids": (
+                [str(uid) for uid in new_assigned] if new_assigned else []
+            ),
             "updated_at": now.isoformat(),
         },
     )
@@ -613,10 +630,12 @@ async def get_context_logs(
                 },
                 ExpiresIn=expiry_seconds,
             )
-            
+
             # Rewrite internal docker hostname to localhost for the browser
             if "http://minio:9000" in download_url:
-                download_url = download_url.replace("http://minio:9000", "http://localhost:9000")
+                download_url = download_url.replace(
+                    "http://minio:9000", "http://localhost:9000"
+                )
     except (ClientError, BotoCoreError) as exc:
         logger.error(
             "context_logs_presign_error",

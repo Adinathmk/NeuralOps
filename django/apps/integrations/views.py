@@ -45,9 +45,8 @@ def _build_outbox_payload(integration: GitHubIntegration) -> dict:
     The nested `github_integration` block is consumed by FastAPI's
     _handle_tenant_event() to upsert the github_* columns in tenant_snapshots.
 
-    IMPORTANT: The encrypted_pat and webhook_secret ciphertexts ARE included
-    so FastAPI can store and later decrypt them when authenticating against
-    GitHub at index time.  The plaintext is never transmitted.
+    IMPORTANT: The installation_id IS included so FastAPI can
+    fetch tokens when authenticating against GitHub at index time.
     """
     import time
 
@@ -63,8 +62,7 @@ def _build_outbox_payload(integration: GitHubIntegration) -> dict:
                 "repo_url": integration.repo_url,
                 "repo_owner": integration.repo_owner,
                 "repo_name": integration.repo_name,
-                "encrypted_pat": integration.encrypted_pat,
-                "webhook_secret": integration.webhook_secret,
+                "installation_id": int(integration.github_installation_id) if integration.github_installation_id else None,
                 "default_branch": integration.default_branch,
                 "indexing_status": integration.indexing_status,
                 "last_indexed_commit": integration.last_indexed_commit,
@@ -119,7 +117,7 @@ class GitHubIntegrationView(APIView):
 
     @extend_schema(
         summary="Create or Update GitHub Integration",
-        description="Connect a repository or update credentials. PAT and Webhook Secret are write-only and encrypted before storage.",
+        description="Connect a repository or update credentials.",
         request=GitHubIntegrationSerializer,
         responses={
             200: GitHubIntegrationStatusSerializer,
@@ -130,10 +128,9 @@ class GitHubIntegrationView(APIView):
         """
         Create or update (upsert) the GitHub integration for this tenant.
 
-        On create:  `pat` and `webhook_secret` are required.
-        On update:  `pat` and `webhook_secret` are optional (omit to preserve).
+        On create:  `github_installation_id` is required.
+        On update:  `github_installation_id` is optional.
 
-        All credential fields are encrypted before persistence.
         An outbox event is published so FastAPI's snapshot table stays in sync.
 
         Returns:
@@ -300,4 +297,111 @@ class GitHubIntegrationView(APIView):
         return APIResponse.success(
             message="GitHub integration deleted successfully.",
             status_code=200,
+        )
+
+
+class GitHubAvailableReposView(APIView):
+    """
+    GET /api/integrations/github/available-repos/
+
+    Fetches the repositories a user authorized during the GitHub App installation.
+    """
+    permission_classes = [IsTenantAdmin]
+
+    @extend_schema(
+        summary="Fetch Available Repositories",
+        description="Returns a list of repositories available for a given installation ID.",
+        responses={200: dict},
+    )
+    def get(self, request) -> APIResponse:
+        import time
+        import jwt
+        import requests
+        from django.conf import settings
+
+        installation_id = request.query_params.get("installation_id")
+        if not installation_id:
+            return APIResponse.error(
+                message="installation_id query parameter is required.",
+                status_code=400,
+                code="missing_installation_id",
+            )
+
+        app_id = settings.GITHUB_APP_ID
+        private_key = settings.GITHUB_APP_PRIVATE_KEY
+
+        if not app_id or not private_key:
+            return APIResponse.error(
+                message="GitHub App credentials are not configured on the server.",
+                status_code=500,
+                code="github_app_unconfigured",
+            )
+
+        # 1. Generate JWT
+        now = int(time.time())
+        payload = {
+            "iat": now - 60,
+            "exp": now + (10 * 60),
+            "iss": str(app_id),
+        }
+        try:
+            encoded_jwt = jwt.encode(payload, private_key, algorithm="RS256")
+        except Exception as e:
+            logger.error(f"Failed to encode GitHub App JWT: {e}")
+            return APIResponse.error(
+                message="Failed to authenticate as GitHub App.",
+                status_code=500,
+                code="github_app_auth_failed",
+            )
+
+        # 2. Get Installation Access Token
+        headers = {
+            "Authorization": f"Bearer {encoded_jwt}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+        token_url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
+        try:
+            resp = requests.post(token_url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            access_token = resp.json()["token"]
+        except Exception as e:
+            logger.error(f"Failed to get installation access token: {e}")
+            return APIResponse.error(
+                message="Failed to retrieve access token for the given installation.",
+                status_code=400,
+                code="github_token_exchange_failed",
+            )
+
+        # 3. Fetch Repositories
+        repos_headers = {
+            "Authorization": f"token {access_token}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+        repos_url = "https://api.github.com/installation/repositories"
+        try:
+            repos_resp = requests.get(repos_url, headers=repos_headers, timeout=10)
+            repos_resp.raise_for_status()
+            repositories = repos_resp.json().get("repositories", [])
+        except Exception as e:
+            logger.error(f"Failed to fetch repositories: {e}")
+            return APIResponse.error(
+                message="Failed to fetch available repositories.",
+                status_code=500,
+                code="github_fetch_repos_failed",
+            )
+
+        formatted_repos = [
+            {
+                "id": repo["id"],
+                "name": repo["name"],
+                "full_name": repo["full_name"],
+                "owner": repo["owner"]["login"],
+                "html_url": repo["html_url"],
+            }
+            for repo in repositories
+        ]
+
+        return APIResponse.success(
+            data={"repositories": formatted_repos},
+            message="Repositories fetched successfully.",
         )

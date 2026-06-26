@@ -21,10 +21,9 @@ Responsibilities
 
 Security model
 --------------
-* The webhook secret stored in ``tenant_snapshots.github_webhook_secret``
-  is Fernet-encrypted ciphertext.  It is decrypted in-process using the
-  shared ``FERNET_ENCRYPTION_KEY`` environment variable before the HMAC
-  comparison.
+* The webhook uses a single global secret configured in the environment as
+  ``GITHUB_WEBHOOK_SECRET``. All webhook events from the GitHub App use
+  this secret for HMAC verification.
 * If the signature header is absent, malformed, or doesn't match, the
   endpoint returns ``401 Unauthorized`` — the Celery task is never queued.
 * Tenant lookup is done by repository URL.  If no tenant is found the
@@ -41,7 +40,6 @@ import hmac
 import logging
 from typing import Any, Dict, List, Optional
 
-from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,42 +51,6 @@ from app.models.snapshots import TenantSnapshot
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["webhooks"])
-
-
-# ---------------------------------------------------------------------------
-# Decryption helper (local — does not depend on Django's encryption module)
-# ---------------------------------------------------------------------------
-
-
-def _decrypt_secret(cipher_text: str) -> str:
-    """
-    Fernet-decrypt a ciphertext using ``settings.FERNET_ENCRYPTION_KEY``.
-
-    Raises:
-        ValueError — if the key is missing, the ciphertext is blank, or
-                     decryption fails (tampered or wrong key).
-    """
-    settings = get_settings()
-    raw_key = (
-        settings.FERNET_ENCRYPTION_KEY
-        if hasattr(settings, "FERNET_ENCRYPTION_KEY")
-        else None
-    )
-
-    if not raw_key:
-        raise ValueError(
-            "FERNET_ENCRYPTION_KEY is not configured. " "Cannot decrypt webhook secret."
-        )
-    if not cipher_text:
-        raise ValueError("cipher_text must not be empty.")
-
-    try:
-        f = Fernet(raw_key.encode() if isinstance(raw_key, str) else raw_key)
-        return f.decrypt(cipher_text.encode("utf-8")).decode("utf-8")
-    except InvalidToken as exc:
-        raise ValueError(
-            "Webhook secret decryption failed — invalid ciphertext or wrong key."
-        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +200,7 @@ async def receive_github_webhook(
     2. Parse JSON payload.
     3. Ignore non-push events (ping, create, etc.) — return 202 immediately.
     4. Locate tenant by repository clone URL.
-    5. Decrypt webhook secret and verify HMAC signature.
+    5. Verify HMAC signature using the global webhook secret.
     6. Extract head commit SHA + changed / removed file lists.
     7. Dispatch ``index_code`` Celery task.
     8. Return 202 Accepted.
@@ -292,30 +254,15 @@ async def receive_github_webhook(
         )
 
     # ── Step 5: Verify HMAC signature ─────────────────────────────────────────
-    encrypted_secret = tenant.github_webhook_secret
-    if not encrypted_secret:
-        logger.error(
-            "github_webhook_no_secret",
-            extra={"tenant_id": str(tenant.tenant_id)},
-        )
+    settings = get_settings()
+    if not settings.GITHUB_WEBHOOK_SECRET:
+        logger.error("github_webhook_no_global_secret")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Webhook secret is not configured for this tenant.",
+            detail="Global webhook secret is not configured.",
         )
 
-    try:
-        plain_secret = _decrypt_secret(encrypted_secret)
-    except ValueError as exc:
-        logger.error(
-            "github_webhook_secret_decryption_failed",
-            extra={"tenant_id": str(tenant.tenant_id), "error": str(exc)},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to decrypt webhook secret.",
-        ) from exc
-
-    _verify_signature(raw_body, plain_secret, x_hub_signature_256)
+    _verify_signature(raw_body, settings.GITHUB_WEBHOOK_SECRET, x_hub_signature_256)
 
     # ── Step 6: Extract commit SHA and file lists ─────────────────────────────
     # GitHub push payload: ``head_commit`` is the most recent commit.
@@ -349,36 +296,27 @@ async def receive_github_webhook(
     )
 
     # ── Step 7: Dispatch Celery task ──────────────────────────────────────────
-    if changed_files or removed_files:
-        from app.worker.tasks.index_code import (  # local import avoids circular
-            index_code,
-        )
+    from app.worker.tasks.index_code import (  # local import avoids circular
+        index_code,
+    )
 
-        index_code.delay(
-            tenant_id=str(tenant.tenant_id),
-            repo_url=tenant.github_repo_url,
-            commit_sha=commit_sha,
-            changed_files=changed_files,
-            removed_files=removed_files,
-            is_initial=False,
-        )
-        logger.info(
-            "github_webhook_index_task_queued",
-            extra={
-                "tenant_id": str(tenant.tenant_id),
-                "commit_sha": commit_sha,
-                "changed_files": changed_files,
-                "removed_files": removed_files,
-            },
-        )
-    else:
-        logger.info(
-            "github_webhook_no_indexable_files",
-            extra={
-                "tenant_id": str(tenant.tenant_id),
-                "commit_sha": commit_sha,
-            },
-        )
+    index_code.delay(
+        tenant_id=str(tenant.tenant_id),
+        repo_url=tenant.github_repo_url,
+        commit_sha=commit_sha,
+        changed_files=changed_files,
+        removed_files=removed_files,
+        is_initial=False,
+    )
+    logger.info(
+        "github_webhook_index_task_queued",
+        extra={
+            "tenant_id": str(tenant.tenant_id),
+            "commit_sha": commit_sha,
+            "changed_files": changed_files,
+            "removed_files": removed_files,
+        },
+    )
 
     # ── Step 8: Return 202 ────────────────────────────────────────────────────
     return {

@@ -1,4 +1,4 @@
-import logging  
+import logging
 
 from celery import shared_task
 from core.celery_base import TenantAwareTask

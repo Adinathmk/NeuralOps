@@ -455,6 +455,200 @@ SQS_PUSH_INCIDENTS_QUEUE_URL = os.getenv("SQS_PUSH_INCIDENTS_QUEUE_URL", "")
 SQS_PUSH_DISPATCH_QUEUE_URL = os.getenv("SQS_PUSH_DISPATCH_QUEUE_URL", "")
 
 # ============================================================================
+# ============================================================================
+# DEFAULT PRIMARY KEY
+# ============================================================================
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+        "verbose": {
+            # Fallback for local dev without json logger installed
+            "format": "[{levelname}] {asctime} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json" if not DEBUG else "verbose",
+        },
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": BASE_DIR / "logs/django.log",
+            "maxBytes": 1024 * 1024 * 5,
+            "backupCount": 5,
+            "formatter": "json" if not DEBUG else "verbose",
+        },
+    },
+    "root": {
+        "handlers": ["console", "file"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console", "file"],
+            "level": os.getenv("DJANGO_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["console", "file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
+
+
+# Email Configuration (AWS SES)
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = os.getenv(
+    "EMAIL_HOST", "email-smtp.us-east-1.amazonaws.com"
+)  # ← Change region if needed
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", 587))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")  # ← AWS SES SMTP username
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")  # ← AWS SES SMTP password
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@neuralops.com")
+
+# Frontend URL (for email links)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+
+# OAuth Configuration
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
+    "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:3000/auth/google/callback"
+)
+
+GITHUB_OAUTH_CLIENT_ID = os.getenv("GITHUB_OAUTH_CLIENT_ID")
+GITHUB_OAUTH_CLIENT_SECRET = os.getenv("GITHUB_OAUTH_CLIENT_SECRET")
+GITHUB_OAUTH_REDIRECT_URI = os.getenv(
+    "GITHUB_OAUTH_REDIRECT_URI", "http://localhost:3000/auth/github/callback"
+)
+
+# Frontend OAuth callback URLs
+FRONTEND_OAUTH_SUCCESS_URL = os.getenv(
+    "FRONTEND_OAUTH_SUCCESS_URL", "http://localhost:3000/dashboard"
+)
+FRONTEND_OAUTH_ERROR_URL = os.getenv(
+    "FRONTEND_OAUTH_ERROR_URL", "http://localhost:3000/login"
+)
+
+
+# Kafka
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+SCHEMA_REGISTRY_URL = os.getenv("SCHEMA_REGISTRY_URL", "http://localhost:8081")
+
+# Django Kafka consumer — indexing status sync (Section 3: "Kafka consumption")
+# Listens to events published by FastAPI's index_code Celery task via Debezium.
+KAFKA_INDEXING_STATUS_TOPIC = os.getenv(
+    "KAFKA_INDEXING_STATUS_TOPIC", "indexing.status"
+)
+KAFKA_INDEXING_STATUS_GROUP_ID = os.getenv(
+    "KAFKA_INDEXING_STATUS_GROUP_ID", "django-indexing-status-consumer"
+)
+
+
+# Elasticsearch
+ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
+
+
+# ============================================================================
+# CELERY CONFIGURATION
+# ============================================================================
+
+CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "UTC"
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 300  # hard kill at 5 min
+CELERY_TASK_SOFT_TIME_LIMIT = 240  # raises SoftTimeLimitExceeded at 4 min
+
+# Retry policy (matches doc: base 5s, doubles, ceiling 300s, max 5 retries)
+CELERY_TASK_MAX_RETRIES = 5
+CELERY_TASK_DEFAULT_RETRY_DELAY = 5
+
+# Dead letter queue — tasks exhausting retries write here
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+
+# Beat schedule (periodic tasks)
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    "cleanup-expired-invitations-hourly": {
+        "task": "users.tasks.cleanup_expired_invitations_task",
+        "schedule": crontab(minute=0, hour="*"),  # hourly
+        "kwargs": {"is_superadmin": True},
+    },
+    "cleanup-expired-tokens-hourly": {
+        "task": "users.tasks.cleanup_expired_tokens_task",
+        "schedule": crontab(minute=30, hour="*"),  # hourly at minute 30
+        "kwargs": {"is_superadmin": True},
+    },
+    "sync-razorpay-subscription-status-daily": {
+        "task": "billing.tasks.sync_subscription_statuses",
+        "schedule": crontab(minute=0, hour=2),
+    },
+}
+
+
+# ============================================================================
+# AWS S3 / OBJECT STORAGE
+# ============================================================================
+
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_REGION_NAME = os.getenv("AWS_REGION_NAME", "us-east-1")
+AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME", "neuralops-artifacts")
+
+# Pre-signed URL expiry (15 minutes — matches doc)
+AWS_S3_SIGNED_URL_EXPIRY = int(os.getenv("AWS_S3_SIGNED_URL_EXPIRY", 900))
+
+
+# ============================================================================
+# ELASTICSEARCH (read-only for Django analytics)
+# ============================================================================
+
+ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
+ELASTICSEARCH_INDEX_LOGS = os.getenv("ELASTICSEARCH_INDEX_LOGS", "logs")
+
+FERNET_ENCRYPTION_KEY = os.getenv("FERNET_ENCRYPTION_KEY")
+
+# NOTE: Required for the integrations app.
+# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Add the key to .env.docker as: FERNET_ENCRYPTION_KEY=<generated-key>
+
+# ============================================================================
+# AWS DYNAMODB
+# ============================================================================
+DYNAMODB_REGION = os.getenv("DYNAMODB_REGION", "ap-south-1")
+DYNAMODB_ACCESS_KEY_ID = os.getenv("DYNAMODB_ACCESS_KEY_ID")
+DYNAMODB_SECRET_ACCESS_KEY = os.getenv("DYNAMODB_SECRET_ACCESS_KEY")
+
+# ============================================================================
+# AWS SQS — Push Notification Pipeline
+# ============================================================================
+SQS_REGION = os.getenv("SQS_REGION", "ap-south-1")
+SQS_PUSH_INCIDENTS_QUEUE_URL = os.getenv("SQS_PUSH_INCIDENTS_QUEUE_URL", "")
+SQS_PUSH_DISPATCH_QUEUE_URL = os.getenv("SQS_PUSH_DISPATCH_QUEUE_URL", "")
+
+# ============================================================================
 # WEB PUSH NOTIFICATIONS
 # ============================================================================
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
@@ -463,3 +657,9 @@ VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:admin@neuralops.com")
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "rzp_test_123")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "secret")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "secret")
+
+# ============================================================================
+# GITHUB APP CONFIGURATION
+# ============================================================================
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID")
+GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "").replace("\\n", "\n")

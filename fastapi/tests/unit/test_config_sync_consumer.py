@@ -68,8 +68,7 @@ class TestConfigSyncConsumer:
                     "repo_url": "https://github.com/neuralops/backend",
                     "repo_owner": "neuralops",
                     "repo_name": "backend",
-                    "encrypted_pat": "encrypted-pat",
-                    "webhook_secret": "encrypted-secret",
+                    "installation_id": 123456,
                     "default_branch": "main",
                     "indexing_status": "pending",
                     "last_indexed_commit": None,
@@ -89,7 +88,7 @@ class TestConfigSyncConsumer:
         assert snapshot.vector_namespace == "ns-test"
         assert snapshot.github_repo_owner == "neuralops"
         assert snapshot.github_repo_name == "backend"
-        assert snapshot.encrypted_github_pat == "encrypted-pat"
+        assert snapshot.github_installation_id == 123456
         assert snapshot.github_indexing_status == "pending"
 
     async def test_consume_tenant_updated_with_newer_version(self, db_session):

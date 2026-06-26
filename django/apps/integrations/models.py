@@ -5,19 +5,15 @@ GitHubIntegration model — Django-owned (DB-1).
 
 Stores the GitHub repository connection details for a tenant:
   - Repository metadata (URL, owner, name, default branch)
-  - Encrypted credentials (PAT, webhook secret) — never stored in plaintext
+  - GitHub App Installation ID (replaces deprecated PATs)
   - Indexing lifecycle state (pending → indexing → indexed | failed)
   - source_version counter for snapshot staleness protection
 
 One-to-one relationship with Tenant: each tenant may have at most one
 connected GitHub repository at a time.
 
-The encrypted_pat field is decrypted at runtime by FastAPI (Service 2)
-when it needs to make GitHub API calls. The decrypted PAT is NEVER
-persisted anywhere other than in-memory during an indexing task.
-
 Architecture reference: NeuralOps Technical Documentation — Sections 17
-(Code Indexing), 20 (Security — GitHub PATs stored encrypted).
+(Code Indexing), 20 (Security).
 """
 
 from __future__ import annotations
@@ -32,9 +28,7 @@ class GitHubIntegration(models.Model):
     """
     Per-tenant GitHub repository integration.
 
-    Credentials (PAT and webhook secret) are stored encrypted using
-    Fernet symmetric encryption. Use integrations.encryption helpers
-    to encrypt before save and decrypt before use.
+    Uses GitHub App authentication via github_installation_id.
     """
 
     # ── Indexing status choices ────────────────────────────────────────────────
@@ -84,24 +78,17 @@ class GitHubIntegration(models.Model):
         help_text="Branch that is indexed and monitored for push events.",
     )
 
-    # ── Credentials (encrypted at rest) ───────────────────────────────────────
-    encrypted_pat = models.TextField(
-        help_text=(
-            "Fernet-encrypted GitHub Personal Access Token. "
-            "Use integrations.encryption.decrypt_secret() to read at runtime."
-        ),
+    # ── Credentials (GitHub App) ───────────────────────────────────────
+    github_installation_id = models.CharField(
+        max_length=255,
+        default="",
+        help_text="The GitHub App installation ID used to authenticate and fetch tokens.",
     )
     webhook_id = models.CharField(
         max_length=255,
         null=True,
         blank=True,
         help_text="GitHub webhook ID returned after webhook registration. Null until registered.",
-    )
-    webhook_secret = models.TextField(
-        help_text=(
-            "Fernet-encrypted webhook secret used to validate incoming push events. "
-            "Use integrations.encryption.decrypt_secret() to read at runtime."
-        ),
     )
 
     # ── Indexing lifecycle ────────────────────────────────────────────────────

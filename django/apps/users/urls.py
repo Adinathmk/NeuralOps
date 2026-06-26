@@ -12,9 +12,11 @@ from .views import (
     InviteEngineerView,
     JoinWithEmailPasswordView,
     ListInvitationsView,
+    ListNotificationsView,
     ListTeamMembersView,
     LoginView,
     LogoutView,
+    MarkNotificationReadView,
     MeView,
     RegisterView,
     ResendInvitationView,
@@ -27,8 +29,6 @@ from .views import (
     ValidateInvitationView,
     VerifyEmailView,
     VerifyMFATokenView,
-    ListNotificationsView,
-    MarkNotificationReadView,
 )
 
 urlpatterns = [
@@ -90,7 +90,6 @@ urlpatterns = [
     path("auth/mfa/confirm", ConfirmMFAView.as_view(), name="mfa_confirm"),
     path("auth/mfa/verify", VerifyMFATokenView.as_view(), name="mfa_verify"),
     path("auth/mfa/disable", DisableMFAView.as_view(), name="mfa_disable"),
-    
     # Notifications
     path(
         "users/<uuid:user_id>/notifications",

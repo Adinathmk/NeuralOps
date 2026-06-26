@@ -11,7 +11,6 @@ from rest_framework import serializers
 
 from .models import IncidentThread, ThreadMessage
 
-
 # ── Avatar colour palette ────────────────────────────────────────────────────
 # Deterministic colour derived from user UUID so the same user always gets the
 # same colour across sessions, devices, and both human and system views.
@@ -166,6 +165,7 @@ class ThreadSerializer(serializers.ModelSerializer):
 # ── IncidentStatusTransitionSerializer ────────────────────────────────────────
 
 from .models import IncidentStatusTransition
+
 
 class IncidentStatusTransitionSerializer(serializers.ModelSerializer):
     """

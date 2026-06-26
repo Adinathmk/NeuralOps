@@ -179,6 +179,7 @@ class IncidentStatusTransition(models.Model):
     Append-only record of a status change for an incident.
     Records who made the change, the from/to status, and an optional note.
     """
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey(
         "tenants.Tenant",

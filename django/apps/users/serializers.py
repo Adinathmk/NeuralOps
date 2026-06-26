@@ -546,12 +546,13 @@ class DisableMFASerializer(serializers.Serializer):
 
 class NotificationSerializer(serializers.ModelSerializer):
     """Serializer for in-app notifications."""
-    
+
     # Send user_id directly to match frontend Notification interface
-    user_id = serializers.UUIDField(source='user.id', read_only=True)
-    
+    user_id = serializers.UUIDField(source="user.id", read_only=True)
+
     class Meta:
         from .models import Notification
+
         model = Notification
         fields = (
             "id",

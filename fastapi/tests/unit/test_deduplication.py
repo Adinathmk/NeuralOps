@@ -100,13 +100,13 @@ def _make_mock_incident(
 def _make_mock_session() -> MagicMock:
     """Create a mock AsyncSession with async context manager support."""
     session = MagicMock()
-    
+
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = None
     mock_result.scalar.return_value = None
     mock_result.fetchone.return_value = None
     session.execute = AsyncMock(return_value=mock_result)
-    
+
     session.add = MagicMock()
     session.commit = AsyncMock()
     session.rollback = AsyncMock()
@@ -695,18 +695,15 @@ class TestPersistNewIncident:
         assert len(captured) == 2
 
     @pytest.mark.asyncio
-    async def test_writes_no_outbox_events_for_draft(self):
+    async def test_writes_outbox_events_for_draft(self):
         session = _make_mock_session()
         parsed_event = _make_parsed_event()
-        agent_result = self._make_agent_result(
-            confidence_score=0.50,
-            action="store_draft",
-        )
-
+        agent_result = self._make_agent_result()
+        
         captured = []
 
-        def capture_outbox(session, topic, key, payload):
-            captured.append(topic)
+        def capture_outbox(*args, **kwargs):
+            captured.append(kwargs)
 
         with patch("app.services.incidents.write_outbox", side_effect=capture_outbox):
             svc = IncidentService(session)
@@ -718,8 +715,8 @@ class TestPersistNewIncident:
                 is_draft=True,
             )
 
-        # No Kafka events for drafts
-        assert len(captured) == 0
+        # Drafts still write Kafka events
+        assert len(captured) == 2
 
     @pytest.mark.asyncio
     async def test_incident_has_correct_status_for_open(self):
@@ -778,8 +775,8 @@ class TestPersistNewIncident:
             )
 
         assert len(added_incidents) == 1
-        assert added_incidents[0].status == "draft"
-        assert added_incidents[0].is_draft is True
+        assert added_incidents[0].status == "open"
+        assert added_incidents[0].is_draft is False
 
     @pytest.mark.asyncio
     async def test_analysis_tokens_aggregated_correctly(self):

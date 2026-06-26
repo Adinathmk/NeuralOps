@@ -66,6 +66,7 @@ class ThreadMessageListCreateView(APIView):
         if not user_id:
             raise PermissionDenied("User context is missing.")
         from users.models import User
+
         try:
             return User.objects.get(pk=user_id)
         except User.DoesNotExist:
@@ -179,13 +180,10 @@ class ThreadMessageDeleteView(APIView):
         user_role = getattr(request, "user_role", None)
 
         try:
-            message = (
-                ThreadMessage.objects.select_related("thread", "author")
-                .get(
-                    id=message_id,
-                    tenant_id=tenant_id,
-                    thread__incident_id=incident_id,
-                )
+            message = ThreadMessage.objects.select_related("thread", "author").get(
+                id=message_id,
+                tenant_id=tenant_id,
+                thread__incident_id=incident_id,
             )
         except ThreadMessage.DoesNotExist:
             raise NotFound("Message not found.")
@@ -225,10 +223,14 @@ class ListIncidentStatusTransitionsView(APIView):
         from .models import IncidentStatusTransition
         from .serializers import IncidentStatusTransitionSerializer
 
-        qs = IncidentStatusTransition.objects.filter(
-            tenant_id=tenant_id,
-            incident_id=incident_id,
-        ).select_related("actor").order_by("-created_at")
+        qs = (
+            IncidentStatusTransition.objects.filter(
+                tenant_id=tenant_id,
+                incident_id=incident_id,
+            )
+            .select_related("actor")
+            .order_by("-created_at")
+        )
 
         return APIResponse.success(
             data=IncidentStatusTransitionSerializer(qs, many=True).data,

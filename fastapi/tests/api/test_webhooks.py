@@ -5,7 +5,6 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
-from cryptography.fernet import Fernet
 from fastapi import status
 from httpx import AsyncClient
 
@@ -17,17 +16,15 @@ TEST_REPO_URL = "https://github.com/neuralops/test-repo"
 TEST_SECRET = "super_secure_webhook_secret"
 
 
-@pytest.fixture
-def encrypted_secret():
-    """Generate a Fernet-encrypted webhook secret using the shared settings key."""
-    settings = get_settings()
-    raw_key = settings.FERNET_ENCRYPTION_KEY
-    f = Fernet(raw_key.encode() if isinstance(raw_key, str) else raw_key)
-    return f.encrypt(TEST_SECRET.encode("utf-8")).decode("utf-8")
+@pytest.fixture(autouse=True)
+def mock_webhook_secret(monkeypatch):
+    """Set the global webhook secret for tests."""
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", TEST_SECRET)
+    get_settings.cache_clear()
 
 
 @pytest.fixture
-async def register_tenant(db_session, encrypted_secret):
+async def register_tenant(db_session):
     """Seed a test tenant snapshot with connected GitHub details inside our transactional session."""
     tenant = TenantSnapshot(
         tenant_id=TEST_TENANT_ID,
@@ -37,7 +34,7 @@ async def register_tenant(db_session, encrypted_secret):
         github_repo_url=TEST_REPO_URL,
         github_repo_owner="neuralops",
         github_repo_name="test-repo",
-        github_webhook_secret=encrypted_secret,
+        github_installation_id=123456,
         github_default_branch="main",
     )
     db_session.add(tenant)

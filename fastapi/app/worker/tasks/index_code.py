@@ -28,11 +28,7 @@ live outside the FastAPI event loop.
 
 Fernet decryption
 -----------------
-The tenant's GitHub PAT (``encrypted_github_pat``) and webhook secret
-(``github_webhook_secret``) are stored as Fernet ciphertext in the
-``tenant_snapshots`` table.  They are decrypted at task execution time
-using the shared ``FERNET_ENCRYPTION_KEY`` environment variable which
-must be identical across the Django and FastAPI services.
+(Removed in Phase 4 — using GitHub App short-lived tokens instead.)
 
 Architecture reference: NeuralOps Technical Documentation — Section 17
 (Code Indexing — Background), Section 3 (Service 2 — FastAPI).
@@ -57,7 +53,6 @@ import aioboto3
 import httpx
 from botocore.exceptions import BotoCoreError, ClientError
 from celery import shared_task
-from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -85,33 +80,6 @@ _GITHUB_API_BASE = "https://api.github.com"
 
 # Indexer singleton — stateless, safe to reuse across task invocations.
 _INDEXER = ASTIndexer()
-
-
-# ---------------------------------------------------------------------------
-# Decryption helper
-# ---------------------------------------------------------------------------
-
-
-def _decrypt(cipher_text: str) -> str:
-    """
-    Fernet-decrypt *cipher_text* using the service's ``FERNET_ENCRYPTION_KEY``.
-
-    Raises:
-        RuntimeError — key missing or decryption fails.
-    """
-    settings = get_settings()
-    raw_key = getattr(settings, "FERNET_ENCRYPTION_KEY", None)
-    if not raw_key:
-        raise RuntimeError(
-            "FERNET_ENCRYPTION_KEY is not set. Cannot decrypt GitHub credentials."
-        )
-    try:
-        f = Fernet(raw_key.encode() if isinstance(raw_key, str) else raw_key)
-        return f.decrypt(cipher_text.encode("utf-8")).decode("utf-8")
-    except InvalidToken as exc:
-        raise RuntimeError(
-            "Fernet decryption failed — invalid ciphertext or mismatched key."
-        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -332,9 +300,9 @@ async def _update_indexing_status(
 # ---------------------------------------------------------------------------
 
 
-def _github_headers(pat: str) -> Dict[str, str]:
+def _github_headers(token: str) -> Dict[str, str]:
     return {
-        "Authorization": f"token {pat}",
+        "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "NeuralOps-Indexer/1.0",
     }
@@ -344,7 +312,7 @@ async def _download_repo_tarball(
     owner: str,
     repo: str,
     branch: str,
-    pat: str,
+    token: str,
 ) -> bytes:
     """
     Download the repository as a ``.tar.gz`` archive via the GitHub Tarball API.
@@ -356,7 +324,7 @@ async def _download_repo_tarball(
     """
     url = f"{_GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/{branch}"
     async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
-        response = await client.get(url, headers=_github_headers(pat))
+        response = await client.get(url, headers=_github_headers(token))
     if response.status_code != 200:
         raise RuntimeError(
             f"GitHub tarball download failed: {response.status_code} {response.text[:200]}"
@@ -369,7 +337,7 @@ async def _fetch_file_content(
     repo: str,
     file_path: str,
     commit_sha: str,
-    pat: str,
+    token: str,
 ) -> bytes:
     """
     Fetch the raw content of a single file at a specific commit using the
@@ -390,7 +358,7 @@ async def _fetch_file_content(
         f"/contents/{file_path}?ref={commit_sha}"
     )
     headers = {
-        **_github_headers(pat),
+        **_github_headers(token),
         # Request raw bytes directly when GitHub supports it.
         "Accept": "application/vnd.github.v3.raw",
     }
@@ -436,7 +404,7 @@ async def _run_initial_index(
     owner: str,
     repo: str,
     branch: str,
-    pat: str,
+    token: str,
     tenant_id_str: str,
 ) -> None:
     """
@@ -464,7 +432,7 @@ async def _run_initial_index(
     try:
         # ── Download tarball ──────────────────────────────────────────────────
         logger.info("downloading_github_tarball", extra={"owner": owner, "repo": repo})
-        tarball_bytes = await _download_repo_tarball(owner, repo, branch, pat)
+        tarball_bytes = await _download_repo_tarball(owner, repo, branch, token)
 
         # ── Extract ───────────────────────────────────────────────────────────
         tar_path = tmp_dir / "repo.tar.gz"
@@ -590,7 +558,7 @@ async def _run_incremental_index(
     removed_files: List[str],
     owner: str,
     repo: str,
-    pat: str,
+    token: str,
     tenant_id_str: str,
 ) -> None:
     """
@@ -645,7 +613,7 @@ async def _run_incremental_index(
         try:
             # Fetch file content from GitHub.
             file_bytes = await _fetch_file_content(
-                owner, repo, file_path, commit_sha, pat
+                owner, repo, file_path, commit_sha, token
             )
             if not file_bytes:
                 logger.warning(
@@ -782,7 +750,7 @@ async def _run_index(
 
     Responsibilities:
     1. Validate tenant snapshot exists.
-    2. Decrypt PAT.
+    2. Fetch GitHub App installation token.
     3. Derive owner/repo/branch from snapshot.
     4. Dispatch to initial or incremental indexing coroutine.
     """
@@ -796,16 +764,19 @@ async def _run_index(
             "Kafka config-sync consumer may be lagging."
         )
 
-    if not snapshot.encrypted_github_pat:
+    if not snapshot.github_installation_id:
         raise RuntimeError(
-            f"No encrypted GitHub PAT configured for tenant {tenant_id_str}."
+            f"No GitHub App installation configured for tenant {tenant_id_str}. "
+            "Customer must install the NeuralOps GitHub App."
         )
 
-    # ── Decrypt PAT ───────────────────────────────────────────────────────────
+    # ── Fetch Installation Token ─────────────────────────────────────────────
+    from app.services.github_auth import get_installation_token
+
     try:
-        plain_pat = _decrypt(snapshot.encrypted_github_pat)
+        plain_token = await get_installation_token(snapshot.github_installation_id)
     except RuntimeError as exc:
-        raise RuntimeError(f"PAT decryption failed: {exc}") from exc
+        raise RuntimeError(f"Token fetch failed: {exc}") from exc
 
     # ── Derive repo owner, name, branch ──────────────────────────────────────
     owner = snapshot.github_repo_owner
@@ -826,7 +797,7 @@ async def _run_index(
             owner=owner,
             repo=repo_name,
             branch=branch,
-            pat=plain_pat,
+            token=plain_token,
             tenant_id_str=tenant_id_str,
         )
     else:
@@ -838,7 +809,7 @@ async def _run_index(
             removed_files=removed_files,
             owner=owner,
             repo=repo_name,
-            pat=plain_pat,
+            token=plain_token,
             tenant_id_str=tenant_id_str,
         )
 
@@ -1047,9 +1018,7 @@ async def _cleanup_index_async(tenant_id_str: str) -> None:
         es_client = get_es_client()
         await es_client.delete_by_query(
             index="neuralops-logs*",
-            body={
-                "query": {"match": {"tenant_id": tenant_id_str}}
-            },
+            body={"query": {"match": {"tenant_id": tenant_id_str}}},
             conflicts="proceed",
         )
     except Exception as exc:

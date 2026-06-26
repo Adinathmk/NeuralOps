@@ -385,13 +385,18 @@ class Command(BaseCommand):
                 update_fields["resolved_at"] = django_timezone.now()
 
         def safe_uuid(v):
-            if not v or v == "None": return None
-            try: return uuid.UUID(str(v))
-            except ValueError: return None
+            if not v or v == "None":
+                return None
+            try:
+                return uuid.UUID(str(v))
+            except ValueError:
+                return None
 
         if "assigned_user_ids" in data:
             assignees = data["assigned_user_ids"]
-            update_fields["assigned_user_id"] = safe_uuid(assignees[0]) if assignees else None
+            update_fields["assigned_user_id"] = (
+                safe_uuid(assignees[0]) if assignees else None
+            )
         elif "assigned_user_id" in data:
             val = data["assigned_user_id"]
             if isinstance(val, list):
@@ -422,7 +427,7 @@ class Command(BaseCommand):
         from_status = data.get("from_status")
         to_status = data.get("status")
         actor_id_str = data.get("actor_id")
-        
+
         if from_status and to_status and from_status != to_status and actor_id_str:
             from collaboration.models import IncidentStatusTransition
             from collaboration.services import CollaborationService
@@ -431,7 +436,7 @@ class Command(BaseCommand):
             try:
                 actor = User.objects.get(id=uuid.UUID(actor_id_str))
                 tenant_id_uuid = uuid.UUID(data["tenant_id"])
-                
+
                 # Create transition record
                 IncidentStatusTransition.objects.create(
                     tenant_id=tenant_id_uuid,
@@ -443,26 +448,31 @@ class Command(BaseCommand):
                 )
 
                 # Post system message
-                thread = CollaborationService.get_or_create_thread(tenant_id_uuid, incident_id)
-                
+                thread = CollaborationService.get_or_create_thread(
+                    tenant_id_uuid, incident_id
+                )
+
                 msg_content = f"{actor.first_name} {actor.last_name} moved this incident to {to_status.title()}"
                 if data.get("note"):
                     msg_content += f" — '{data.get('note')}'"
-                    
+
                 CollaborationService.post_system_message(thread, msg_content)
-                
+
             except Exception as e:
-                logger.error("incident_status_transition_failed", extra={"error": str(e), "incident_id": str(incident_id)})
+                logger.error(
+                    "incident_status_transition_failed",
+                    extra={"error": str(e), "incident_id": str(incident_id)},
+                )
 
         # Handle new assignment notifications
         newly_assigned = data.get("newly_assigned_user_ids", [])
         tenant_id_str = data.get("tenant_id")
-        
+
         if newly_assigned and actor_id_str:
             from users.models import Notification, User
-            from websockets.publisher import push_notification
             from users.serializers import NotificationSerializer
-            
+            from websockets.publisher import push_notification
+
             try:
                 actor = User.objects.get(id=uuid.UUID(actor_id_str))
                 for uid_str in newly_assigned:
@@ -477,18 +487,19 @@ class Command(BaseCommand):
                             is_read=False,
                         )
                         push_notification(
-                            tenant_id_str, 
-                            uid_str, 
-                            NotificationSerializer(notif).data
+                            tenant_id_str, uid_str, NotificationSerializer(notif).data
                         )
             except Exception as e:
-                logger.error("incident_assignment_notification_failed", extra={"error": str(e), "incident_id": str(incident_id)})
+                logger.error(
+                    "incident_assignment_notification_failed",
+                    extra={"error": str(e), "incident_id": str(incident_id)},
+                )
 
         # Broadcast incident.updated WebSocket event
         if update_fields:
             from asgiref.sync import async_to_sync
             from channels.layers import get_channel_layer
-            
+
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
                 f"collaboration_{data['tenant_id']}",
@@ -499,8 +510,8 @@ class Command(BaseCommand):
                         "status": data.get("status"),
                         "assigned_user_id": data.get("assigned_user_id"),
                         "updated_at": data.get("updated_at"),
-                    }
-                }
+                    },
+                },
             )
 
     # ── Shutdown handler ──────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ pydantic-settings==2.6.1
 # ── Security / JWT ─────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
 cryptography==43.0.3
+PyJWT[crypto]>=2.8.0
 
 # ── Redis (async) ──────────────────────────────────────────────────────────────
 redis[asyncio]==5.2.1

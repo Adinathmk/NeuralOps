@@ -20,8 +20,7 @@ Phase 3 additions to TenantSnapshot:
   - github_repo_url
   - github_repo_owner
   - github_repo_name
-  - encrypted_github_pat       (Fernet ciphertext — never plaintext)
-  - github_webhook_secret      (Fernet ciphertext)
+  - github_installation_id     (GitHub App Installation ID)
   - github_default_branch
   - github_indexing_status
   - github_last_indexed_commit
@@ -66,9 +65,8 @@ class TenantSnapshot(Base):
     whenever a config.tenants event arrives.
 
     Phase 3 adds GitHub integration columns (all nullable — not every tenant
-    will have a connected repository).  The encrypted_github_pat column stores
-    the Fernet ciphertext that FastAPI decrypts at index-task time using the
-    shared FERNET_ENCRYPTION_KEY environment variable.
+    will have a connected repository).  The github_installation_id column stores
+    the ID used to fetch short-lived access tokens via the GitHub App.
 
     The `is_suspended` flag in this table is the eventual-consistent copy.
     The *authoritative* suspension check is the Redis key
@@ -140,22 +138,10 @@ class TenantSnapshot(Base):
         nullable=True,
         comment="Repository name (without the owner prefix).",
     )
-    encrypted_github_pat: Column = Column(
-        Text,
+    github_installation_id: Column = Column(
+        BigInteger,
         nullable=True,
-        comment=(
-            "Fernet-encrypted GitHub Personal Access Token. "
-            "Decrypt with the shared FERNET_ENCRYPTION_KEY at runtime. "
-            "NEVER log or expose this value."
-        ),
-    )
-    github_webhook_secret: Column = Column(
-        Text,
-        nullable=True,
-        comment=(
-            "Fernet-encrypted webhook signing secret. "
-            "Used to validate incoming push events from GitHub."
-        ),
+        comment="GitHub App installation ID assigned when tenant installs the NeuralOps GitHub App.",
     )
     github_default_branch: Column = Column(
         String(255),
@@ -189,7 +175,7 @@ class TenantSnapshot(Base):
         return (
             f"<TenantSnapshot tenant_id={self.tenant_id} "
             f"plan={self.plan_tier} suspended={self.is_suspended} "
-            f"github_repo={self.github_repo_owner}/{self.github_repo_name}>"
+            f"github_installation={self.github_installation_id}>"
         )
 
 

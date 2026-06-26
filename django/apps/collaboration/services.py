@@ -50,9 +50,7 @@ class CollaborationService:
             incident_id=incident_id, tenant_id=tenant_id
         ).exists()
         if not exists:
-            raise NotFound(
-                f"Incident '{incident_id}' not found for this tenant."
-            )
+            raise NotFound(f"Incident '{incident_id}' not found for this tenant.")
 
         thread, created = IncidentThread.objects.get_or_create(
             tenant_id=tenant_id,
@@ -90,9 +88,7 @@ class CollaborationService:
         parent = None
         if parent_id:
             try:
-                parent = ThreadMessage.objects.get(
-                    id=parent_id, thread=thread
-                )
+                parent = ThreadMessage.objects.get(id=parent_id, thread=thread)
             except ThreadMessage.DoesNotExist:
                 raise NotFound(
                     f"Parent message '{parent_id}' not found in this thread."
@@ -110,28 +106,33 @@ class CollaborationService:
 
             # Process @mentions syntax: @[Name](uuid)
             import re
+
             from users.models import Notification
-            
+
             mention_pattern = re.compile(r"@\[.*?\]\(([0-9a-fA-F\-]{36})\)")
             mentioned_uuids = set(mention_pattern.findall(content))
-            
+
             for m_uuid in mentioned_uuids:
                 # Don't notify oneself
                 if str(m_uuid) == str(author.id):
                     continue
-                
+
                 # Check if user exists in the tenant
                 from users.models import User
+
                 try:
                     m_user = User.objects.get(id=m_uuid, tenant_id=thread.tenant_id)
                 except User.DoesNotExist:
                     continue
-                
+
                 # Strip markdown mentions for the notification body
                 import re
-                plain_body = re.sub(r'@\[([^\]]+)\]\([^\)]+\)', r'@\1', content)
-                excerpt = (plain_body[:80] + '...') if len(plain_body) > 80 else plain_body
-                
+
+                plain_body = re.sub(r"@\[([^\]]+)\]\([^\)]+\)", r"@\1", content)
+                excerpt = (
+                    (plain_body[:80] + "...") if len(plain_body) > 80 else plain_body
+                )
+
                 notif = Notification.objects.create(
                     tenant_id=thread.tenant_id,
                     user=m_user,
@@ -140,14 +141,15 @@ class CollaborationService:
                     body=excerpt,
                     incident_id=thread.incident_id,
                 )
-                
+
                 # Push the new notification via WebSockets
-                from websockets.publisher import push_notification
                 from users.serializers import NotificationSerializer
+                from websockets.publisher import push_notification
+
                 push_notification(
                     tenant_id=thread.tenant_id,
                     user_id=m_user.id,
-                    data=NotificationSerializer(notif).data
+                    data=NotificationSerializer(notif).data,
                 )
 
             payload = CollaborationService._message_payload(
@@ -232,9 +234,7 @@ class CollaborationService:
         is_admin = requesting_role in ("admin", "owner")
 
         if not (is_author or is_admin):
-            raise PermissionDenied(
-                "You can only delete your own messages."
-            )
+            raise PermissionDenied("You can only delete your own messages.")
 
         with transaction.atomic():
             message.is_deleted = True
@@ -267,6 +267,7 @@ class CollaborationService:
     ) -> dict:
         """Build the Outbox payload for a message event."""
         import json
+
         from django.core.serializers.json import DjangoJSONEncoder
 
         # Reload author for serializer if needed
@@ -283,7 +284,7 @@ class CollaborationService:
             "tenant_id": str(thread.tenant_id),
             "message": ThreadMessageSerializer(message).data,
         }
-        
+
         # psycopg3's JSON dumper fails on raw UUIDs inside dicts.
         # Run it through DjangoJSONEncoder to stringify all UUIDs/datetimes gracefully.
         return json.loads(json.dumps(payload, cls=DjangoJSONEncoder))
@@ -292,6 +293,7 @@ class CollaborationService:
     def _push_ws(tenant_id, message: ThreadMessage) -> None:
         """Push message event directly to WebSocket channel layer."""
         import json
+
         from django.core.serializers.json import DjangoJSONEncoder
 
         try:

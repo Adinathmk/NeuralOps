@@ -7,20 +7,21 @@ This wipes the code index, incidents, and logs from both PostgreSQL and Elastics
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
-import asyncio
 
 import aioboto3
-from botocore.config import Config
 import sqlalchemy as sa
+from botocore.config import Config
+
+from elasticsearch import AsyncElasticsearch
 
 from app.core.config import get_settings
-from app.worker.celery_app import celery_app
 from app.database.session import AsyncSessionLocal
-from app.database.elasticsearch_client import get_es_client
 from app.models.code_index import CodeIndex
 from app.models.incidents import Incident
+from app.worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -38,23 +39,46 @@ async def _wipe_tenant_data_async(tenant_id: str) -> dict:
             # Using raw DELETE statements for bulk efficiency.
             code_stmt = sa.delete(CodeIndex).where(CodeIndex.tenant_id == tenant_uuid)
             await session.execute(code_stmt)
-            
+
             # Delete Incidents (which cascades to analyses, occurrences, outbox)
             # Incident model is the root.
             inc_stmt = sa.delete(Incident).where(Incident.tenant_id == tenant_uuid)
             await session.execute(inc_stmt)
-            
+
             # Commit happens automatically via session.begin()
 
     # 2. Elasticsearch Wipe
-    es = get_es_client()
+    _settings = get_settings()
+    es_kwargs = {
+        "hosts": _settings.ELASTICSEARCH_HOSTS,
+        "connections_per_node": 2,
+        "retry_on_timeout": True,
+        "max_retries": 3,
+        "request_timeout": 10,
+        "sniff_on_start": False,
+        "sniff_on_node_failure": False,
+    }
+    if _settings.ELASTICSEARCH_USERNAME and _settings.ELASTICSEARCH_PASSWORD:
+        es_kwargs["basic_auth"] = (
+            _settings.ELASTICSEARCH_USERNAME,
+            _settings.ELASTICSEARCH_PASSWORD,
+        )
+    if any(host.startswith("https") for host in _settings.ELASTICSEARCH_HOSTS):
+        es_kwargs["verify_certs"] = True
+        if _settings.ELASTICSEARCH_CA_CERT_PATH:
+            es_kwargs["ca_certs"] = _settings.ELASTICSEARCH_CA_CERT_PATH
+    else:
+        es_kwargs["verify_certs"] = False
+
+    es = AsyncElasticsearch(**es_kwargs)
     index_prefix = f"logs-tenant-{tenant_id}"
     try:
         # Elasticsearch cluster settings may forbid wildcard deletions.
         # Safest approach: list indices and delete exact matches.
         indices_resp = await es.cat.indices(format="json")
         indices_to_delete = [
-            idx["index"] for idx in indices_resp
+            idx["index"]
+            for idx in indices_resp
             if idx["index"].startswith(index_prefix)
         ]
         if indices_to_delete:
@@ -63,9 +87,11 @@ async def _wipe_tenant_data_async(tenant_id: str) -> dict:
         logger.error(
             "wipe_data_es_failed",
             extra={"tenant_id": tenant_id, "error": str(exc)},
-            exc_info=True
+            exc_info=True,
         )
         raise
+    finally:
+        await es.close()
 
     # 3. MinIO / S3 Wipe
     _settings = get_settings()
@@ -78,24 +104,32 @@ async def _wipe_tenant_data_async(tenant_id: str) -> dict:
         async with session_s3.client(
             "s3",
             endpoint_url=_settings.AWS_S3_ENDPOINT_URL,
-            config=Config(connect_timeout=3, read_timeout=10, retries={"max_attempts": 3}),
+            config=Config(
+                connect_timeout=3, read_timeout=10, retries={"max_attempts": 3}
+            ),
         ) as s3_client:
-            prefixes_to_wipe = [f"{tenant_id}/", f"code/{tenant_id}/", f"logs/{tenant_id}/"]
+            prefixes_to_wipe = [
+                f"{tenant_id}/",
+                f"code/{tenant_id}/",
+                f"logs/{tenant_id}/",
+            ]
             for wipe_prefix in prefixes_to_wipe:
-                paginator = s3_client.get_paginator('list_objects_v2')
-                async for page in paginator.paginate(Bucket=_settings.AWS_S3_BUCKET_NAME, Prefix=wipe_prefix):
-                    if 'Contents' in page:
-                        delete_keys = [{'Key': obj['Key']} for obj in page['Contents']]
+                paginator = s3_client.get_paginator("list_objects_v2")
+                async for page in paginator.paginate(
+                    Bucket=_settings.AWS_S3_BUCKET_NAME, Prefix=wipe_prefix
+                ):
+                    if "Contents" in page:
+                        delete_keys = [{"Key": obj["Key"]} for obj in page["Contents"]]
                         if delete_keys:
                             await s3_client.delete_objects(
                                 Bucket=_settings.AWS_S3_BUCKET_NAME,
-                                Delete={'Objects': delete_keys}
+                                Delete={"Objects": delete_keys},
                             )
     except Exception as exc:
         logger.error(
             "wipe_data_s3_failed",
             extra={"tenant_id": tenant_id, "error": str(exc)},
-            exc_info=True
+            exc_info=True,
         )
         raise
 

@@ -4,14 +4,13 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
 from app.models.code_index import CodeIndex
 from app.models.snapshots import TenantSnapshot
-from app.worker.tasks.index_code import _decrypt, _run_index, index_code
+from app.worker.tasks.index_code import _run_index, index_code
 
 
 @pytest.mark.asyncio
@@ -39,17 +38,13 @@ class TestIndexerTask:
             yield
 
     @pytest.fixture
-    def setup_fernet_key(self):
-        """Ensure FERNET_ENCRYPTION_KEY is populated so credentials decryption works."""
-        settings = get_settings()
-        old_key = getattr(settings, "FERNET_ENCRYPTION_KEY", None)
-        if not old_key:
-            key = Fernet.generate_key().decode()
-            settings.FERNET_ENCRYPTION_KEY = key
-            yield key
-            settings.FERNET_ENCRYPTION_KEY = old_key
-        else:
-            yield old_key
+    def mock_installation_token(self):
+        """Mock the get_installation_token to return a dummy token."""
+        with patch(
+            "app.services.github_auth.get_installation_token", new_callable=AsyncMock
+        ) as mock_get_token:
+            mock_get_token.return_value = "ghp_dummytoken"
+            yield mock_get_token
 
     def make_in_memory_tarball(self, files_dict):
         """Create a compressed tarball in memory containing files from files_dict."""
@@ -64,13 +59,12 @@ class TestIndexerTask:
 
     # ── Happy Path Tests ──────────────────────────────────────────────────
 
-    async def test_index_code_task_success_initial(self, db_session, setup_fernet_key):
+    async def test_index_code_task_success_initial(
+        self, db_session, mock_installation_token
+    ):
         """Verify initial full-repository import AST indexing and database saves."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
-
-        f = Fernet(setup_fernet_key)
-        encrypted_pat = f.encrypt(b"ghp_dummypat").decode()
 
         snapshot = TenantSnapshot(
             tenant_id=tenant_uuid,
@@ -78,7 +72,7 @@ class TestIndexerTask:
             github_repo_url="https://github.com/neuralops/backend",
             github_repo_owner="neuralops",
             github_repo_name="backend",
-            encrypted_github_pat=encrypted_pat,
+            github_installation_id=123456,
             github_default_branch="main",
             github_indexing_status="pending",
             is_suspended=False,
@@ -138,14 +132,11 @@ class TestIndexerTask:
         assert charge_service_sym.last_commit == "a1b2c3d4e5f6"
 
     async def test_index_code_incremental_update_and_remove(
-        self, db_session, setup_fernet_key
+        self, db_session, mock_installation_token
     ):
         """Verify incremental push-webhook AST indexing updates and file prunes."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
-
-        f = Fernet(setup_fernet_key)
-        encrypted_pat = f.encrypt(b"ghp_dummypat").decode()
 
         snapshot = TenantSnapshot(
             tenant_id=tenant_uuid,
@@ -153,7 +144,7 @@ class TestIndexerTask:
             github_repo_url="https://github.com/neuralops/backend",
             github_repo_owner="neuralops",
             github_repo_name="backend",
-            encrypted_github_pat=encrypted_pat,
+            github_installation_id=123456,
             github_default_branch="main",
             github_indexing_status="indexed",
             github_last_indexed_commit="a1b2c3d4",
@@ -249,8 +240,8 @@ class TestIndexerTask:
             )
         assert "TenantSnapshot not found" in str(exc_info.value)
 
-    async def test_index_code_missing_pat_raises_error(self, db_session):
-        """Verify error is raised when encrypted PAT is missing from snapshot."""
+    async def test_index_code_missing_installation_id_raises_error(self, db_session):
+        """Verify error is raised when installation ID is missing from snapshot."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
 
@@ -260,7 +251,7 @@ class TestIndexerTask:
             github_repo_url="https://github.com/neuralops/backend",
             github_repo_owner="neuralops",
             github_repo_name="backend",
-            encrypted_github_pat=None,  # Missing PAT
+            github_installation_id=None,  # Missing Installation ID
             is_suspended=False,
             source_version=1,
         )
@@ -276,10 +267,10 @@ class TestIndexerTask:
                 removed_files=[],
                 is_initial=True,
             )
-        assert "No encrypted GitHub PAT configured" in str(exc_info.value)
+        assert "No GitHub App installation configured" in str(exc_info.value)
 
-    async def test_index_code_decryption_failure(self, db_session, setup_fernet_key):
-        """Verify error is raised if Fernet decryption fails on corrupted pat ciphertext."""
+    async def test_index_code_token_fetch_failure(self, db_session):
+        """Verify error is raised if token fetch fails."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
 
@@ -289,41 +280,42 @@ class TestIndexerTask:
             github_repo_url="https://github.com/neuralops/backend",
             github_repo_owner="neuralops",
             github_repo_name="backend",
-            encrypted_github_pat="corrupt-cipher-text",
+            github_installation_id=123456,
             is_suspended=False,
             source_version=1,
         )
         db_session.add(snapshot)
         await db_session.flush()
 
-        with pytest.raises(RuntimeError) as exc_info:
-            await _run_index(
-                tenant_id_str=tenant_id_str,
-                repo_url="https://github.com/neuralops/backend",
-                commit_sha="a1b2c3d4",
-                changed_files=[],
-                removed_files=[],
-                is_initial=True,
-            )
-        assert "PAT decryption failed" in str(exc_info.value)
+        with patch(
+            "app.services.github_auth.get_installation_token", new_callable=AsyncMock
+        ) as mock_get_token:
+            mock_get_token.side_effect = RuntimeError("Bad network")
+            with pytest.raises(RuntimeError) as exc_info:
+                await _run_index(
+                    tenant_id_str=tenant_id_str,
+                    repo_url="https://github.com/neuralops/backend",
+                    commit_sha="a1b2c3d4",
+                    changed_files=[],
+                    removed_files=[],
+                    is_initial=True,
+                )
+            assert "Token fetch failed" in str(exc_info.value)
 
     async def test_index_code_unsupported_extensions_gracefully_ignored(
-        self, db_session, setup_fernet_key
+        self, db_session, mock_installation_token
     ):
         """Verify files with unsupported extensions are uploaded/processed, but produce no CodeIndex entries."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
 
-        f = Fernet(setup_fernet_key)
-        encrypted_pat = f.encrypt(b"ghp_dummypat").decode()
-
         snapshot = TenantSnapshot(
             tenant_id=tenant_uuid,
             plan_tier="enterprise",
             github_repo_url="https://github.com/neuralops/backend",
             github_repo_owner="neuralops",
             github_repo_name="backend",
-            encrypted_github_pat=encrypted_pat,
+            github_installation_id=123456,
             github_default_branch="main",
             github_indexing_status="pending",
             is_suspended=False,

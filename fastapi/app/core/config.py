@@ -118,10 +118,18 @@ class Settings(BaseSettings):
         description="Optional custom endpoint URL for S3 compatible APIs (e.g. MinIO).",
     )
 
-    # ── Fernet Symmetric Encryption Key ─────────────────────────────────────────
-    FERNET_ENCRYPTION_KEY: Optional[str] = Field(
+    # ── GitHub App Integration ────────────────────────────────────────────────
+    GITHUB_APP_ID: Optional[int] = Field(
         default=None,
-        description="Symmetric encryption key used for decrypting sensitive integrations credentials.",
+        description="GitHub App ID.",
+    )
+    GITHUB_APP_PRIVATE_KEY: Optional[str] = Field(
+        default=None,
+        description="PEM-encoded RSA private key for the GitHub App.",
+    )
+    GITHUB_WEBHOOK_SECRET: Optional[str] = Field(
+        default=None,
+        description="One global webhook secret for all tenants.",
     )
 
     # ── AI Agents ─────────────────────────────────────────────────────────────
@@ -150,11 +158,13 @@ class Settings(BaseSettings):
 
     # ── Derived helpers ───────────────────────────────────────────────────────
 
-    @field_validator("JWT_PUBLIC_KEY", mode="before")
+    @field_validator("JWT_PUBLIC_KEY", "GITHUB_APP_PRIVATE_KEY", mode="before")
     @classmethod
-    def normalise_public_key(cls, v: str) -> str:
+    def normalise_public_key(cls, v: Any) -> Any:
         """Replace literal \\n with real newlines so PEM blocks work correctly."""
-        return v.replace("\\n", "\n")
+        if isinstance(v, str):
+            return v.replace("\\n", "\n")
+        return v
 
     @field_validator("CORS_ALLOWED_ORIGINS", "ELASTICSEARCH_HOSTS", mode="before")
     @classmethod

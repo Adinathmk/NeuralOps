@@ -1,10 +1,13 @@
 import uuid
+
 from django.db import models
+
 
 class BillingEvent(models.Model):
     """
     Idempotency log for Razorpay webhooks to prevent duplicate processing.
     """
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     razorpay_event_id = models.CharField(max_length=255, unique=True, db_index=True)
     event_type = models.CharField(max_length=100)

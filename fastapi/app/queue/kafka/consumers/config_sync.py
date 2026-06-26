@@ -28,8 +28,7 @@ Kafka message payload shape for a tenant.updated event with GitHub data:
       "repo_url": "https://github.com/my-org/my-repo",
       "repo_owner": "my-org",
       "repo_name": "my-repo",
-      "encrypted_pat": "gAAAAABm...",
-      "webhook_secret": "gAAAAABm...",
+      "installation_id": 123456,
       "default_branch": "main",
       "indexing_status": "pending",
       "last_indexed_commit": null
@@ -77,8 +76,7 @@ _GITHUB_FIELD_MAP: Dict[str, str] = {
     "repo_url": "github_repo_url",
     "repo_owner": "github_repo_owner",
     "repo_name": "github_repo_name",
-    "encrypted_pat": "encrypted_github_pat",
-    "webhook_secret": "github_webhook_secret",
+    "installation_id": "github_installation_id",
     "default_branch": "github_default_branch",
     "indexing_status": "github_indexing_status",
     "last_indexed_commit": "github_last_indexed_commit",
@@ -104,7 +102,10 @@ def _apply_github_fields(
     """
     for payload_key, column_name in _GITHUB_FIELD_MAP.items():
         if payload_key in github_data:
-            setattr(snapshot, column_name, github_data[payload_key])
+            val = github_data[payload_key]
+            if payload_key == "installation_id" and val is not None:
+                val = int(val)
+            setattr(snapshot, column_name, val)
 
 
 # ── Initial-index dispatch helpers ────────────────────────────────────────────
@@ -114,33 +115,28 @@ async def _resolve_branch_sha(
     owner: str,
     repo: str,
     branch: str,
-    encrypted_pat: str,
+    installation_id: int,
 ) -> Optional[str]:
     """
     Resolve the latest commit SHA for *branch* via the GitHub Branches API.
 
-    Decrypts *encrypted_pat* at call time using the shared FERNET_ENCRYPTION_KEY
-    so that the plaintext PAT is never stored outside the task that needs it.
-
     Returns ``None`` on any failure (network error, bad credentials, etc.).
     The caller is responsible for deciding whether to abort or retry.
     """
-    # Local import — avoids a module-level circular dependency between
-    # config_sync (queue layer) and index_code (worker layer).
-    from app.worker.tasks.index_code import _decrypt  # noqa: PLC0415
+    from app.services.github_auth import get_installation_token
 
     try:
-        plain_pat = _decrypt(encrypted_pat)
+        token = await get_installation_token(installation_id)
     except Exception as exc:
         logger.error(
-            "config_sync_pat_decrypt_failed",
+            "config_sync_token_fetch_failed",
             extra={"error": str(exc)},
         )
         return None
 
     url = f"https://api.github.com/repos/{owner}/{repo}/branches/{branch}"
     headers = {
-        "Authorization": f"token {plain_pat}",
+        "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "NeuralOps-ConfigSync/1.0",
     }
@@ -219,25 +215,25 @@ async def _maybe_dispatch_initial_index(
     owner: Optional[str] = github_data.get("repo_owner")
     repo: Optional[str] = github_data.get("repo_name")
     branch: str = github_data.get("default_branch") or "main"
-    encrypted_pat: Optional[str] = github_data.get("encrypted_pat")
+    installation_id: Optional[int] = github_data.get("installation_id")
     repo_url: Optional[str] = github_data.get("repo_url")
 
     # ── Guard 3: all required fields must be present ───────────────────────────
-    if not all([owner, repo, encrypted_pat, repo_url]):
+    if not all([owner, repo, installation_id, repo_url]):
         logger.error(
             "config_sync_initial_index_missing_fields",
             extra={
                 "tenant_id": tenant_id,
                 "has_owner": bool(owner),
                 "has_repo": bool(repo),
-                "has_pat": bool(encrypted_pat),
+                "has_installation_id": bool(installation_id),
                 "has_repo_url": bool(repo_url),
             },
         )
         return
 
     # ── Guard 4: resolve latest commit SHA from GitHub ─────────────────────────
-    commit_sha = await _resolve_branch_sha(owner, repo, branch, encrypted_pat)
+    commit_sha = await _resolve_branch_sha(owner, repo, branch, installation_id)
     if not commit_sha:
         logger.error(
             "config_sync_initial_index_sha_unavailable",
@@ -526,8 +522,7 @@ class ConfigSyncConsumer:
                     "repo_url": "...",
                     "repo_owner": "...",
                     "repo_name": "...",
-                    "encrypted_pat": "gAAAAABm...",
-                    "webhook_secret": "gAAAAABm...",
+                    "installation_id": 123456,
                     "default_branch": "main",
                     "indexing_status": "pending",
                     "last_indexed_commit": null
@@ -597,8 +592,7 @@ class ConfigSyncConsumer:
                                     "repo_url": None,
                                     "repo_owner": None,
                                     "repo_name": None,
-                                    "encrypted_pat": None,
-                                    "webhook_secret": None,
+                                    "installation_id": None,
                                     "default_branch": None,
                                     "indexing_status": None,
                                     "last_indexed_commit": None,

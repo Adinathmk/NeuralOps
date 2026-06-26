@@ -11,14 +11,14 @@ Patching strategy
 -----------------
 Both helpers use LOCAL imports to avoid circular dependencies:
 
-  _resolve_branch_sha          → `from app.worker.tasks.index_code import _decrypt`
+  _resolve_branch_sha          → `from app.services.github_auth import get_installation_token`
   _maybe_dispatch_initial_index → `from app.worker.tasks.index_code import index_code`
 
 Because these imports happen INSIDE the function at call time, the names
 never appear on the `config_sync` module namespace.  The correct patch
 targets are therefore in the SOURCE module:
 
-  "app.worker.tasks.index_code._decrypt"
+  "app.services.github_auth.get_installation_token"
   "app.worker.tasks.index_code.index_code"
 
 unittest.mock.patch replaces the name on its owning module and the local
@@ -28,10 +28,12 @@ unittest.mock.patch replaces the name on its owning module and the local
 from __future__ import annotations
 
 import sys
+import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import app.services.github_auth  # noqa: F401
 from app.queue.kafka.consumers.config_sync import (
     _maybe_dispatch_initial_index,
     _resolve_branch_sha,
@@ -56,8 +58,7 @@ _GITHUB_DATA_FULL = {
     "repo_url": "https://github.com/my-org/my-repo",
     "repo_owner": "my-org",
     "repo_name": "my-repo",
-    "encrypted_pat": "gAAAAABm_fake_encrypted_token",
-    "webhook_secret": "gAAAAABm_fake_webhook_secret",
+    "installation_id": 123456,
     "default_branch": "main",
     "indexing_status": "pending",
     "last_indexed_commit": None,
@@ -90,8 +91,9 @@ class TestResolveBranchSha:
 
         with (
             patch(
-                "app.worker.tasks.index_code._decrypt",
-                return_value="plaintext_pat",
+                "app.services.github_auth.get_installation_token",
+                new_callable=AsyncMock,
+                return_value="plaintext_token",
             ),
             patch("httpx.AsyncClient") as mock_client_cls,
         ):
@@ -100,9 +102,7 @@ class TestResolveBranchSha:
             )
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await _resolve_branch_sha(
-                "my-org", "my-repo", "main", "gAAAAABm_fake"
-            )
+            result = await _resolve_branch_sha("my-org", "my-repo", "main", 123456)
 
         assert result == _FAKE_SHA
 
@@ -118,8 +118,9 @@ class TestResolveBranchSha:
 
         with (
             patch(
-                "app.worker.tasks.index_code._decrypt",
-                return_value="plaintext_pat",
+                "app.services.github_auth.get_installation_token",
+                new_callable=AsyncMock,
+                return_value="plaintext_token",
             ),
             patch("httpx.AsyncClient") as mock_client_cls,
         ):
@@ -128,22 +129,19 @@ class TestResolveBranchSha:
             )
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await _resolve_branch_sha(
-                "my-org", "my-repo", "main", "gAAAAABm_fake"
-            )
+            result = await _resolve_branch_sha("my-org", "my-repo", "main", 123456)
 
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_decrypt_failure(self):
-        """Fernet decryption fails → None (no network call made)."""
+    async def test_returns_none_on_token_fetch_failure(self):
+        """Token fetch fails → None (no network call made)."""
         with patch(
-            "app.worker.tasks.index_code._decrypt",
-            side_effect=RuntimeError("bad key"),
+            "app.services.github_auth.get_installation_token",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("bad auth"),
         ):
-            result = await _resolve_branch_sha(
-                "my-org", "my-repo", "main", "bad_ciphertext"
-            )
+            result = await _resolve_branch_sha("my-org", "my-repo", "main", 123456)
 
         assert result is None
 
@@ -155,8 +153,9 @@ class TestResolveBranchSha:
 
         with (
             patch(
-                "app.worker.tasks.index_code._decrypt",
-                return_value="plaintext_pat",
+                "app.services.github_auth.get_installation_token",
+                new_callable=AsyncMock,
+                return_value="plaintext_token",
             ),
             patch("httpx.AsyncClient") as mock_client_cls,
         ):
@@ -165,9 +164,7 @@ class TestResolveBranchSha:
             )
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await _resolve_branch_sha(
-                "my-org", "my-repo", "main", "gAAAAABm_fake"
-            )
+            result = await _resolve_branch_sha("my-org", "my-repo", "main", 123456)
 
         assert result is None
 
@@ -256,9 +253,9 @@ class TestMaybeDispatchInitialIndex:
     # ── Guard 3: missing required fields ──────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_skips_when_encrypted_pat_is_missing(self):
-        """encrypted_pat absent → cannot decrypt → skip."""
-        data = _make_github_data(indexing_status="pending", encrypted_pat=None)
+    async def test_skips_when_installation_id_is_missing(self):
+        """installation_id absent → cannot fetch token → skip."""
+        data = _make_github_data(indexing_status="pending", installation_id=None)
 
         with patch(_PATCH_TASK) as mock_task:
             await _maybe_dispatch_initial_index(

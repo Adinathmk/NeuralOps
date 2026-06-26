@@ -286,7 +286,9 @@ def _extract_error_type(message: str) -> str:
             # Cap length to match DB column constraint
             return error_type[:255] if len(error_type) > 255 else error_type
 
-    return "UnknownError"
+    # Fallback to the first 100 chars of the message instead of UnknownError
+    first_line = message.splitlines()[0] if message else "UnknownError"
+    return first_line[:100] if len(first_line) > 100 else first_line
 
 
 # ---------------------------------------------------------------------------

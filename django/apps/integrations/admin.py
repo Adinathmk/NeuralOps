@@ -32,9 +32,7 @@ class GitHubIntegrationAdmin(admin.ModelAdmin):
         "source_version",
         "created_at",
         "updated_at",
-        # Encrypted fields are read-only in admin — never expose or edit directly.
-        "encrypted_pat",
-        "webhook_secret",
+        "github_installation_id",
     )
     ordering = ("-created_at",)
 
@@ -53,14 +51,10 @@ class GitHubIntegrationAdmin(admin.ModelAdmin):
             },
         ),
         (
-            "Credentials (encrypted — read-only)",
+            "Credentials (GitHub App)",
             {
-                "fields": ("encrypted_pat", "webhook_secret"),
+                "fields": ("github_installation_id",),
                 "classes": ("collapse",),
-                "description": (
-                    "These fields contain Fernet-encrypted ciphertext. "
-                    "Do not copy or share the values here."
-                ),
             },
         ),
         (

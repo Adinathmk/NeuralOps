@@ -33,8 +33,7 @@ class TestGitHubIntegrationAPI:
             repo_url="https://github.com/neuralops/core",
             repo_owner="neuralops",
             repo_name="core",
-            encrypted_pat="ggh_encrypted_pat_ciphertext_dummy",
-            webhook_secret="encrypted_webhook_secret_ciphertext_dummy",
+            github_installation_id="12345678",
             default_branch="main",
         )
 
@@ -48,11 +47,10 @@ class TestGitHubIntegrationAPI:
         assert data["repo_name"] == "core"
         assert data["default_branch"] == "main"
 
-        # Security contract: Plaintext and encrypted credentials must NEVER be returned to the client
+        # Security contract: Plaintext credentials must NEVER be returned to the client
         assert "pat" not in data
         assert "webhook_secret_input" not in data
-        assert "encrypted_pat" not in data
-        assert "webhook_secret" not in data
+        assert data["github_installation_id"] == "12345678"
 
     # ── 2. Create / Upsert (POST) Tests ───────────────────────────────────────
 
@@ -63,8 +61,7 @@ class TestGitHubIntegrationAPI:
             "repo_owner": "neuralops",
             "repo_name": "backend-service",
             "default_branch": "develop",
-            "pat": "ghp_secure_personal_access_token_plaintext",
-            "webhook_secret_input": "secure_webhook_secret_plaintext",
+            "github_installation_id": "12345678",
         }
 
         response = admin_client.post(self.url, data=payload, format="json")
@@ -76,9 +73,8 @@ class TestGitHubIntegrationAPI:
         assert integration.repo_name == "backend-service"
         assert integration.default_branch == "develop"
 
-        # Security check: secrets must be stored encrypted (never in plaintext)
-        assert integration.encrypted_pat != payload["pat"]
-        assert integration.webhook_secret != payload["webhook_secret_input"]
+        # Security check
+        assert integration.github_installation_id == "12345678"
 
         # Verify AuditLog created
         audit = AuditLog.objects.latest("created_at")
@@ -94,8 +90,7 @@ class TestGitHubIntegrationAPI:
 
         git_data = outbox.payload["tenant"]["github_integration"]
         assert git_data["repo_url"] == "https://github.com/neuralops/backend-service"
-        assert git_data["encrypted_pat"] == integration.encrypted_pat
-        assert git_data["webhook_secret"] == integration.webhook_secret
+        assert git_data["installation_id"] == integration.github_installation_id
 
     def test_update_integration_success(self, admin_client, tenant, admin_user):
         """Verify POST update (upsert) to an existing integration works, keeping current secrets if omitted."""
@@ -104,8 +99,7 @@ class TestGitHubIntegrationAPI:
             repo_url="https://github.com/neuralops/old-repo",
             repo_owner="neuralops",
             repo_name="old-repo",
-            encrypted_pat="existing_encrypted_pat_ciphertext",
-            webhook_secret="existing_webhook_secret_ciphertext",
+            github_installation_id="existing_installation",
             default_branch="main",
         )
 
@@ -125,9 +119,8 @@ class TestGitHubIntegrationAPI:
         assert integration.repo_name == "new-repo"
         assert integration.default_branch == "main-prod"
 
-        # Security check: existing secrets are preserved because they were omitted
-        assert integration.encrypted_pat == "existing_encrypted_pat_ciphertext"
-        assert integration.webhook_secret == "existing_webhook_secret_ciphertext"
+        # Check: existing installation is preserved because they were omitted
+        assert integration.github_installation_id == "existing_installation"
 
         # Verify AuditLog created
         audit = AuditLog.objects.latest("created_at")
@@ -141,41 +134,27 @@ class TestGitHubIntegrationAPI:
             "repo_owner": "neuralops",
             "repo_name": "core",
             "default_branch": "main",
-            "pat": "token",
-            "webhook_secret_input": "secret",
+            "github_installation_id": "12345678",
         }
 
         response = admin_client.post(self.url, data=payload, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "repo_url" in response.data["errors"]
 
-    def test_create_integration_missing_pat_on_create(self, admin_client):
-        """Verify that PAT is strictly required during the initial connection."""
+    def test_create_integration_missing_installation_id_on_create(self, admin_client):
+        """Verify that installation ID is strictly required during the initial connection."""
         payload = {
             "repo_url": "https://github.com/neuralops/core",
             "repo_owner": "neuralops",
             "repo_name": "core",
             "default_branch": "main",
-            "webhook_secret_input": "secret",  # PAT is missing
         }
 
         response = admin_client.post(self.url, data=payload, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "pat" in response.data["errors"]
+        assert "github_installation_id" in response.data["errors"]
 
-    def test_create_integration_missing_webhook_secret_on_create(self, admin_client):
-        """Verify that webhook secret is strictly required during the initial connection."""
-        payload = {
-            "repo_url": "https://github.com/neuralops/core",
-            "repo_owner": "neuralops",
-            "repo_name": "core",
-            "default_branch": "main",
-            "pat": "token",  # Webhook secret is missing
-        }
 
-        response = admin_client.post(self.url, data=payload, format="json")
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "webhook_secret_input" in response.data["errors"]
 
     # ── 3. Permissions / Guard Boundaries ─────────────────────────────────────
 
@@ -193,8 +172,7 @@ class TestGitHubIntegrationAPI:
                 "repo_owner": "neuralops",
                 "repo_name": "core",
                 "default_branch": "main",
-                "pat": "token",
-                "webhook_secret_input": "secret",
+                "github_installation_id": "12345678",
             },
         )
         assert response.status_code == status.HTTP_403_FORBIDDEN
