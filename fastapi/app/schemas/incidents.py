@@ -107,6 +107,8 @@ class IncidentListItem(BaseModel):
     pr_url: Optional[str] = None
     pr_number: Optional[int] = None
     pr_status: Optional[str] = None
+    pr_title: Optional[str] = None
+    pr_error: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -184,6 +186,8 @@ class IncidentDetail(BaseModel):
     pr_url: Optional[str] = None
     pr_number: Optional[int] = None
     pr_status: Optional[str] = None
+    pr_title: Optional[str] = None
+    pr_error: Optional[str] = None
 
     @field_validator("stack_frames", mode="before")
     @classmethod

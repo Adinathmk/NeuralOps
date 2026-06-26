@@ -192,6 +192,8 @@ class Incident(Base):
         nullable=True,
         comment="PR lifecycle status: open | skipped | no_patch | syntax_error | failed.",
     )
+    pr_title = Column(Text, nullable=True, comment="GitHub PR Title.")
+    pr_error = Column(Text, nullable=True, comment="GitHub PR creation error or failure reason.")
     structured_patch = Column(
         Text,
         nullable=True,

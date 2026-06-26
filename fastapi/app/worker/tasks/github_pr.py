@@ -70,6 +70,8 @@ async def _save_pr_fields(
     pr_url: Optional[str],
     pr_number: Optional[int],
     pr_status: str,
+    pr_title: Optional[str] = None,
+    pr_error: Optional[str] = None,
 ) -> None:
     """
     Persist PR metadata to the incidents table via its own session.
@@ -98,6 +100,8 @@ async def _save_pr_fields(
                         pr_url=pr_url,
                         pr_number=pr_number,
                         pr_status=pr_status,
+                        pr_title=pr_title,
+                        pr_error=pr_error,
                     )
                 )
         logger.info(
@@ -272,7 +276,7 @@ async def _execute_create_github_pr(
                 "error": str(exc),
             },
         )
-        await _save_pr_fields(incident_id, None, None, "failed")
+        await _save_pr_fields(incident_id, None, None, "failed", pr_error=f"Failed to fetch GitHub token: {exc}")
         return
 
     # ── Step 4: Parse structured_patch JSON ───────────────────────────────────
@@ -292,7 +296,7 @@ async def _execute_create_github_pr(
             "github_pr_empty_patches",
             extra={"incident_id": incident_id},
         )
-        await _save_pr_fields(incident_id, None, None, "no_patch")
+        await _save_pr_fields(incident_id, None, None, "no_patch", pr_error="Patch JSON contained no patches")
         return
 
     # ── Step 5: Fetch, apply, and validate each patch ─────────────────────────
@@ -348,7 +352,7 @@ async def _execute_create_github_pr(
                             "syntax_error": syntax_error,
                         },
                     )
-                    await _save_pr_fields(incident_id, None, None, "syntax_error")
+                    await _save_pr_fields(incident_id, None, None, "syntax_error", pr_error=f"Syntax error in {file_path}: {syntax_error}")
                     return  # abort ALL patches
 
             changed_files[file_path] = new_content
@@ -359,7 +363,7 @@ async def _execute_create_github_pr(
             "github_pr_no_files_changed",
             extra={"incident_id": incident_id},
         )
-        await _save_pr_fields(incident_id, None, None, "no_patch")
+        await _save_pr_fields(incident_id, None, None, "no_patch", pr_error="No valid patches were applied to the source files")
         return
 
     # ── Step 7: Create branch ─────────────────────────────────────────────────
@@ -563,6 +567,7 @@ async def _execute_create_github_pr(
         pr_url=pr_html_url,
         pr_number=pr_number_val,
         pr_status="open",
+        pr_title=f"fix({error_type}): NeuralOps AI fix for incident {incident_id[:8]}",
     )
 
     logger.info(
@@ -668,6 +673,7 @@ def create_github_pr(
                     pr_url=None,
                     pr_number=None,
                     pr_status="failed",
+                    pr_error=f"Unhandled task exception: {exc}",
                 )
             )
         raise

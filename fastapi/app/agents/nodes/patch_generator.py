@@ -48,27 +48,23 @@ _REDIS_FILE_CACHE_TTL: int = 86_400  # 24 hours
 # Lazy singletons
 # ---------------------------------------------------------------------------
 
-_gemini_client = None
 _patch_cb = None
 
 
 def _get_client():
-    global _gemini_client
-    if _gemini_client is None:
-        import google.generativeai as genai
+    import google.generativeai as genai
 
-        from app.core.config import get_settings
+    from app.core.config import get_settings
 
-        genai.configure(api_key=get_settings().GEMINI_API_KEY)
-        _gemini_client = genai.GenerativeModel(
-            "models/gemini-2.5-flash",
-            generation_config={
-                "response_mime_type": "application/json",
-                "temperature": 0.10,
-                "max_output_tokens": 4096,
-            },
-        )
-    return _gemini_client
+    genai.configure(api_key=get_settings().GEMINI_API_KEY)
+    return genai.GenerativeModel(
+        "models/gemini-2.5-flash",
+        generation_config={
+            "response_mime_type": "application/json",
+            "temperature": 0.10,
+            "max_output_tokens": 4096,
+        },
+    )
 
 
 def _get_circuit_breaker():
