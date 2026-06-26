@@ -3,33 +3,22 @@ fastapi/app/worker/tasks/run_agent.py
 
 Phase 4 Final — run_agent Celery Task
 
-Replaces the Part 3 skeleton. Integrates the full LangGraph agent workflow
-and retains the WebSocket notifications.
-
 Flow
 ----
   1. Deserialise ParsedLogEvent
-  2. Compute SHA-256 fingerprint (with line-bucket normalisation)
+  2. Compute SHA-256 fingerprint
   3. Acquire Redis SETNX dedup lock (Layer 1)
-       NOT acquired → return {"action": "lock_contention"}
   4. Open AsyncSession, create IncidentService
-  5. DB fingerprint query (Layer 2 — partial unique index scan)
-       FOUND → record_duplicate_occurrence → ws_notify → return {"action": "duplicate_recorded"}
-  6. Invoke LangGraph agent workflow (all 7 nodes)
-  7. Enforce draft rule: confidence_score < threshold → is_draft = True
-  8. Non-actionable guard: actionable = False → return {"action": "not_actionable"}
-  9. persist_new_incident (atomic: incident + analysis + outbox events)
-       IntegrityError → return {"action": "late_duplicate"}
- 10. ws_notify (incident_analysis_complete)
- 11. ALWAYS release Redis lock in finally block
+  5. DB fingerprint query (Layer 2)
+  6. Invoke LangGraph agent workflow (all nodes including patch_generator)
+  7. Enforce draft rule
+  8. Non-actionable guard
+  9. persist_new_incident
+ 10. ws_notify
+ 11. Release Redis lock
 
-Retry policy
-------------
-  autoretry_for: OSError, ConnectionError, TimeoutError,
-                 aioredis.ConnectionError, sqlalchemy.exc.OperationalError,
-                 sqlalchemy.exc.DisconnectionError
-  max_retries: 5  |  default_retry_delay: 10s  |  exponential backoff
-  ValueError, sqlalchemy.exc.IntegrityError: handled inline, NOT retried.
+  After asyncio.run() returns in the synchronous task wrapper:
+ 12. Dispatch create_github_pr.delay() if conditions are met.
 """
 
 from __future__ import annotations
@@ -57,12 +46,9 @@ from app.worker.celery_app import celery_app
 
 logger = get_task_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 _AGENT_SOFT_TIME_LIMIT: int = 480
 _AGENT_HARD_TIME_LIMIT: int = 600
+
 
 # ---------------------------------------------------------------------------
 # Core async logic
@@ -76,10 +62,11 @@ async def _execute_run_agent(
     """
     Core async coroutine for the run_agent task.
 
-    Called via asyncio.run() from the synchronous Celery task function.
-    All async I/O (Redis, DB, LangGraph, S3) happens here.
+    Returns a result dict that now includes structured_patch, root_cause,
+    suggested_fix, and new_incident_id so the synchronous wrapper can
+    dispatch the GitHub PR task without re-entering async context.
     """
-    # ── Step 0: Deserialise and validate ParsedLogEvent ───────────────────────
+    # ── Step 0: Deserialise ParsedLogEvent ────────────────────────────────────
     try:
         parsed_event: ParsedLogEvent = ParsedLogEvent.from_dict(parsed_event_dict)
     except Exception as exc:
@@ -144,13 +131,12 @@ async def _execute_run_agent(
             "fingerprint": fingerprint,
         }
 
-    # Lock acquired. Always release in the finally block below.
     agent_start_time: float = time.monotonic()
 
     try:
         async with AsyncSessionLocal() as session:
 
-            # ── Step 2.5: Update Elasticsearch log document with parsed fields ───────
+            # ── Step 2.5: Update Elasticsearch log document ───────────────────
             from sqlalchemy import select
 
             from app.models.snapshots import TenantSnapshot
@@ -240,7 +226,8 @@ async def _execute_run_agent(
                     )
                 except Exception as exc:
                     logger.warning(
-                        "ws_duplicate_notification_failed", extra={"error": str(exc)}
+                        "ws_duplicate_notification_failed",
+                        extra={"error": str(exc)},
                     )
 
                 logger.info(
@@ -280,23 +267,20 @@ async def _execute_run_agent(
 
             agent_result: Dict[str, Any] = await workflow.ainvoke(initial_state)
 
-            # Record total wall-clock time from task start to DB write
             total_latency_ms: int = int((time.monotonic() - agent_start_time) * 1000)
             agent_result["total_latency_ms"] = total_latency_ms
 
-            # ── Step 5: Determine action from agent result ────────────────────
+            # ── Step 5: Determine action ──────────────────────────────────────
             action: str = agent_result.get("action", "store_draft")
             confidence_score: Optional[float] = agent_result.get("confidence_score")
             confidence_threshold: float = float(
                 agent_result.get("confidence_threshold", 0.70)
             )
 
-            # Sanity check: enforce is_draft based on confidence_score
             if confidence_score is not None and confidence_score < confidence_threshold:
                 action = "store_draft"
             is_draft: bool = action == "store_draft"
 
-            # Check if classifier marked the event as non-actionable
             if not agent_result.get("actionable", True):
                 logger.info(
                     "run_agent_not_actionable",
@@ -379,10 +363,9 @@ async def _execute_run_agent(
                 }
 
     finally:
-        # ── Step 7: ALWAYS release the Redis lock ─────────────────────────────
         await release_dedup_lock(redis=redis, fingerprint=fingerprint)
 
-    # ── Return success result ─────────────────────────────────────────────────
+    # ── Return success result (includes patch fields for PR dispatch) ──────────
     new_incident_id: str = str(persistence_result["incident_id"])
     new_analysis_id: str = str(persistence_result["analysis_id"])
 
@@ -412,6 +395,10 @@ async def _execute_run_agent(
         "is_draft": is_draft,
         "confidence_score": confidence_score,
         "total_latency_ms": total_latency_ms,
+        # Fields required by the synchronous PR dispatch block below
+        "structured_patch": agent_result.get("structured_patch") or "",
+        "root_cause": agent_result.get("root_cause") or "",
+        "suggested_fix": agent_result.get("suggested_fix") or "",
     }
 
 
@@ -444,10 +431,8 @@ def run_agent(
     parsed_event: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Phase 4 Final — run_agent Celery task with full LangGraph workflow.
-
-    Receives a ParsedLogEvent dict from parse_log, runs the complete
-    deduplication engine and AI agent pipeline, persists results.
+    Phase 4 Final — run_agent Celery task with full LangGraph workflow
+    including patch_generator node and post-execution PR dispatch.
     """
     task_id: str = self.request.id or str(_uuid_module.uuid4())
     tenant_id: str = parsed_event.get("tenant_id", "unknown")
@@ -497,6 +482,43 @@ def run_agent(
             exc_info=True,
         )
         raise
+
+    # ── Dispatch GitHub PR task (synchronous, after asyncio.run returns) ──────
+    # Conditions:
+    #   1. Agent decided to create a real incident (not a draft).
+    #   2. PatchGeneratorNode produced at least one validated patch.
+    #   3. The incident was actually persisted (new_incident_id is present).
+    if (
+        result.get("action") == "create_incident"
+        and result.get("structured_patch")
+        and not result.get("is_draft")
+        and result.get("new_incident_id")
+    ):
+        try:
+            from app.worker.tasks.github_pr import create_github_pr
+
+            create_github_pr.delay(
+                tenant_id=result["tenant_id"],
+                incident_id=result["new_incident_id"],
+                structured_patch=result["structured_patch"],
+                error_type=parsed_event.get("error_type", ""),
+                root_cause=result.get("root_cause", ""),
+                suggested_fix=result.get("suggested_fix", ""),
+            )
+            logger.info(
+                "github_pr_task_dispatched",
+                extra={
+                    "tenant_id": result["tenant_id"],
+                    "incident_id": result["new_incident_id"],
+                    "task_id": task_id,
+                },
+            )
+        except Exception as exc:
+            # A Celery broker failure must never block run_agent from returning.
+            logger.warning(
+                "github_pr_dispatch_failed",
+                extra={"error": str(exc), "task_id": task_id},
+            )
 
     logger.info(
         "run_agent_task_complete",

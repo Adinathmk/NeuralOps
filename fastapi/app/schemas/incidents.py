@@ -103,6 +103,10 @@ class IncidentListItem(BaseModel):
     first_seen_at: datetime
     last_seen_at: datetime
     created_at: datetime
+    # PR fields
+    pr_url: Optional[str] = None
+    pr_number: Optional[int] = None
+    pr_status: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -176,6 +180,10 @@ class IncidentDetail(BaseModel):
     resolved_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    # PR fields
+    pr_url: Optional[str] = None
+    pr_number: Optional[int] = None
+    pr_status: Optional[str] = None
 
     @field_validator("stack_frames", mode="before")
     @classmethod

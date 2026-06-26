@@ -542,6 +542,9 @@ class IncidentService:
         suggested_fix: str = agent_result.get("suggested_fix") or ""
         confidence_score: Optional[float] = agent_result.get("confidence_score")
 
+        # Extract structured_patch produced by PatchGeneratorNode
+        structured_patch: Optional[str] = agent_result.get("structured_patch") or None
+
         # Always promote to "open" to ensure collaboration threads sync via Kafka.
         # If the confidence was low (is_draft), flag severity as "unknown".
         if is_draft:
@@ -609,6 +612,11 @@ class IncidentService:
                 resolved_at=None,
                 created_at=now,
                 updated_at=now,
+                # PR / patch fields — populated later by github_pr task
+                structured_patch=structured_patch,
+                pr_url=None,
+                pr_number=None,
+                pr_status=None,
             )
             self._session.add(incident)
 
@@ -687,6 +695,7 @@ class IncidentService:
                 "is_draft": is_draft,
                 "total_tokens": total_tokens,
                 "total_latency_ms": agent_result.get("total_latency_ms"),
+                "has_structured_patch": structured_patch is not None,
             },
         )
 
@@ -787,6 +796,12 @@ def _build_node_results(
             "action": "store_draft" if is_draft else "create_incident",
             "threshold": agent_result.get("confidence_threshold", 0.70),
             "score": confidence_score if confidence_score is not None else 0.0,
+        },
+        "patch_generator": {
+            "latency_ms": agent_result.get("patch_generator_latency_ms", 0),
+            "patch_confidence": agent_result.get("patch_confidence", 0.0),
+            "skip_reason": agent_result.get("patch_skip_reason", ""),
+            "has_patch": bool(agent_result.get("structured_patch")),
         },
     }
 

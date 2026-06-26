@@ -1,11 +1,11 @@
 """
 fastapi/app/agents/workflow.py
 
-LangGraph Agent Workflow — Phase 4 NeuralOps AI Pipeline
+LangGraph Agent Workflow — NeuralOps AI Pipeline
 
-Defines the AgentState TypedDict and wires all seven nodes into a compiled
-StateGraph. The workflow is built once per run_agent task execution via
-build_agent_workflow().
+Defines the AgentState TypedDict and wires all nodes into a compiled
+StateGraph. The workflow is built once per process lifetime via
+get_agent_workflow() (module-level singleton).
 
 Node execution order (DAG)
 --------------------------
@@ -22,32 +22,10 @@ Node execution order (DAG)
   confidence_scorer
       ↓
   action_decision
+      ↓ (conditional: create_incident → patch_generator, store_draft → END)
+  patch_generator
       ↓
   END
-
-All nodes are async. LangGraph calls each node's invoke() coroutine
-and merges the returned partial dict into the shared AgentState.
-
-AgentState field ownership
----------------------------
-  Inputs (set by run_agent before ainvoke):
-    tenant_id, parsed_event, fingerprint, session, redis
-
-  classifier        → severity, actionable, classifier_latency_ms
-  code_retriever    → code_context, code_retriever_meta
-  playbook_matcher  → matched_playbook_id, playbook_instructions,
-                       playbook_latency_ms
-  analyzer          → root_cause, raw_analysis_output,
-                       analyzer_latency_ms, analyzer_fallback_used,
-                       analyzer_tokens
-  fix_generator     → suggested_fix, raw_fix_output,
-                       fix_generator_latency_ms, fix_fallback_used,
-                       fix_tokens
-  confidence_scorer → confidence_score, retrieval_score,
-                       coherence_score, scorer_latency_ms
-  action_decision   → action, confidence_threshold
-
-  total_latency_ms is set by run_agent AFTER ainvoke() returns.
 """
 
 from __future__ import annotations
@@ -63,6 +41,7 @@ from app.agents.nodes.classifier import ClassifierNode
 from app.agents.nodes.code_retriever import CodeRetrieverNode
 from app.agents.nodes.confidence_scorer import ConfidenceScorerNode
 from app.agents.nodes.fix_generator import FixGeneratorNode
+from app.agents.nodes.patch_generator import PatchGeneratorNode
 from app.agents.nodes.playbook_matcher import PlaybookMatcherNode
 
 # ---------------------------------------------------------------------------
@@ -94,8 +73,6 @@ class AgentState(TypedDict, total=False):
     # ── CodeRetriever outputs ───────────────────────────────────────────────
     code_context: str  # assembled and token-capped snippets
     code_retriever_meta: Dict[str, Any]
-    # keys: files_fetched, tokens, cache_hits, cache_misses,
-    #       symbols_retrieved, latency_ms
 
     # ── PlaybookMatcher outputs ─────────────────────────────────────────────
     matched_playbook_id: Optional[str]
@@ -126,26 +103,38 @@ class AgentState(TypedDict, total=False):
     action: str  # "create_incident" | "store_draft"
     confidence_threshold: float
 
+    # ── PatchGenerator outputs ──────────────────────────────────────────────
+    structured_patch: str       # JSON string of validated patches, or ""
+    patch_confidence: float
+    patch_skip_reason: str
+    patch_generator_latency_ms: int
+
     # ── Set by run_agent after ainvoke() ───────────────────────────────────
     total_latency_ms: int
 
 
 # ---------------------------------------------------------------------------
-# Conditional routing
+# Conditional routing helpers
 # ---------------------------------------------------------------------------
 
 
 def _route_after_classifier(state: AgentState) -> str:
     """
-    Conditional edge fired after the Classifier node.
-
-    If the log event is not actionable (e.g. an INFO or DEBUG entry),
-    route directly to END to skip all LLM calls and DB writes.
-    Otherwise proceed to the CodeRetriever.
+    Route to code_retriever if actionable, else END.
     """
     if not state.get("actionable", True):
         return END
     return "code_retriever"
+
+
+def _route_after_action_decision(state: AgentState) -> str:
+    """
+    Route to patch_generator only when the agent decided to create a full
+    incident. Drafts skip patch generation and go straight to END.
+    """
+    if state.get("action") == "create_incident":
+        return "patch_generator"
+    return END
 
 
 # ---------------------------------------------------------------------------
@@ -155,18 +144,12 @@ def _route_after_classifier(state: AgentState) -> str:
 
 def build_agent_workflow():
     """
-    Build and compile the LangGraph StateGraph for the Phase 4 agent.
+    Build and compile the LangGraph StateGraph.
 
-    Returns a compiled graph that can be called with:
-        result_state = await graph.ainvoke(initial_state_dict)
-
-    The compiled graph is stateless — it can be cached at module level
-    and reused across multiple ainvoke() calls safely.
-
-    Node instances are also stateless (no instance variables mutated
-    during invoke), so a single ClassifierNode() etc. can be shared.
+    Returns a compiled graph safe to cache at module level and reused
+    across multiple ainvoke() calls (nodes are all stateless).
     """
-    # Instantiate nodes once — they are all stateless
+    # Instantiate nodes (all stateless — safe to share)
     classifier_node = ClassifierNode()
     code_retriever_node = CodeRetrieverNode()
     playbook_matcher_node = PlaybookMatcherNode()
@@ -174,6 +157,7 @@ def build_agent_workflow():
     fix_generator_node = FixGeneratorNode()
     confidence_scorer_node = ConfidenceScorerNode()
     action_decision_node = ActionDecisionNode()
+    patch_generator_node = PatchGeneratorNode()
 
     graph: StateGraph = StateGraph(AgentState)
 
@@ -185,6 +169,7 @@ def build_agent_workflow():
     graph.add_node("fix_generator", fix_generator_node.invoke)
     graph.add_node("confidence_scorer", confidence_scorer_node.invoke)
     graph.add_node("action_decision", action_decision_node.invoke)
+    graph.add_node("patch_generator", patch_generator_node.invoke)
 
     # ── Entry point ────────────────────────────────────────────────────────
     graph.set_entry_point("classifier")
@@ -199,22 +184,33 @@ def build_agent_workflow():
         },
     )
 
-    # ── Linear edges for the remaining nodes ───────────────────────────────
+    # ── Linear edges through the analysis pipeline ─────────────────────────
     graph.add_edge("code_retriever", "playbook_matcher")
     graph.add_edge("playbook_matcher", "analyzer")
     graph.add_edge("analyzer", "fix_generator")
     graph.add_edge("fix_generator", "confidence_scorer")
     graph.add_edge("confidence_scorer", "action_decision")
-    graph.add_edge("action_decision", END)
+
+    # ── Conditional edge after action_decision ──────────────────────────────
+    # create_incident → patch_generator → END
+    # store_draft     → END  (bypass patch generation entirely)
+    graph.add_conditional_edges(
+        "action_decision",
+        _route_after_action_decision,
+        {
+            "patch_generator": "patch_generator",
+            END: END,
+        },
+    )
+
+    graph.add_edge("patch_generator", END)
 
     return graph.compile()
 
 
 # ---------------------------------------------------------------------------
-# Module-level cached workflow (optional optimisation)
+# Module-level cached workflow
 # ---------------------------------------------------------------------------
-# Call get_agent_workflow() instead of build_agent_workflow() in hot paths
-# to avoid rebuilding the graph on every task execution.
 
 _cached_workflow = None
 
@@ -222,14 +218,24 @@ _cached_workflow = None
 def get_agent_workflow():
     """
     Return the module-level cached compiled workflow.
-    Builds it on first call; subsequent calls return the cached instance.
+    Builds on first call; subsequent calls return the cached instance.
 
-    Thread-safe for read access after first build. The build itself is
-    not protected by a lock, but duplicate builds are harmless — the
-    compiled graph is stateless and the GIL ensures only one assignment
-    to _cached_workflow at a time.
+    Thread safety: duplicate builds are harmless — the compiled graph is
+    stateless and the GIL ensures a single assignment to _cached_workflow.
     """
     global _cached_workflow
     if _cached_workflow is None:
         _cached_workflow = build_agent_workflow()
     return _cached_workflow
+
+
+def reset_agent_workflow() -> None:
+    """
+    Clear the cached workflow so the next call to get_agent_workflow()
+    rebuilds it from scratch.
+
+    Call this at worker process startup after a deployment to ensure
+    the new node definitions (including patch_generator) are loaded.
+    """
+    global _cached_workflow
+    _cached_workflow = None

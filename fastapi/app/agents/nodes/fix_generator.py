@@ -69,7 +69,8 @@ def _get_client():
         generation_config={
             "response_mime_type": "application/json",
             "temperature": 0.15,
-            "max_output_tokens": 2048,
+            # 4096 tokens avoids mid-string JSON truncation for complex fixes.
+            "max_output_tokens": 4096,
         },
     )
 
@@ -261,7 +262,7 @@ class FixGeneratorNode:
                 code_context=code_context,
             )
 
-            # ── Gemini call ───────────────────────────────────────────────────
+            # ── Gemini call ───────────────────────────────────────────────
             client = _get_client()
             full_prompt = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
             response = await client.generate_content_async(full_prompt)
@@ -269,7 +270,21 @@ class FixGeneratorNode:
             raw_output = response.text or ""
             usage = getattr(response, "usage_metadata", None)
 
-            # ── Pydantic validation ───────────────────────────────────────────
+            # ── Detect truncated JSON and retry once ──────────────────────
+            # Gemini sometimes returns a JSON string cut off before the
+            # closing brace when the response length approaches the token
+            # limit. Detect this early and retry rather than letting Pydantic
+            # raise a ValidationError that triggers the fallback path.
+            if _looks_truncated(raw_output):
+                logger.warning(
+                    "fix_generator_truncated_response_retry",
+                    extra={"error_type": error_type, "raw_tail": raw_output[-80:]},
+                )
+                response = await client.generate_content_async(full_prompt)
+                raw_output = response.text or ""
+                usage = getattr(response, "usage_metadata", None)
+
+            # ── Pydantic validation ───────────────────────────────────────
             # Strip markdown fences (```json ... ```) that the model sometimes
             # wraps around its JSON response despite being asked not to.
             json_match = re.search(r"\{.*\}", raw_output, re.DOTALL)
@@ -361,3 +376,25 @@ def _build_fallback_fix(
         f"Review {location} and apply a fix based on the error details "
         f"in the stack trace above."
     )
+
+
+def _looks_truncated(raw: str) -> bool:
+    """
+    Return True if the Gemini response looks like it was cut off before
+    the JSON object was closed.
+
+    Heuristics (any one is sufficient):
+    - The text does not end with a closing brace '}' (after stripping
+      whitespace) — the most reliable signal.
+    - The text ends mid-string (last non-whitespace char is a double-quote
+      without a preceding backslash, yet the overall brace count is unbalanced).
+    """
+    stripped = raw.strip()
+    if not stripped:
+        return False
+    if not stripped.endswith("}"):
+        return True
+    # Brace balance check — handles the edge case where the last char is '}'
+    # but an earlier object was never closed.
+    return stripped.count("{") != stripped.count("}")
+

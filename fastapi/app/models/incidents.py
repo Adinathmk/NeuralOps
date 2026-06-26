@@ -184,6 +184,20 @@ class Incident(Base):
         comment="Classified severity: critical | high | medium | low | info | unknown.",
     )
 
+    # ── PR / patch fields (added for patch_generator + github_pr task) ────────
+    pr_url = Column(Text, nullable=True, comment="HTML URL of the GitHub PR created by NeuralOps.")
+    pr_number = Column(Integer, nullable=True, comment="GitHub PR number.")
+    pr_status = Column(
+        String(32),
+        nullable=True,
+        comment="PR lifecycle status: open | skipped | no_patch | syntax_error | failed.",
+    )
+    structured_patch = Column(
+        Text,
+        nullable=True,
+        comment="JSON string of validated search/replace patches from PatchGeneratorNode.",
+    )
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
     status = Column(
         String(32),

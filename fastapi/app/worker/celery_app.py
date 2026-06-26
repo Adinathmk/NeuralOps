@@ -97,3 +97,4 @@ import app.worker.tasks.index_code
 import app.worker.tasks.parse_log
 import app.worker.tasks.run_agent
 import app.worker.tasks.wipe_data
+import app.worker.tasks.github_pr
