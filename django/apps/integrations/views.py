@@ -337,11 +337,11 @@ class GitHubAvailableReposView(APIView):
                 code="github_app_unconfigured",
             )
 
-        # 1. Generate JWT
+        # 1. Generate JWT (using 5 mins for exp to prevent clock skew issues)
         now = int(time.time())
         payload = {
             "iat": now - 60,
-            "exp": now + (10 * 60),
+            "exp": now + (5 * 60),
             "iss": str(app_id),
         }
         try:

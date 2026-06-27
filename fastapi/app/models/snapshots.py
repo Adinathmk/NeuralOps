@@ -280,11 +280,51 @@ class PlaybookSnapshot(Base):
 
     tenant = relationship("TenantSnapshot", back_populates="playbook_snapshots")
 
-    def __repr__(self) -> str:  # pragma: no cover
-        return (
-            f"<PlaybookSnapshot playbook_id={self.playbook_id} "
-            f"tenant={self.tenant_id}>"
-        )
+    def __repr__(self):
+        return f"<PlaybookSnapshot(playbook_id={self.playbook_id}, tenant_id={self.tenant_id})>"
+
+
+# ── APIKeySnapshot ────────────────────────────────────────────────────────────
+
+
+class APIKeySnapshot(Base):
+    """
+    Local projection of API keys owned by Django.
+
+    Upserted by the Kafka consumer in app/queue/kafka/consumers/config_sync.py
+    whenever a config.api_keys event arrives.
+    """
+
+    __tablename__ = "api_key_snapshots"
+
+    id: Column = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        comment="Matches api_keys.id in DB-1.",
+    )
+    tenant_id: Column = Column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+        comment="Tenant this key belongs to.",
+    )
+    key: Column = Column(
+        String(255),
+        nullable=False,
+        unique=True,
+        index=True,
+        comment="The actual raw API key token.",
+    )
+    is_active: Column = Column(
+        Boolean,
+        default=True,
+        nullable=False,
+        comment="Whether the key can still be used.",
+    )
+
+    def __repr__(self):
+        return f"<APIKeySnapshot(id={self.id}, tenant_id={self.tenant_id}, active={self.is_active})>"
 
 
 # ── Row-Level Security DDL ─────────────────────────────────────────────────────

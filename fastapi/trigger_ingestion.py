@@ -20,13 +20,35 @@ payload = {
             "level": "error",
             "message": "Payment processing failed",
             "logger_name": "payment.charge",
-            "exception": {
-                "type": "ValueError",
-                "message": "Invalid credit card format",
-                "stacktrace": 'Traceback (most recent call last):\n  File "charge.py", line 42, in process\nValueError: Invalid credit card format',
-            },
         }
     ],
+    "trigger": {
+        "level": "error",
+        "message": "Payment processing failed!",
+        "timestamp": "2026-06-26T10:55:00.000Z",
+        "stack_trace": {
+            "exception_type": "ZeroDivisionError",
+            "exception_message": "division by zero",
+            "frames": [
+                {
+                    "file": "/app/main.py",
+                    "line": 15,
+                    "function": "checkout_endpoint",
+                    "code_context": "    return process_payment(order_id)"
+                },
+                {
+                    "file": "/app/services/payment.py",
+                    "line": 42,
+                    "function": "process_payment",
+                    "code_context": "    tax_rate = amount / 0"
+                }
+            ]
+        }
+    },
+    "sdk_meta": {
+        "python_version": "3.11",
+        "framework": "FastAPI",
+    }
 }
 
 response = requests.post(url, json=payload, headers=headers)

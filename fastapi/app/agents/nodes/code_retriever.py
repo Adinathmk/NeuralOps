@@ -287,13 +287,10 @@ class CodeRetrieverNode:
         Find the CodeIndex row whose [start_line, end_line] range
         contains line_number within the given file_path.
 
-        The ILIKE '%{file_path}%' match handles path prefix differences
-        between what the SDK reports (e.g. 'ChargeService.java') and
-        what was indexed (e.g. 'src/payment/ChargeService.java').
-
-        ORDER BY (end_line - start_line) ASC selects the narrowest
-        matching range — a method body is preferred over the enclosing
-        class definition.
+        We normalize the SDK's file_path (which might be an absolute path
+        from Windows/Docker) and extract the filename to query the DB.
+        Then we verify that the DB's relative path is a valid suffix of the
+        SDK's absolute path to avoid matching a different file with the same name.
         """
         import uuid as _uuid_module
 
@@ -311,22 +308,39 @@ class CodeRetrieverNode:
             )
             return None
 
+        # Normalize the path from the SDK (handles Windows \ and POSIX /)
+        normalized_path = file_path.replace("\\", "/")
+        filename = normalized_path.split("/")[-1]
+
         try:
             stmt = (
                 select(CodeIndex)
                 .where(
                     and_(
                         CodeIndex.tenant_id == tenant_uuid,
-                        CodeIndex.file_path.ilike(f"%{file_path}%"),
+                        CodeIndex.file_path.ilike(f"%{filename}%"),
                         CodeIndex.start_line <= line_number,
                         CodeIndex.end_line >= line_number,
                     )
                 )
                 .order_by((CodeIndex.end_line - CodeIndex.start_line).asc())
-                .limit(1)
             )
             result = await session.execute(stmt)
-            return result.scalar_one_or_none()
+            matches = result.scalars().all()
+            
+            # Find the best match whose DB file_path is a suffix of the SDK's path
+            best_match = None
+            for match in matches:
+                # DB file paths use POSIX slashes (e.g. app/services/order_service.py)
+                if normalized_path.endswith(match.file_path):
+                    best_match = match
+                    break
+            
+            # Fallback to the first match if no exact suffix match was found
+            if not best_match and matches:
+                best_match = matches[0]
+
+            return best_match
 
         except Exception as exc:
             logger.warning(

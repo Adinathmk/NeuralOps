@@ -56,6 +56,10 @@ class StackFrame(BaseModel):
         default="",
         description="Module or package name. Empty string if not available.",
     )
+    code_context: str = Field(
+        default="",
+        description="Code context around the frame, if provided by the SDK.",
+    )
 
     @field_validator("line", mode="before")
     @classmethod
@@ -175,6 +179,11 @@ class ParsedLogEvent(BaseModel):
         ge=0,
         description="Number of log entries in the context buffer fetched from S3.",
     )
+    
+    sdk_meta: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Execution context such as SDK version, runtime version, and framework.",
+    )
 
     @field_validator("severity", mode="before")
     @classmethod
@@ -225,6 +234,7 @@ class ParsedLogEvent(BaseModel):
             "crash_method": self.crash_method,
             "stack_frames": [frame.model_dump() for frame in self.stack_frames],
             "context_log_count": self.context_log_count,
+            "sdk_meta": self.sdk_meta,
         }
 
     @classmethod

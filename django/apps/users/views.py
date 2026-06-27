@@ -1110,3 +1110,111 @@ class MarkNotificationReadView(APIView):
             return APIResponse.error(
                 message="Not found", status_code=404, code="not_found"
             )
+
+
+# ---------------------------------------------------------------------------
+# API Keys
+# ---------------------------------------------------------------------------
+
+class ListAPIKeysView(APIView):
+    """List all API keys for the current tenant."""
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    @extend_schema(
+        summary="List API Keys",
+        responses={200: OpenApiResponse(description="List of API keys")},
+    )
+    def get(self, request):
+        from .models import APIKey
+        from .serializers import APIKeySerializer
+
+        keys = APIKey.objects.filter(tenant=request.user.tenant).order_by("-created_at")
+        serializer = APIKeySerializer(keys, many=True)
+        return APIResponse.success(data=serializer.data)
+
+
+class CreateAPIKeyView(APIView):
+    """Create a new API key."""
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    @extend_schema(
+        summary="Create API Key",
+        responses={201: OpenApiResponse(description="API Key created")},
+    )
+    def post(self, request):
+        from .serializers import APIKeyCreateSerializer
+
+        serializer = APIKeyCreateSerializer(data=request.data, context={"request": request})
+        if serializer.is_valid():
+            key = serializer.save()
+            return APIResponse.success(
+                data=APIKeyCreateSerializer(key).data,
+                message="API key created. Please save it now, you will not be able to see it again.",
+                status_code=201
+            )
+        return APIResponse.error(
+            message="Failed to create API key",
+            status_code=400,
+            code="validation_error",
+            errors=serializer.errors,
+        )
+
+
+class RevokeAPIKeyView(APIView):
+    """Revoke (deactivate) an API key."""
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    @extend_schema(
+        summary="Revoke API Key",
+        responses={200: OpenApiResponse(description="API Key revoked")},
+    )
+    def post(self, request, key_id):
+        from .models import APIKey
+        from outbox.models import OutboxEvent
+
+        try:
+            key = APIKey.objects.get(id=key_id, tenant=request.user.tenant)
+            key.is_active = False
+            key.save()
+            
+            # Publish CDC outbox event for FastAPI to snapshot
+            OutboxEvent.objects.create(
+                topic="config.api_keys",
+                payload={
+                    "id": str(key.id),
+                    "tenant_id": str(key.tenant_id),
+                    "key": key.key,
+                    "is_active": key.is_active,
+                }
+            )
+            
+            return APIResponse.success(message="API key revoked")
+        except APIKey.DoesNotExist:
+            return APIResponse.error(
+                message="API key not found", status_code=404, code="not_found"
+            )
+
+from rest_framework.permissions import AllowAny
+
+class InternalResolveAPIKeyView(APIView):
+    """Internal endpoint for FastAPI to resolve API keys to tenant IDs."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        api_key = request.headers.get("X-Api-Key")
+        if not api_key:
+            return APIResponse.error(message="Missing X-Api-Key header", status_code=400)
+
+        from .models import APIKey
+        try:
+            key_obj = APIKey.objects.get(key=api_key, is_active=True)
+            return APIResponse.success(data={"tenant_id": str(key_obj.tenant.id)})
+        except APIKey.DoesNotExist:
+            return APIResponse.error(message="Invalid or inactive API key", status_code=401)

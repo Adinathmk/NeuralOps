@@ -150,6 +150,7 @@ async def validation_exception_handler(
         "validation_error",
         path=str(request.url),
         error_count=len(details),
+        details=details,
     )
     return _error_response(
         status_code=422,

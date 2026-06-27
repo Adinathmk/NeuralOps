@@ -108,3 +108,16 @@ async def rate_limit_dependency(request: Request, tenant: ValidatedTenant) -> No
 
 
 RateLimitDependency = Annotated[None, Depends(rate_limit_dependency)]
+
+
+from app.api.dependencies.tenant import APIKeyTenant
+
+async def api_key_rate_limit_dependency(request: Request, tenant: APIKeyTenant) -> None:
+    """
+    Token bucket rate limiter for API key endpoints.
+    Limits are enforced per-tenant based on their billing tier.
+    """
+    # Reuse the exact same logic but passing the APIKeyTenant
+    return await rate_limit_dependency(request, tenant)
+
+APIKeyRateLimitDependency = Annotated[None, Depends(api_key_rate_limit_dependency)]

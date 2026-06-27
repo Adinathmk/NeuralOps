@@ -565,3 +565,61 @@ class NotificationSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = fields
+
+
+class APIKeySerializer(serializers.ModelSerializer):
+    """Serializer for listing API keys."""
+    
+    key_prefix = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import APIKey
+
+        model = APIKey
+        fields = ["id", "name", "key_prefix", "is_active", "last_used_at", "created_at"]
+        read_only_fields = fields
+        
+    def get_key_prefix(self, obj):
+        # Return first 14 chars like nops_live_abcd
+        return obj.key[:14] if obj.key else ""
+
+
+class APIKeyCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating an API key."""
+
+    class Meta:
+        from .models import APIKey
+
+        model = APIKey
+        fields = ["id", "name", "key", "created_at"]
+        read_only_fields = ["id", "key", "created_at"]
+
+    def create(self, validated_data):
+        tenant = self.context["request"].user.tenant
+        user = self.context["request"].user
+
+        import secrets
+
+        # Generate a new random key
+        raw_key = f"nops_live_{secrets.token_hex(24)}"
+        validated_data["key"] = raw_key
+        validated_data["tenant"] = tenant
+        validated_data["created_by"] = user
+
+        from .models import APIKey
+        from outbox.models import OutboxEvent
+        
+        api_key_obj = APIKey.objects.create(**validated_data)
+        
+        # Publish CDC outbox event for FastAPI to snapshot
+        OutboxEvent.objects.create(
+            topic="config.api_keys",
+            payload={
+                "id": str(api_key_obj.id),
+                "tenant_id": str(api_key_obj.tenant_id),
+                "key": api_key_obj.key,
+                "is_active": api_key_obj.is_active,
+            }
+        )
+        
+        return api_key_obj

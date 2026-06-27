@@ -106,6 +106,13 @@ async def test_ingest_logs_success(
                 "timestamp": "2026-05-29T10:00:01Z",
             },
         ],
+        "trigger": {
+            "level": "error",
+            "message": "DbTimeout",
+        },
+        "sdk_meta": {
+            "python_version": "3.11"
+        }
     }
 
     response = await client.post(
@@ -137,6 +144,8 @@ async def test_ingest_logs_success(
     outbox_row = (await db_session.execute(outbox_stmt)).scalar_one_or_none()
     assert outbox_row is not None
     assert outbox_row.topic == f"raw.logs.{TEST_TENANT_ID}"
+    assert outbox_row.payload.get("trigger") == {"level": "error", "message": "DbTimeout"}
+    assert outbox_row.payload.get("sdk_meta") == {"python_version": "3.11"}
 
 
 async def test_ingest_logs_suspended_tenant(

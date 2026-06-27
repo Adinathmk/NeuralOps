@@ -113,6 +113,11 @@ class RawLogConsumer:
                 s3_path = payload.get("s3_path")
                 service_name = payload.get("service_name")
                 environment = payload.get("environment")
+                trigger = payload.get("trigger")
+                sdk_meta = payload.get("sdk_meta")
+                file_path = payload.get("file_path")
+                line_number = payload.get("line_number")
+                error_type = payload.get("error_type")
 
                 if (
                     tenant_id
@@ -131,6 +136,11 @@ class RawLogConsumer:
                         s3_path=s3_path,
                         service_name=service_name,
                         environment=environment,
+                        trigger=trigger,
+                        sdk_meta=sdk_meta,
+                        file_path=file_path,
+                        line_number=line_number,
+                        error_type=error_type,
                     )
                 else:
                     logger.warning("raw_log_missing_fields", extra={"payload": payload})

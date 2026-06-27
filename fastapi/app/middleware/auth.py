@@ -52,6 +52,7 @@ UNAUTHENTICATED_PATHS: FrozenSet[str] = frozenset(
         "/redoc",
         "/openapi.json",
         "/api/v1/webhooks/github",
+        "/api/v1/ingest/logs",
     }
 )
 

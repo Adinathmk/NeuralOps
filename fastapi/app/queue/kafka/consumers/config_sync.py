@@ -56,7 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.database.session import AsyncSessionLocal
-from app.models.snapshots import AlertRuleSnapshot, PlaybookSnapshot, TenantSnapshot
+from app.models.snapshots import AlertRuleSnapshot, PlaybookSnapshot, TenantSnapshot, APIKeySnapshot
 from app.worker.tasks.wipe_data import wipe_tenant_data
 
 logger = logging.getLogger(__name__)
@@ -65,8 +65,9 @@ logger = logging.getLogger(__name__)
 TOPIC_TENANTS = "config.tenants"
 TOPIC_ALERT_RULES = "config.alert_rules"
 TOPIC_PLAYBOOKS = "config.playbooks"
+TOPIC_API_KEYS = "config.api_keys"
 
-CONFIG_TOPICS = (TOPIC_TENANTS, TOPIC_ALERT_RULES, TOPIC_PLAYBOOKS)
+CONFIG_TOPICS = (TOPIC_TENANTS, TOPIC_ALERT_RULES, TOPIC_PLAYBOOKS, TOPIC_API_KEYS)
 
 
 # ── GitHub field mapping ───────────────────────────────────────────────────────
@@ -459,6 +460,8 @@ class ConfigSyncConsumer:
                     await self._handle_alert_rule_event(payload)
                 elif topic == TOPIC_PLAYBOOKS:
                     await self._handle_playbook_event(payload)
+                elif topic == TOPIC_API_KEYS:
+                    await self._handle_api_keys_event(payload)
                 else:
                     logger.warning(
                         "config_sync_unknown_topic",
@@ -984,6 +987,86 @@ class ConfigSyncConsumer:
                     "error": str(exc),
                 },
             )
+
+    # ── Internal: API Keys Sync ───────────────────────────────────────────────
+
+    async def _handle_api_keys_event(self, payload: Dict[str, Any]) -> None:
+        """
+        Handle a config.api_keys CDC event from Django (DB-1).
+        
+        Payload:
+        {
+          "id": "<uuid>",
+          "tenant_id": "<uuid>",
+          "key": "nops_live_...",
+          "is_active": true
+        }
+        """
+        if "id" not in payload:
+            raise KeyError("id")
+        
+        try:
+            key_id = uuid.UUID(payload["id"])
+            tenant_id = uuid.UUID(payload["tenant_id"])
+        except (ValueError, KeyError) as exc:
+            logger.error(
+                "config_sync_api_key_invalid_uuid",
+                extra={"payload": payload, "error": str(exc)},
+            )
+            return
+
+        api_key_str = payload.get("key", "")
+        is_active = payload.get("is_active", True)
+        
+        from sqlalchemy.dialects.postgresql import insert
+
+        async with AsyncSessionLocal() as db:
+            stmt = insert(APIKeySnapshot).values(
+                id=key_id,
+                tenant_id=tenant_id,
+                key=api_key_str,
+                is_active=is_active,
+            )
+            
+            # Upsert on conflict
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[APIKeySnapshot.id],
+                set_={
+                    "is_active": stmt.excluded.is_active,
+                }
+            )
+            
+            try:
+                await db.execute(stmt)
+                await db.commit()
+                
+                logger.info(
+                    "config_sync_api_key_upserted",
+                    extra={
+                        "api_key_id": str(key_id),
+                        "tenant_id": str(tenant_id),
+                        "is_active": is_active,
+                    },
+                )
+                
+                # Manage Redis cache for immediate consistency
+                if self._redis:
+                    cache_key = f"apikey_to_tenant:{api_key_str}"
+                    if is_active:
+                        # Pre-warm the cache immediately upon creation!
+                        await self._redis.setex(cache_key, 3600, str(tenant_id))
+                    else:
+                        # Purge the cache on revocation
+                        await self._redis.delete(cache_key)
+                    
+            except Exception as exc:
+                await db.rollback()
+                logger.error(
+                    "config_sync_api_key_db_error",
+                    extra={"api_key_id": str(key_id), "error": str(exc)},
+                )
+                raise
+
 
     # ── Internal: safe consumer stop ─────────────────────────────────────────
 

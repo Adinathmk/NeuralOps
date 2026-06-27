@@ -107,7 +107,7 @@ class PlaybookMatcherNode:
             query_vector = await self._get_query_embedding(query_text)
 
             # 3. ANN Search in pgvector
-            matches = search_similar_playbooks(
+            matches = await search_similar_playbooks(
                 query_vector=query_vector,
                 tenant_id=tenant_id,
                 top_k=1,

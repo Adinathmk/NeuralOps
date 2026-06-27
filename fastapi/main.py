@@ -48,6 +48,7 @@ from app.database.session import engine
 from app.middleware.auth import JWTAuthMiddleware
 from app.middleware.error_handler import register_exception_handlers
 from app.middleware.tenant_rls import TenantRLSMiddleware
+from app.middleware.gzip_request import GZipRequestMiddleware
 
 # ── Model imports (register with SQLAlchemy metadata before Alembic / queries) ─
 from app.models import code_index  # noqa: F401
@@ -182,6 +183,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Decompress incoming SDK payloads (which are gzip compressed if >1024 bytes)
+app.add_middleware(GZipRequestMiddleware)
 
 # 2. JWT authentication — reads Authorization header or gateway-injected
 #    headers; attaches tenant_id, user_id, user_role to request.state.

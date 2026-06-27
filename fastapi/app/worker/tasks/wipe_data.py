@@ -71,18 +71,21 @@ async def _wipe_tenant_data_async(tenant_id: str) -> dict:
         es_kwargs["verify_certs"] = False
 
     es = AsyncElasticsearch(**es_kwargs)
-    index_prefix = f"logs-tenant-{tenant_id}"
     try:
-        # Elasticsearch cluster settings may forbid wildcard deletions.
-        # Safest approach: list indices and delete exact matches.
-        indices_resp = await es.cat.indices(format="json")
-        indices_to_delete = [
-            idx["index"]
-            for idx in indices_resp
-            if idx["index"].startswith(index_prefix)
-        ]
-        if indices_to_delete:
-            await es.indices.delete(index=",".join(indices_to_delete))
+        # Delete documents for this tenant across all neuralops-logs indices.
+        # This handles both shared indices (where we must not delete the index itself)
+        # and enterprise dedicated indices (where deleting the docs empties it).
+        await es.delete_by_query(
+            index="neuralops-logs*",
+            body={
+                "query": {
+                    "term": {
+                        "tenant_id": tenant_id
+                    }
+                }
+            },
+            conflicts="proceed",
+        )
     except Exception as exc:
         logger.error(
             "wipe_data_es_failed",

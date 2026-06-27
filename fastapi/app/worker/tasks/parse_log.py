@@ -317,11 +317,14 @@ def _parse_stack_frames_from_list(
         if not isinstance(raw, dict):
             continue
         try:
+            # Map 'function' (from new payload) or 'method' (legacy) to method field
+            method_str = str(raw.get("method") or raw.get("function") or "")
             frame = StackFrame(
                 file=str(raw.get("file", "") or ""),
                 line=raw.get("line", 0),
-                method=str(raw.get("method", "") or ""),
+                method=method_str,
                 module=str(raw.get("module", "") or ""),
+                code_context=str(raw.get("code_context", "") or ""),
             )
             frames.append(frame)
         except Exception:
@@ -444,6 +447,13 @@ def _parse_stack_frames(
     if isinstance(raw_stack_trace, list):
         return _parse_stack_frames_from_list(raw_stack_trace)
 
+    # Format B: structured dict (custom trigger payload)
+    if isinstance(raw_stack_trace, dict):
+        frames = raw_stack_trace.get("frames", [])
+        if isinstance(frames, list):
+            return _parse_stack_frames_from_list(frames)
+        return []
+
     # Format B or C: plain text
     if isinstance(raw_stack_trace, str):
         text = raw_stack_trace.strip()
@@ -485,6 +495,11 @@ def _build_parsed_event(
     service_name: str,
     environment: str,
     entries: List[Dict[str, Any]],
+    trigger: Optional[Dict[str, Any]] = None,
+    sdk_meta: Optional[Dict[str, Any]] = None,
+    file_path: Optional[str] = None,
+    line_number: Optional[int] = None,
+    error_type: Optional[str] = None,
 ) -> ParsedLogEvent:
     """
     Orchestrate trigger identification, field extraction, and stack trace
@@ -492,8 +507,8 @@ def _build_parsed_event(
 
     This function is pure (no I/O) and fully testable in isolation.
     """
-    # Step 1: Find the triggering log entry
-    trigger = _find_trigger_log(entries)
+    # Step 1: Use explicit trigger if provided, else heuristic
+    trigger = trigger or _find_trigger_log(entries)
 
     if not trigger:
         # No usable log entry found — build a minimal event
@@ -518,21 +533,46 @@ def _build_parsed_event(
     raw_severity: str = str(trigger.get("level", "unknown") or "unknown")
     raw_stack_trace: Any = trigger.get("stack_trace") or trigger.get("stackTrace")
 
-    # Step 3: Extract error type from message
-    error_type: str = _extract_error_type(raw_message)
+    # Step 3: Extract error type from top-level, stack trace dict, or regex fallback
+    final_error_type: str = "UnknownError"
+    if error_type and error_type != "UnknownError":
+        final_error_type = error_type
+    elif isinstance(raw_stack_trace, dict) and raw_stack_trace.get("exception_type"):
+        final_error_type = str(raw_stack_trace["exception_type"])
+        raw_message = str(raw_stack_trace.get("exception_message") or raw_message)
+    else:
+        final_error_type = _extract_error_type(raw_message)
 
     # Step 4: Parse stack frames
-    stack_frames: List[StackFrame] = _parse_stack_frames(raw_stack_trace)
+    stack_frames: List[StackFrame] = []
+    if isinstance(raw_stack_trace, dict) and "frames" in raw_stack_trace:
+        # Pre-structured SDK v1.0.0 frames
+        stack_frames = [
+            StackFrame(
+                file=f.get("file", ""),
+                line=f.get("line", 0),
+                method=f.get("function", ""),
+                code_context=f.get("code") or f.get("code_context") or "",
+            )
+            for f in raw_stack_trace["frames"]
+        ]
+    else:
+        # Legacy regex parse
+        stack_frames = _parse_stack_frames(raw_stack_trace)
 
-    # Step 5: Extract crash location from top frame
-    crash_file: str = ""
-    crash_line: int = 0
+    # Step 5: Extract crash location
+    # Priority 1: Top-level SDK fields (file_path, line_number)
+    # Priority 2: Top frame from stack trace (frames[0])
+    crash_file: str = file_path or ""
+    crash_line: int = line_number or 0
     crash_method: str = ""
 
     if stack_frames:
-        top_frame = stack_frames[0]
-        crash_file = top_frame.file
-        crash_line = top_frame.line
+        top_frame = stack_frames[0]  # Must remain 0 for innermost frame!
+        if not crash_file:
+            crash_file = top_frame.file
+        if not crash_line:
+            crash_line = top_frame.line
         crash_method = top_frame.method
 
     # Step 6: Assemble and validate via Pydantic
@@ -542,7 +582,7 @@ def _build_parsed_event(
         s3_path=s3_path,
         service_name=service_name,
         environment=environment,
-        error_type=error_type,
+        error_type=final_error_type,
         error_message=raw_message,
         severity=raw_severity,
         crash_file=crash_file,
@@ -550,6 +590,7 @@ def _build_parsed_event(
         crash_method=crash_method,
         stack_frames=stack_frames,
         context_log_count=len(entries),
+        sdk_meta=sdk_meta,
     )
 
 
@@ -647,6 +688,11 @@ def parse_log(
     s3_path: str,
     service_name: str,
     environment: str,
+    trigger: Optional[Dict[str, Any]] = None,
+    sdk_meta: Optional[Dict[str, Any]] = None,
+    file_path: Optional[str] = None,
+    line_number: Optional[int] = None,
+    error_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Parse a raw log context buffer from S3 and enqueue the run_agent task.
@@ -768,6 +814,11 @@ def parse_log(
             service_name=service_name,
             environment=environment,
             entries=entries,
+            trigger=trigger,
+            sdk_meta=sdk_meta,
+            file_path=file_path,
+            line_number=line_number,
+            error_type=error_type,
         )
     except Exception as exc:
         # Pydantic validation or unexpected extraction error.

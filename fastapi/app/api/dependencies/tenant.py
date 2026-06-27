@@ -337,3 +337,78 @@ async def get_validated_tenant(
 
 # ── Annotated type alias ───────────────────────────────────────────────────────
 ValidatedTenant = Annotated[TenantSnapshot, Depends(get_validated_tenant)]
+
+# ── API Key Dependency ─────────────────────────────────────────────────────────
+
+from fastapi import HTTPException, status
+
+async def get_tenant_from_api_key(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> TenantSnapshot:
+    """
+    FastAPI dependency: validate the X-Api-Key header and return the tenant.
+
+    Resolution order:
+      1. Read X-Api-Key from request headers.
+      2. Check Redis for a cached API-Key -> Tenant UUID resolution.
+      3. Call Django internal endpoint on cache miss.
+      4. Proceed with standard suspension checks and cache retrieval.
+    """
+    api_key = request.headers.get("x-api-key") or request.headers.get("X-Api-Key")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-Api-Key header",
+        )
+
+    # 1. Try Redis cache first
+    redis = get_redis()
+    cache_key = f"apikey_to_tenant:{api_key}"
+    tenant_id_bytes = await redis.get(cache_key)
+    
+    tenant_id = None
+    if tenant_id_bytes:
+        # redis-py returns str if decode_responses=True
+        tenant_id = tenant_id_bytes if isinstance(tenant_id_bytes, str) else tenant_id_bytes.decode("utf-8")
+    else:
+        # 2. On miss, query the local APIKeySnapshot table
+        from app.models.snapshots import APIKeySnapshot
+        from sqlalchemy import select
+        
+        result = await db.execute(
+            select(APIKeySnapshot.tenant_id).where(
+                APIKeySnapshot.key == api_key,
+                APIKeySnapshot.is_active == True
+            )
+        )
+        found_tenant_id = result.scalar_one_or_none()
+        
+        if found_tenant_id:
+            tenant_id = str(found_tenant_id)
+            # Cache for 1 hour
+            await redis.setex(cache_key, 3600, tenant_id)
+            
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or inactive API key",
+        )
+
+    logger.debug("api_key_validation_start", tenant_id=tenant_id)
+
+    # Layer 1: Redis suspension flag
+    await _check_suspension_flag(tenant_id)
+
+    # Layer 1b + 2: Redis L1 cache → Postgres read-through
+    snapshot = await _get_tenant_snapshot(tenant_id, db)
+
+    logger.debug(
+        "api_key_validation_success",
+        tenant_id=tenant_id,
+        plan_tier=snapshot.plan_tier,
+    )
+
+    return snapshot
+
+APIKeyTenant = Annotated[TenantSnapshot, Depends(get_tenant_from_api_key)]

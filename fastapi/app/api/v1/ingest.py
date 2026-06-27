@@ -178,11 +178,15 @@ async def _upload_to_s3(
 # ── Route ──────────────────────────────────────────────────────────────────────
 
 
+from app.api.dependencies.tenant import APIKeyTenant
+
+from app.api.dependencies.rate_limit import api_key_rate_limit_dependency
+
 @router.post(
     "/ingest/logs",
     response_model=LogIngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(rate_limit_dependency)],
+    dependencies=[Depends(api_key_rate_limit_dependency)],
     summary="Ingest SDK log context buffer",
     description=(
         "Accepts the NeuralOps SDK's circular context-log buffer after an "
@@ -203,7 +207,7 @@ async def _upload_to_s3(
 async def ingest_logs(
     request: Request,
     payload: LogIngestRequest,
-    tenant: TenantSnapshot = Depends(get_validated_tenant),
+    tenant: APIKeyTenant,
     db: AsyncSession = Depends(get_db),
 ) -> LogIngestResponse:
     """
@@ -295,6 +299,19 @@ async def ingest_logs(
             "s3_path": s3_key,
             "context_log_count": len(payload.context_logs),
         }
+        if payload.trigger is not None:
+            # Pydantic v2 `.model_dump()` or v1 `.dict()` - depends on the FastAPI setup.
+            # Assuming payload.trigger is a Pydantic model now since we updated schemas.
+            outbox_payload["trigger"] = payload.trigger.dict() if hasattr(payload.trigger, "dict") else payload.trigger
+        if payload.sdk_meta is not None:
+            outbox_payload["sdk_meta"] = payload.sdk_meta.dict() if hasattr(payload.sdk_meta, "dict") else payload.sdk_meta
+        if payload.file_path is not None:
+            outbox_payload["file_path"] = payload.file_path
+        if payload.line_number is not None:
+            outbox_payload["line_number"] = payload.line_number
+        if payload.error_type is not None:
+            outbox_payload["error_type"] = payload.error_type
+
         write_outbox(
             session=db,
             topic=f"raw.logs.{tenant_id_str}",

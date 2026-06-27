@@ -203,11 +203,18 @@ def compute_fingerprint(
         crash_line // FINGERPRINT_LINE_BUCKET
     ) * FINGERPRINT_LINE_BUCKET
 
+    # Normalize crash_file to remove absolute OS paths (Windows/Docker)
+    # Keep only the last 3 components (e.g. app/services/order_service.py)
+    normalised_file = crash_file.replace("\\", "/")
+    if "/" in normalised_file:
+        parts = normalised_file.split("/")
+        normalised_file = "/".join(parts[-3:])
+
     # Build the raw string from all six components
     # Use a separator that cannot appear in any component value
     raw: str = (
         f"{tenant_id}:{service_name}:{error_type}:"
-        f"{crash_file}:{normalised_line}:{crash_method}"
+        f"{normalised_file}:{normalised_line}:{crash_method}"
     )
 
     # Compute SHA-256 and return lowercase hex
@@ -219,7 +226,8 @@ def compute_fingerprint(
             "tenant_id": tenant_id,
             "service_name": service_name,
             "error_type": error_type,
-            "crash_file": crash_file,
+            "crash_file_raw": crash_file,
+            "crash_file_normalised": normalised_file,
             "crash_line_raw": crash_line,
             "crash_line_normalised": normalised_line,
             "crash_method": crash_method,

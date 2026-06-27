@@ -41,6 +41,7 @@ Outputs written to AgentState
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -129,6 +130,7 @@ def _build_user_prompt(
     crash_method: str,
     root_cause: str,
     code_context: str,
+    sdk_meta: Optional[Dict[str, Any]],
 ) -> str:
     parts: List[str] = []
 
@@ -139,6 +141,10 @@ def _build_user_prompt(
     parts.append(f"**Type:** {error_type}")
     parts.append(f"**Message:** {error_message or '(none)'}")
     parts.append(f"**Location:** `{crash_file}:{crash_line}` in `{crash_method}`")
+
+    if sdk_meta:
+        parts.append("\n## Execution Environment / SDK Meta")
+        parts.append(json.dumps(sdk_meta, indent=2))
 
     if code_context:
         parts.append("\n## Source Code at Crash Location")
@@ -234,6 +240,7 @@ class FixGeneratorNode:
         crash_file: str = str(parsed.get("crash_file") or "")
         crash_line: int = int(parsed.get("crash_line") or 0)
         crash_method: str = str(parsed.get("crash_method") or "")
+        sdk_meta: Optional[Dict[str, Any]] = parsed.get("sdk_meta")
 
         code_context: str = str(state.get("code_context") or "")
         root_cause: str = str(state.get("root_cause") or "")
@@ -260,6 +267,7 @@ class FixGeneratorNode:
                 crash_method=crash_method,
                 root_cause=root_cause,
                 code_context=code_context,
+                sdk_meta=sdk_meta,
             )
 
             # ── Gemini call ───────────────────────────────────────────────

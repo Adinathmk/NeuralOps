@@ -212,22 +212,39 @@ async def _find_symbol_by_location(
         )
         return None
 
+    # Normalize the path from the SDK (handles Windows \ and POSIX /)
+    normalized_path = file_path.replace("\\", "/")
+    filename = normalized_path.split("/")[-1]
+
     try:
         stmt = (
             select(CodeIndex)
             .where(
                 and_(
                     CodeIndex.tenant_id == tenant_uuid,
-                    CodeIndex.file_path.ilike(f"%{file_path}%"),
+                    CodeIndex.file_path.ilike(f"%{filename}%"),
                     CodeIndex.start_line <= line_number,
                     CodeIndex.end_line >= line_number,
                 )
             )
             .order_by((CodeIndex.end_line - CodeIndex.start_line).asc())
-            .limit(1)
         )
         result = await session.execute(stmt)
-        return result.scalar_one_or_none()
+        matches = result.scalars().all()
+        
+        # Find the best match whose DB file_path is a suffix of the SDK's path
+        best_match = None
+        for match in matches:
+            # DB file paths use POSIX slashes (e.g. app/services/order_service.py)
+            if normalized_path.endswith(match.file_path):
+                best_match = match
+                break
+        
+        # Fallback to the first match if no exact suffix match was found
+        if not best_match and matches:
+            best_match = matches[0]
+
+        return best_match
     except Exception as exc:
         logger.warning(
             "patch_generator_location_query_failed",

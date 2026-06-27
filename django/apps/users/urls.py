@@ -29,6 +29,9 @@ from .views import (
     ValidateInvitationView,
     VerifyEmailView,
     VerifyMFATokenView,
+    ListAPIKeysView,
+    CreateAPIKeyView,
+    RevokeAPIKeyView,
 )
 
 urlpatterns = [
@@ -101,4 +104,8 @@ urlpatterns = [
         MarkNotificationReadView.as_view(),
         name="mark_notification_read",
     ),
+    # API Keys
+    path("team/api-keys", ListAPIKeysView.as_view(), name="list_api_keys"),
+    path("team/api-keys/create", CreateAPIKeyView.as_view(), name="create_api_key"),
+    path("team/api-keys/<uuid:key_id>/revoke", RevokeAPIKeyView.as_view(), name="revoke_api_key"),
 ]

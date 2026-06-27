@@ -36,7 +36,7 @@ def generate_app_jwt() -> str:
 
     payload = {
         "iat": now - 60,  # Issued 60s ago to allow for clock drift
-        "exp": now + (10 * 60),  # Expires in 10 minutes
+        "exp": now + (5 * 60),  # Expires in 5 minutes (avoids clock skew 401s)
         "iss": str(app_id),
     }
 

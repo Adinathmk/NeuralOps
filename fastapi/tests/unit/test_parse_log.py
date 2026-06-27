@@ -428,6 +428,34 @@ class TestBuildParsedEvent:
         assert event.severity == "critical"
         assert event.error_type == "OutOfMemoryError"
 
+    def test_explicit_trigger_bypasses_heuristic(self):
+        entries = [
+            _make_log_entry("critical", "OutOfMemoryError: heap exhausted"),
+        ]
+        trigger = {
+            "level": "error",
+            "message": "ZeroDivisionError: division by zero",
+            "stack_trace": {
+                "frames": [
+                    {
+                        "file": "math.py",
+                        "line": 42,
+                        "function": "divide",
+                        "code_context": "return x / 0"
+                    }
+                ]
+            }
+        }
+        event = _build_parsed_event(**self._base_kwargs(), entries=entries, trigger=trigger)
+        
+        # Despite a critical entry in context, it should use the trigger
+        assert event.severity == "error"
+        assert event.error_type == "ZeroDivisionError"
+        assert event.crash_file == "math.py"
+        assert event.crash_line == 42
+        assert event.crash_method == "divide"
+        assert event.stack_frames[0].code_context == "return x / 0"
+
 
 # ---------------------------------------------------------------------------
 # ParsedLogEvent serialisation tests
@@ -458,6 +486,7 @@ class TestParsedLogEventSerialization:
                 )
             ],
             context_log_count=50,
+            sdk_meta={"python_version": "3.11", "framework": "Django"}
         )
 
     def test_to_dict_produces_json_serialisable_output(self):
@@ -481,6 +510,7 @@ class TestParsedLogEventSerialization:
         assert len(restored.stack_frames) == len(original.stack_frames)
         assert restored.stack_frames[0].file == original.stack_frames[0].file
         assert restored.stack_frames[0].line == original.stack_frames[0].line
+        assert restored.sdk_meta == original.sdk_meta
 
     def test_severity_normalisation_on_construction(self):
         event = ParsedLogEvent(

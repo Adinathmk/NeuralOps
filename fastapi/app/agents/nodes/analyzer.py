@@ -138,6 +138,7 @@ def _build_user_prompt(
     code_context: str,
     playbook_instructions: Optional[str],
     context_log_count: int,
+    sdk_meta: Optional[Dict[str, Any]],
 ) -> str:
     parts: List[str] = []
 
@@ -147,6 +148,10 @@ def _build_user_prompt(
     parts.append(f"**Error Message:** {error_message or '(none)'}")
     parts.append(f"**Crash Location:** `{crash_file}:{crash_line}` in `{crash_method}`")
     parts.append(f"**Context Log Entries:** {context_log_count}")
+
+    if sdk_meta:
+        parts.append("\n## Execution Environment / SDK Meta")
+        parts.append(json.dumps(sdk_meta, indent=2))
 
     if stack_trace_str:
         parts.append("\n## Stack Trace")
@@ -246,16 +251,20 @@ class AnalyzerNode:
         crash_method: str = str(parsed.get("crash_method") or "")
         context_log_count: int = int(parsed.get("context_log_count") or 0)
         stack_frames: List[Dict[str, Any]] = parsed.get("stack_frames") or []
+        sdk_meta: Optional[Dict[str, Any]] = parsed.get("sdk_meta")
 
         code_context: str = str(state.get("code_context") or "")
         playbook_instructions: Optional[str] = state.get("playbook_instructions")
 
         # Format stack trace for the prompt
-        stack_trace_str: str = "\n".join(
-            f"  at {f.get('method', '?')} "
-            f"({f.get('file', '?')}:{f.get('line', '?')})"
-            for f in stack_frames
-        )
+        stack_parts = []
+        for f in stack_frames:
+            frame_str = f"  at {f.get('method', '?')} ({f.get('file', '?')}:{f.get('line', '?')})"
+            frame_code = f.get('code_context')
+            if frame_code:
+                frame_str += f"\n    Context:\n      {frame_code.strip()}"
+            stack_parts.append(frame_str)
+        stack_trace_str: str = "\n".join(stack_parts)
 
         cb = _get_circuit_breaker()
         fallback_used: bool = False
@@ -283,6 +292,7 @@ class AnalyzerNode:
                 code_context=code_context,
                 playbook_instructions=playbook_instructions,
                 context_log_count=context_log_count,
+                sdk_meta=sdk_meta,
             )
 
             # ── Gemini call ───────────────────────────────────────────────────
