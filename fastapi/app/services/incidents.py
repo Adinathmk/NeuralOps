@@ -47,8 +47,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.models.incidents import Alert, Analysis, Incident
+from app.models.incidents import Analysis, Incident, NotificationDelivery
 from app.models.outbox import write_outbox
+from app.models.snapshots import AlertRuleSnapshot
 from app.schemas.parse_log import ParsedLogEvent
 
 logger = get_logger(__name__)
@@ -647,6 +648,33 @@ class IncidentService:
             )
             self._session.add(analysis)
 
+            delivery_ids = []
+            if not is_draft:
+                stmt = select(AlertRuleSnapshot).where(
+                    AlertRuleSnapshot.tenant_id == tenant_id,
+                    AlertRuleSnapshot.enabled == True
+                )
+                rules = (await self._session.execute(stmt)).scalars().all()
+                for rule in rules:
+                    if severity not in rule.severity_filter:
+                        continue
+                    rule_threshold = float(rule.confidence_threshold) if rule.confidence_threshold is not None else 0.0
+                    if confidence_score is not None and confidence_score < rule_threshold:
+                        continue
+                    
+                    for dest in rule.destinations:
+                        deliv_id = _uuid_module.uuid4()
+                        delivery = NotificationDelivery(
+                            id=deliv_id,
+                            tenant_id=tenant_id,
+                            incident_id=incident_id,
+                            destination_type=dest.get("type"),
+                            destination_config=dest,
+                            status="pending"
+                        )
+                        self._session.add(delivery)
+                        delivery_ids.append(deliv_id)
+
             # ── Steps 3 & 4: Outbox events (skipped for drafts) ───────────────
             if not is_draft:
                 # incidents.created — consumed by Django snapshot consumer
@@ -720,6 +748,7 @@ class IncidentService:
         return {
             "incident_id": incident_id,
             "analysis_id": analysis_id,
+            "delivery_ids": delivery_ids,
         }
 
 

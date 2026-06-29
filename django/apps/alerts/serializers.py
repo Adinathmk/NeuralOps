@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from .models import AlertRule
 
-VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+VALID_SEVERITIES = {"critical", "high", "medium", "low"}
 
 
 class AlertRuleSerializer(serializers.ModelSerializer):
@@ -13,7 +13,7 @@ class AlertRuleSerializer(serializers.ModelSerializer):
             "tenant",
             "confidence_threshold",
             "severity_filter",
-            "recipient_ids",
+            "destinations",
             "enabled",
             "source_version",
             "created_at",
@@ -47,14 +47,6 @@ class AlertRuleSerializer(serializers.ModelSerializer):
             )
         return value
 
-    def validate_recipient_ids(self, value):
-        if not isinstance(value, list):
-            raise serializers.ValidationError("recipient_ids must be a list.")
-        import uuid as _uuid
-
-        for item in value:
-            try:
-                _uuid.UUID(str(item))
-            except (ValueError, AttributeError):
-                raise serializers.ValidationError(f"'{item}' is not a valid UUID.")
-        return [str(item) for item in value]
+    def validate_destinations(self, value):
+        from .destinations import validate_destinations_list
+        return validate_destinations_list(value)

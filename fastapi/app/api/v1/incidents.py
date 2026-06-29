@@ -586,8 +586,14 @@ async def get_context_logs(
 
     # ── Step 1: Fetch incident to get the first S3 path ───────────────────
     stmt = select(Incident.occurrences).where(
-        Incident.id == incident_id,
         Incident.tenant_id == tenant_id,
+        or_(
+            Incident.id == incident_id,
+            Incident.source_log_id == incident_id,
+            Incident.occurrences.contains(
+                [f"logs/{tenant_id}/context/{incident_id}.json.gz"]
+            ),
+        ),
     )
     result = await db.execute(stmt)
     row = result.one_or_none()

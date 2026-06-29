@@ -399,6 +399,7 @@ async def _execute_run_agent(
         "structured_patch": agent_result.get("structured_patch") or "",
         "root_cause": agent_result.get("root_cause") or "",
         "suggested_fix": agent_result.get("suggested_fix") or "",
+        "delivery_ids": persistence_result.get("delivery_ids", []),
     }
 
 
@@ -519,6 +520,17 @@ def run_agent(
                 "github_pr_dispatch_failed",
                 extra={"error": str(exc), "task_id": task_id},
             )
+
+    # ── Dispatch Notifications task (synchronous) ─────────────────────────────
+    delivery_ids = result.get("delivery_ids") or []
+    if delivery_ids:
+        try:
+            from app.worker.tasks.send_notification import send_notification
+            for deliv_id in delivery_ids:
+                send_notification.delay(str(deliv_id))
+                logger.info("send_notification_task_dispatched", extra={"delivery_id": str(deliv_id)})
+        except Exception as exc:
+            logger.warning("send_notification_dispatch_failed", extra={"error": str(exc), "task_id": task_id})
 
     logger.info(
         "run_agent_task_complete",

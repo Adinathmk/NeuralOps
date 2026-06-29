@@ -48,7 +48,7 @@ from sqlalchemy import (
     event,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -214,10 +214,10 @@ class AlertRuleSnapshot(Base):
         nullable=True,
         comment="Only alert on these severity levels e.g. ['critical','high'].",
     )
-    recipient_ids: Column = Column(
-        ARRAY(UUID(as_uuid=True)),
+    destinations: Column = Column(
+        JSONB,
         nullable=True,
-        comment="UUIDs of users who should receive this alert.",
+        comment="List of destination objects (e.g. {'type': 'user', 'id': 'uuid'}).",
     )
     enabled: Column = Column(Boolean, nullable=False, default=True)
     source_version: Column = Column(BigInteger, nullable=True)

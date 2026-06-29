@@ -27,7 +27,7 @@ class AlertRuleAdmin(admin.ModelAdmin):
                 "fields": (
                     "confidence_threshold",
                     "severity_filter",
-                    "recipient_ids",
+                    "destinations",
                     "enabled",
                 )
             },

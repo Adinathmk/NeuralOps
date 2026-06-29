@@ -700,7 +700,7 @@ class ConfigSyncConsumer:
                 "tenant_id": "<uuid>",
                 "confidence_threshold": "0.85",
                 "severity_filter": ["critical", "high"],
-                "recipient_ids": ["<uuid>", ...],
+                "destinations": [{"type": "user", "id": "<uuid>"}, ...],
                 "enabled": true,
                 "source_version": <int>,
                 "deleted": false
@@ -745,14 +745,13 @@ class ConfigSyncConsumer:
                         )
                     else:
                         existing.tenant_id = tenant_id
-                        existing.confidence_threshold = rule_data.get(
-                            "confidence_threshold", existing.confidence_threshold
-                        )
+                        if "confidence_threshold" in rule_data:
+                            existing.confidence_threshold = str(rule_data["confidence_threshold"]) if rule_data["confidence_threshold"] is not None else None
                         existing.severity_filter = rule_data.get(
                             "severity_filter", existing.severity_filter
                         )
-                        existing.recipient_ids = rule_data.get(
-                            "recipient_ids", existing.recipient_ids
+                        existing.destinations = rule_data.get(
+                            "destinations", existing.destinations
                         )
                         existing.enabled = bool(
                             rule_data.get("enabled", existing.enabled)
@@ -779,9 +778,9 @@ class ConfigSyncConsumer:
                     snapshot = AlertRuleSnapshot(
                         rule_id=rule_id,
                         tenant_id=tenant_id,
-                        confidence_threshold=rule_data.get("confidence_threshold"),
+                        confidence_threshold=str(rule_data["confidence_threshold"]) if rule_data.get("confidence_threshold") is not None else None,
                         severity_filter=rule_data.get("severity_filter"),
-                        recipient_ids=rule_data.get("recipient_ids"),
+                        destinations=rule_data.get("destinations"),
                         enabled=bool(rule_data.get("enabled", True)),
                         source_version=incoming_version,
                     )

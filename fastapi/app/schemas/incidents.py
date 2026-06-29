@@ -44,8 +44,6 @@ class Severity(str, Enum):
     high = "high"
     medium = "medium"
     low = "low"
-    info = "info"
-    unknown = "unknown"
 
 
 class SortBy(str, Enum):

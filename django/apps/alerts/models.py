@@ -20,10 +20,10 @@ class AlertRule(models.Model):
         blank=True,
         help_text='List of severity levels, e.g. ["critical", "high"].',
     )
-    recipient_ids = models.JSONField(
+    destinations = models.JSONField(
         default=list,
         blank=True,
-        help_text="List of user UUIDs (as strings) who receive notifications.",
+        help_text="List of destination objects (e.g. {'type': 'user', 'id': 'uuid'} or {'type': 'pagerduty', 'webhook_url': 'url'}).",
     )
     enabled = models.BooleanField(default=True)
     source_version = models.BigIntegerField(
@@ -41,6 +41,7 @@ class AlertRule(models.Model):
         ]
 
     def save(self, *args, **kwargs):
+        self.clean()
         # Increment source_version on every update (not on initial create).
         if not self._state.adding:
             AlertRule.objects.filter(pk=self.pk).update(
@@ -53,6 +54,18 @@ class AlertRule(models.Model):
                 .get()
             )
         super().save(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        from .destinations import validate_destinations_list
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from django.core.exceptions import ValidationError
+        
+        try:
+            # Reassign so that validated and normalized data is saved
+            self.destinations = validate_destinations_list(self.destinations)
+        except DRFValidationError as e:
+            raise ValidationError({'destinations': str(e.detail)})
 
     def __str__(self):
         return f"AlertRule({self.id}) tenant={self.tenant_id} enabled={self.enabled}"

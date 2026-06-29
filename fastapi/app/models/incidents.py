@@ -179,9 +179,9 @@ class Incident(Base):
     severity = Column(
         String(32),
         nullable=False,
-        default="unknown",
-        server_default="unknown",
-        comment="Classified severity: critical | high | medium | low | info | unknown.",
+        default="low",
+        server_default="low",
+        comment="Classified severity: critical | high | medium | low.",
     )
 
     # ── PR / patch fields (added for patch_generator + github_pr task) ────────
@@ -308,7 +308,7 @@ class Incident(Base):
         cascade="all, delete-orphan",
     )
     alerts = relationship(
-        "Alert",
+        "NotificationDelivery",
         back_populates="incident",
         lazy="raise",
         cascade="all, delete-orphan",
@@ -487,7 +487,7 @@ class Analysis(Base):
 # ---------------------------------------------------------------------------
 
 
-class Alert(Base):
+class NotificationDelivery(Base):
     """
     Notification dispatch record created by the action_decision node
     when confidence_score >= tenant threshold.
@@ -497,7 +497,7 @@ class Alert(Base):
     rows with status='pending' and marks them delivered or failed.
     """
 
-    __tablename__ = "alerts"
+    __tablename__ = "notification_deliveries"
 
     # ── Primary key ───────────────────────────────────────────────────────────
     id = Column(
@@ -514,7 +514,7 @@ class Alert(Base):
         ForeignKey(
             "tenant_snapshots.tenant_id",
             ondelete="CASCADE",
-            name="fk_alerts_tenant_id",
+            name="fk_notif_deliveries_tenant_id",
         ),
         nullable=False,
         index=True,
@@ -525,7 +525,7 @@ class Alert(Base):
         ForeignKey(
             "incidents.id",
             ondelete="CASCADE",
-            name="fk_alerts_incident_id",
+            name="fk_notif_deliveries_incident_id",
         ),
         nullable=False,
         index=True,
@@ -541,20 +541,27 @@ class Alert(Base):
     )
 
     # ── Delivery metadata ─────────────────────────────────────────────────────
-    channel = Column(
+    destination_type = Column(
         String(32),
         nullable=False,
-        comment="Delivery channel: in_app | email | webhook.",
+        comment="Delivery type: in_app | email | pagerduty | slack.",
     )
-    recipient_user_id = Column(
-        UUID(as_uuid=True),
-        nullable=True,
-        comment="UUID of the recipient user (from alert_rule_snapshots.recipient_ids).",
+    destination_config = Column(
+        JSONB,
+        nullable=False,
+        comment="Snapshot of the destination config used (e.g. webhook URL or user ID).",
     )
-    destination = Column(
-        String(512),
+    http_status_code = Column(
+        Integer,
         nullable=True,
-        comment="Email address or webhook URL for the delivery target.",
+        comment="HTTP status code from the external delivery attempt.",
+    )
+    attempt_count = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Number of delivery attempts made.",
     )
 
     # ── Status ────────────────────────────────────────────────────────────────
@@ -565,7 +572,7 @@ class Alert(Base):
         server_default="pending",
         comment="Delivery status: pending | delivered | failed | skipped.",
     )
-    failure_reason = Column(
+    error_message = Column(
         Text,
         nullable=True,
         comment="Error message if status=failed.",
@@ -585,9 +592,9 @@ class Alert(Base):
     )
 
     __table_args__ = (
-        Index("ix_alerts_tenant_incident", "tenant_id", "incident_id"),
+        Index("ix_notif_deliveries_tenant_incident", "tenant_id", "incident_id"),
         Index(
-            "ix_alerts_status_pending",
+            "ix_notif_deliveries_status_pending",
             "status",
             "created_at",
             postgresql_where=text("status = 'pending'"),
@@ -671,7 +678,7 @@ def _attach_incident_partial_index(target, connection, **kwargs) -> None:
 
 
 # Register listeners for all three models
-for _model_cls in (Incident, Analysis, Alert):
+for _model_cls in (Incident, Analysis, NotificationDelivery):
     event.listen(
         _model_cls.__table__,
         "after_create",

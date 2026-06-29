@@ -28,7 +28,7 @@ class TestAlertRuleAPI:
         payload = {
             "confidence_threshold": 0.85,
             "severity_filter": ["critical", "high"],
-            "recipient_ids": [str(uuid.uuid4()), str(uuid.uuid4())],
+            "destinations": [{"type": "user", "id": str(uuid.uuid4())}, {"type": "user", "id": str(uuid.uuid4())}],
             "enabled": True,
         }
 
@@ -38,7 +38,7 @@ class TestAlertRuleAPI:
         data = response.data["data"]
         assert data["confidence_threshold"] == payload["confidence_threshold"]
         assert data["severity_filter"] == payload["severity_filter"]
-        assert data["recipient_ids"] == payload["recipient_ids"]
+        assert data["destinations"] == payload["destinations"]
         assert data["enabled"] is True
 
         # Verify db persistence
@@ -58,7 +58,7 @@ class TestAlertRuleAPI:
         payload = {
             "confidence_threshold": 1.2,  # Invalid
             "severity_filter": ["critical"],
-            "recipient_ids": [str(uuid.uuid4())],
+            "destinations": [{"type": "user", "id": str(uuid.uuid4())}],
         }
 
         response = admin_client.post(self.list_url, data=payload, format="json")
@@ -70,7 +70,7 @@ class TestAlertRuleAPI:
         payload = {
             "confidence_threshold": 0.5,
             "severity_filter": ["critical", "super_alert"],  # "super_alert" invalid
-            "recipient_ids": [str(uuid.uuid4())],
+            "destinations": [{"type": "user", "id": str(uuid.uuid4())}],
         }
 
         response = admin_client.post(self.list_url, data=payload, format="json")
@@ -82,15 +82,15 @@ class TestAlertRuleAPI:
         payload = {
             "confidence_threshold": 0.5,
             "severity_filter": ["medium"],
-            "recipient_ids": [
-                "not-a-valid-uuid",
-                str(uuid.uuid4()),
+            "destinations": [
+                {"type": "user", "id": "not-a-valid-uuid"},
+                {"type": "user", "id": str(uuid.uuid4())},
             ],  # Invalid recipient
         }
 
         response = admin_client.post(self.list_url, data=payload, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "recipient_ids" in response.data["errors"]
+        assert "destinations" in response.data["errors"]
 
     # ── 2. List & Scope Tests ─────────────────────────────────────────────────
 
@@ -102,13 +102,13 @@ class TestAlertRuleAPI:
             tenant=tenant,
             confidence_threshold=0.90,
             severity_filter=["critical"],
-            recipient_ids=[str(uuid.uuid4())],
+            destinations=[{"type": "user", "id": str(uuid.uuid4())}],
         )
         r2 = AlertRule.objects.create(
             tenant=tenant_2,
             confidence_threshold=0.80,
             severity_filter=["low"],
-            recipient_ids=[str(uuid.uuid4())],
+            destinations=[{"type": "user", "id": str(uuid.uuid4())}],
         )
 
         # List as primary tenant admin
@@ -128,7 +128,7 @@ class TestAlertRuleAPI:
             tenant=tenant,
             confidence_threshold=0.50,
             severity_filter=["medium"],
-            recipient_ids=[str(uuid.uuid4())],
+            destinations=[{"type": "user", "id": str(uuid.uuid4())}],
         )
 
         url = self.get_detail_url(rule.id)
@@ -151,13 +151,13 @@ class TestAlertRuleAPI:
             tenant=tenant,
             confidence_threshold=0.70,
             severity_filter=["high"],
-            recipient_ids=[str(uuid.uuid4())],
+            destinations=[{"type": "user", "id": str(uuid.uuid4())}],
         )
 
         payload = {
             "confidence_threshold": 0.95,
             "severity_filter": ["critical"],
-            "recipient_ids": [str(uuid.uuid4()), str(uuid.uuid4())],
+            "destinations": [{"type": "user", "id": str(uuid.uuid4())}, {"type": "user", "id": str(uuid.uuid4())}],
             "enabled": False,
         }
 
@@ -183,7 +183,7 @@ class TestAlertRuleAPI:
             tenant=tenant,
             confidence_threshold=0.70,
             severity_filter=["high"],
-            recipient_ids=[str(uuid.uuid4())],
+            destinations=[{"type": "user", "id": str(uuid.uuid4())}],
         )
 
         payload = {"enabled": False}
@@ -204,7 +204,7 @@ class TestAlertRuleAPI:
             tenant=tenant,
             confidence_threshold=0.88,
             severity_filter=["low"],
-            recipient_ids=[str(uuid.uuid4())],
+            destinations=[{"type": "user", "id": str(uuid.uuid4())}],
         )
 
         url = self.get_detail_url(rule.id)
@@ -230,7 +230,7 @@ class TestAlertRuleAPI:
             tenant=tenant,
             confidence_threshold=0.50,
             severity_filter=["medium"],
-            recipient_ids=[str(uuid.uuid4())],
+            destinations=[{"type": "user", "id": str(uuid.uuid4())}],
         )
 
         # Try listing (forbidden)
@@ -243,7 +243,7 @@ class TestAlertRuleAPI:
             data={
                 "confidence_threshold": 0.5,
                 "severity_filter": ["medium"],
-                "recipient_ids": [str(uuid.uuid4())],
+                "destinations": [{"type": "user", "id": str(uuid.uuid4())}],
             },
         )
         assert response.status_code == status.HTTP_403_FORBIDDEN

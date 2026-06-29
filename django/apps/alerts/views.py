@@ -70,7 +70,7 @@ class AlertRuleViewSet(viewsets.ViewSet):
                 "tenant_id": str(rule.tenant_id),
                 "confidence_threshold": rule.confidence_threshold,
                 "severity_filter": rule.severity_filter,
-                "recipient_ids": rule.recipient_ids,
+                "destinations": rule.destinations,
                 "enabled": rule.enabled,
                 "source_version": rule.source_version,
             },

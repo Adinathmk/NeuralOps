@@ -28,8 +28,8 @@ Classification rules (evaluated in precedence order)
    → severity = low, actionable = True
 
 6. All others
-   → severity = unknown, actionable = True
-   (Unknown errors proceed to the agent; the Analyzer node can refine severity)
+   → severity = low, actionable = True
+   (Unclassified errors proceed to the agent; the Analyzer node can refine severity)
 
 Inputs consumed from AgentState
 --------------------------------
@@ -38,7 +38,7 @@ Inputs consumed from AgentState
 
 Outputs written to AgentState
 ------------------------------
-  severity            : str — one of critical | high | medium | low | unknown
+  severity            : str — one of critical | high | medium | low
   actionable          : bool
   classifier_latency_ms : int
 """
@@ -170,7 +170,7 @@ class ClassifierNode:
         start: float = time.monotonic()
         parsed: Dict[str, Any] = state["parsed_event"]
 
-        raw_severity: str = str(parsed.get("severity") or "unknown").lower().strip()
+        raw_severity: str = str(parsed.get("severity") or "low").lower().strip()
         error_type: str = str(parsed.get("error_type") or "").strip()
         service_name: str = str(parsed.get("service_name") or "")
         environment: str = str(parsed.get("environment") or "")
@@ -211,9 +211,9 @@ class ClassifierNode:
         elif raw_severity in ("warning", "warn"):
             severity = "low"
 
-        # ── Rule 6: Unknown ───────────────────────────────────────────────────
+        # ── Rule 6: Fallback to low ───────────────────────────────────────────
         else:
-            severity = "unknown"
+            severity = "low"
 
         latency_ms = int((time.monotonic() - start) * 1000)
 
