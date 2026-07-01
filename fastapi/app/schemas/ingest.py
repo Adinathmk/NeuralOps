@@ -4,7 +4,7 @@ app/schemas/ingest.py — Updated for structured SDK payload (SDK v1.0.0)
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class StackFrame(BaseModel):
@@ -42,6 +42,11 @@ class LogIngestRequest(BaseModel):
     error_type: str = Field(default="UnknownError", max_length=255)
     file_path: Optional[str] = Field(default=None, max_length=1024)
     line_number: Optional[int] = Field(default=None)
+
+    @field_validator("severity")
+    @classmethod
+    def normalize_severity(cls, v: str) -> str:
+        return v.lower() if v else "error"
 
     # NEW: trigger is now a first-class structured field
     trigger: Optional[TriggerEvent] = Field(

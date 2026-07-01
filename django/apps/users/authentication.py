@@ -35,17 +35,17 @@ class JWTAuthentication(TokenAuthentication):
     """
 
     @staticmethod
-    def generate_tokens(user, request=None):
+    def generate_tokens(user, request=None, existing_sid=None):
         """
         Generate access and refresh tokens.
-        Optionally creates session record if request is provided.
+        Optionally creates session record if request is provided and existing_sid is None.
 
         Args:
             user: User instance
             request: Django request object (for IP, user agent)
+            existing_sid: If rotating, pass the existing UserSession ID
         """
         secret = settings.JWT_PRIVATE_KEY
-
         algorithm = settings.JWT_ALGORITHM
 
         access_expire = timezone.now() + timedelta(
@@ -55,11 +55,16 @@ class JWTAuthentication(TokenAuthentication):
             days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
         )
 
-        # Generate unique session ID
-        jti = str(uuid_lib.uuid4())
+        # Generate unique JTI for each token
+        jti_a = str(uuid_lib.uuid4())
+        jti_r = str(uuid_lib.uuid4())
+        
+        # Use existing session ID or generate a new one
+        sid = existing_sid or str(uuid_lib.uuid4())
 
         access_payload = {
-            "jti": jti,
+            "jti": jti_a,
+            "sid": sid,
             "iss": "neuralops-jwt-key",
             "user_id": str(user.id),
             "email": user.email,
@@ -73,7 +78,8 @@ class JWTAuthentication(TokenAuthentication):
         }
 
         refresh_payload = {
-            "jti": jti,
+            "jti": jti_r,
+            "sid": sid,
             "iss": "neuralops-jwt-key",
             "user_id": str(user.id),
             "tenant_id": str(user.tenant.id) if user.tenant else None,
@@ -85,20 +91,21 @@ class JWTAuthentication(TokenAuthentication):
         access_token = jwt.encode(access_payload, secret, algorithm=algorithm)
         refresh_token = jwt.encode(refresh_payload, secret, algorithm=algorithm)
 
-        # Create session record if request provided
-        if request:
+        # Create session record if request provided (initial login)
+        if request and not existing_sid:
             ip_address = JWTAuthentication._get_client_ip(request)
             user_agent = request.META.get("HTTP_USER_AGENT", "")
             device_name = JWTAuthentication._parse_device_name(user_agent)
 
             UserSession.objects.create(
-                session_id=jti,
+                id=sid,
                 user=user,
                 tenant=user.tenant,
                 ip_address=ip_address,
                 user_agent=user_agent,
                 device_name=device_name,
-                expires_at=access_expire,
+                current_refresh_jti=jti_r,
+                expires_at=refresh_expire,  # Session lives as long as the refresh token
             )
 
         return access_token, refresh_token
@@ -169,9 +176,13 @@ class JWTAuthentication(TokenAuthentication):
 
             # STEP 2: Check Redis blocklist (revocation)
             # This is checked AFTER signature verification succeeds
-            jti = payload.get("jti")
-            if jti and cache_manager.is_token_revoked(jti):
-                raise AuthenticationFailed("Token has been revoked")
+            sid = payload.get("sid")
+            if sid and cache_manager.is_session_revoked(sid):
+                raise AuthenticationFailed("Session has been revoked")
+
+            # Update session real-time activity in Redis
+            if sid:
+                cache_manager.update_session_activity(sid, timezone.now().isoformat())
 
             # STEP 3: Attach claims to request for view access
             request.user_id = payload.get("user_id")
@@ -268,7 +279,24 @@ class GatewayAuthentication(TokenAuthentication):
             # (or we could implement the Redis check here as well).
 
             print("GatewayAuthentication: Successfully authenticated via Kong headers!")
-            return (user, None)
+            
+            # Extract payload for views that need it (like SessionsPage) without verifying signature
+            payload = None
+            auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+            if auth_header.startswith("Bearer "):
+                try:
+                    token = auth_header.split(" ")[1]
+                    payload = jwt.decode(token, options={"verify_signature": False})
+                    
+                    # Update session real-time activity in Redis
+                    sid = payload.get("sid")
+                    if sid:
+                        from django.utils import timezone
+                        cache_manager.update_session_activity(sid, timezone.now().isoformat())
+                except Exception:
+                    pass
+            
+            return (user, payload)
 
         except User.DoesNotExist:
             raise AuthenticationFailed("User specified by gateway does not exist")

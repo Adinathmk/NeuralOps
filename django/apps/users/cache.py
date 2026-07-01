@@ -29,34 +29,45 @@ class CacheManager:
     # TOKEN REVOCATION BLOCKLIST (for logout)
     # ====================================================================
 
-    def blocklist_token(self, token_jti, expiry_seconds):
+    def blocklist_session(self, session_id, expiry_seconds):
         """
-        Add token to revocation blocklist (logout).
+        Add session to revocation blocklist (logout).
 
-        When user logs out, their token JTI is added here.
-        Even though JWT signature is still valid, blocklisted tokens are rejected.
+        When user logs out or session is revoked, their session ID (sid) is added here.
+        This invalidates ALL tokens (access & refresh) tied to this session instantly.
 
         Args:
-            token_jti: JWT jti (unique ID) claim
-            expiry_seconds: Seconds until token would naturally expire
+            session_id: Session ID (sid claim / UserSession.id)
+            expiry_seconds: Seconds until session would naturally expire
         """
-        key = f"token:blocklist:{token_jti}"
+        key = f"session:blocklist:{session_id}"
         self.redis_client.setex(key, expiry_seconds, "1")
 
-    def is_token_revoked(self, token_jti):
+    def is_session_revoked(self, session_id):
         """
-        Check if token is in revocation blocklist.
+        Check if session is in revocation blocklist.
 
         Called AFTER JWT signature verification succeeds.
 
         Args:
-            token_jti: JWT jti claim
+            session_id: Session ID (sid claim)
 
         Returns:
             bool: True if revoked, False otherwise
         """
-        key = f"token:blocklist:{token_jti}"
+        key = f"session:blocklist:{session_id}"
         return self.redis_client.exists(key) > 0
+
+    def update_session_activity(self, session_id, timestamp_iso):
+        """Update real-time session activity in Redis."""
+        key = f"session:activity:{session_id}"
+        # Set expiry to 7 days
+        self.redis_client.setex(key, 604800, timestamp_iso)
+        
+    def get_session_activity(self, session_id):
+        """Get real-time session activity from Redis."""
+        key = f"session:activity:{session_id}"
+        return self.redis_client.get(key)
 
     # ====================================================================
     # TENANT CONFIG CACHING (performance optimization)

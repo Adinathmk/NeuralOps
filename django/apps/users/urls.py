@@ -32,6 +32,9 @@ from .views import (
     ListAPIKeysView,
     CreateAPIKeyView,
     RevokeAPIKeyView,
+    ProfilePicturePresignedUrlView,
+    ProfilePictureConfirmView,
+    ProfilePictureDeleteView,
 )
 
 urlpatterns = [
@@ -41,6 +44,9 @@ urlpatterns = [
     path("auth/logout", LogoutView.as_view(), name="logout"),
     path("auth/refresh-token", TokenRefreshView.as_view(), name="refresh"),
     path("auth/me", MeView.as_view(), name="me"),
+    path("auth/me/profile-picture", ProfilePictureDeleteView.as_view(), name="profile_picture_delete"),
+    path("auth/me/profile-picture/presigned-url", ProfilePicturePresignedUrlView.as_view(), name="profile_picture_presigned_url"),
+    path("auth/me/profile-picture/confirm", ProfilePictureConfirmView.as_view(), name="profile_picture_confirm"),
     path("auth/sessions", SessionListView.as_view(), name="sessions"),
     path(
         "auth/sessions/<uuid:session_id>/revoke",

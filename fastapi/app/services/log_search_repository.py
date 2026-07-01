@@ -42,6 +42,7 @@ class LogSearchFilters:
     environment: Optional[str] = None  # "production" | "staging"
     error_type: Optional[str] = None  # e.g. "NullPointerException"
     file_path: Optional[str] = None  # e.g. "src/payment/service.py"
+    search_query: Optional[str] = None # Wildcard search on file_path and error_type
     status: Optional[str] = None  # "open" | "resolved"
     time_from: Optional[str] = None  # ISO 8601 e.g. "2026-06-13T00:00:00Z"
     time_to: Optional[str] = None  # ISO 8601
@@ -175,6 +176,32 @@ class LogSearchRepository:
             "statuses": [b["key"] for b in aggs["statuses"]["buckets"]],
         }
 
+    async def count_volume(
+        self,
+        tenant_id: str,
+        plan_tier: str,
+        time_window: str = "24h",
+    ) -> int:
+        """
+        Count total logs ingested for a tenant within a time window.
+        Used for the dashboard metrics.
+        """
+        index = get_search_index(tenant_id=tenant_id, plan_tier=plan_tier)
+        response = await self.es.count(
+            index=index,
+            body={
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"term": {"tenant_id": tenant_id}},
+                            {"range": {"timestamp": {"gte": f"now-{time_window}"}}},
+                        ]
+                    }
+                }
+            }
+        )
+        return response["count"]
+
     # ── QUERY BUILDERS ─────────────────────────────────────────────────────
 
     def _build_query(self, filters: LogSearchFilters) -> dict:
@@ -206,6 +233,31 @@ class LogSearchRepository:
         for field_name, value in exact_match_fields.items():
             if value:
                 filter_clauses.append({"term": {field_name: value.strip()}})
+
+        if getattr(filters, 'search_query', None):
+            import re
+            sq_raw = filters.search_query.strip()
+            
+            # Escape backslashes for Elasticsearch wildcard queries (vital for Windows paths)
+            sq_escaped = sq_raw.replace('\\', '\\\\')
+            
+            # The UI shows "path:line_number" (e.g. "C:\...\file.py:41").
+            # If the user pastes this exact string, strip the line number for the file_path search.
+            file_path_sq_raw = re.sub(r':\d+$', '', sq_raw)
+            file_path_sq_escaped = file_path_sq_raw.replace('\\', '\\\\')
+            
+            sq_file = f"*{file_path_sq_escaped}*"
+            sq_error = f"*{sq_escaped}*"
+
+            filter_clauses.append({
+                "bool": {
+                    "should": [
+                        {"wildcard": {"file_path": {"value": sq_file, "case_insensitive": True}}},
+                        {"wildcard": {"error_type": {"value": sq_error, "case_insensitive": True}}}
+                    ],
+                    "minimum_should_match": 1
+                }
+            })
 
         # Time range filter
         time_range = self._build_time_range(

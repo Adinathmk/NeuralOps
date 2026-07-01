@@ -49,12 +49,25 @@ class AuthorSerializer(serializers.Serializer):
     last_name = serializers.CharField()
     full_name = serializers.SerializerMethodField()
     avatar_colour = serializers.SerializerMethodField()
+    avatar_url = serializers.SerializerMethodField()
 
     def get_full_name(self, obj) -> str:
         return f"{obj.first_name} {obj.last_name}".strip() or obj.email
 
     def get_avatar_colour(self, obj) -> str:
         return _avatar_colour_for(obj.id)
+        
+    def get_avatar_url(self, obj):
+        # Handle cases where the object might be a dict (if it's passed from some weird nested serializer)
+        # or a Model instance.
+        try:
+            profile_picture_key = getattr(obj, "profile_picture_key", None)
+            if not profile_picture_key:
+                return None
+            from apps.users.services.s3_service import S3Service
+            return S3Service.generate_presigned_get_url(profile_picture_key)
+        except Exception:
+            return None
 
 
 # ── ThreadMessageSerializer ──────────────────────────────────────────────────

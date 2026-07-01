@@ -80,6 +80,7 @@ services:
           - /api/v1/collaboration
           - /api/v1/notifications
           - /api/v1/users
+          - /api/v1/analytics
         strip_path: false
         preserve_host: true
         protocols: [http, https]

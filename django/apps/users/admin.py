@@ -36,7 +36,7 @@ class UserSessionAdmin(admin.ModelAdmin):
     )
     list_filter = ("is_active", "is_revoked", "created_at")
     search_fields = ("user__email", "ip_address", "device_name")
-    readonly_fields = ("session_id", "created_at", "revoked_at")
+    readonly_fields = ("id", "current_refresh_jti", "created_at", "revoked_at")
 
     def has_add_permission(self, request):
         return False

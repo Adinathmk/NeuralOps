@@ -14,6 +14,14 @@ from rest_framework.views import APIView
 from .authentication import JWTAuthentication
 from .cache import cache_manager
 from .models import User
+from .services.auth_service import AuthService
+from .services.email_verification_service import EmailVerificationService
+from .services.invitation_service import InvitationService
+from .services.mfa_service import MFAService
+from .services.oauth_service_layer import OAuthServiceLayer
+from .services.password_service import PasswordService
+from .services.session_service import SessionService
+from .services.s3_service import S3Service
 from .serializers import (
     ChangePasswordSerializer,
     ConfirmMFASerializer,
@@ -32,14 +40,9 @@ from .serializers import (
     ValidateInvitationTokenSerializer,
     VerifyEmailSerializer,
     VerifyMFATokenSerializer,
+    ProfilePicturePresignedUrlSerializer,
+    ProfilePictureConfirmSerializer,
 )
-from .services.auth_service import AuthService
-from .services.email_verification_service import EmailVerificationService
-from .services.invitation_service import InvitationService
-from .services.mfa_service import MFAService
-from .services.oauth_service_layer import OAuthServiceLayer
-from .services.password_service import PasswordService
-from .services.session_service import SessionService
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +257,7 @@ class SessionListView(APIView):
                     "id": serializers.CharField(),
                     "device_name": serializers.CharField(),
                     "ip_address": serializers.CharField(),
+                    "is_current": serializers.BooleanField(),
                     "last_activity": serializers.DateTimeField(),
                     "created_at": serializers.DateTimeField(),
                     "expires_at": serializers.DateTimeField(),
@@ -263,7 +267,8 @@ class SessionListView(APIView):
         },
     )
     def get(self, request):
-        data = SessionService.get_active_sessions(request.user_id)
+        current_sid = request.auth.get("sid") if request.auth else None
+        data = SessionService.get_active_sessions(request.user_id, current_sid)
         return APIResponse.success(
             data=data, message="Sessions retrieved successfully."
         )
@@ -1218,3 +1223,96 @@ class InternalResolveAPIKeyView(APIView):
             return APIResponse.success(data={"tenant_id": str(key_obj.tenant.id)})
         except APIKey.DoesNotExist:
             return APIResponse.error(message="Invalid or inactive API key", status_code=401)
+
+
+class ProfilePicturePresignedUrlView(APIView):
+    """Generate a presigned URL for uploading a profile picture."""
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    @extend_schema(
+        summary="Generate Presigned URL for Profile Picture",
+        request=ProfilePicturePresignedUrlSerializer,
+        responses={200: inline_serializer(
+            name="PresignedUrlResponse",
+            fields={
+                "url": serializers.CharField(),
+                "object_key": serializers.CharField(),
+            }
+        )}
+    )
+    def post(self, request):
+        serializer = ProfilePicturePresignedUrlSerializer(data=request.data)
+        if not serializer.is_valid():
+            return APIResponse.error(
+                message="Invalid data", status_code=400, errors=serializer.errors
+            )
+
+        import uuid
+        ext = serializer.validated_data["filename"].split('.')[-1]
+        object_key = f"profile_pictures/{request.user.id}/{uuid.uuid4()}.{ext}"
+        
+        presigned_url = S3Service.generate_presigned_upload_url(
+            object_key, 
+            serializer.validated_data["content_type"]
+        )
+
+        if not presigned_url:
+            return APIResponse.error(message="Failed to generate upload URL", status_code=500)
+
+        return APIResponse.success(data={
+            "url": presigned_url,
+            "object_key": object_key
+        })
+
+
+class ProfilePictureConfirmView(APIView):
+    """Confirm a profile picture upload and save the key to the user model."""
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    @extend_schema(
+        summary="Confirm Profile Picture Upload",
+        request=ProfilePictureConfirmSerializer,
+        responses={200: UserSerializer}
+    )
+    def post(self, request):
+        serializer = ProfilePictureConfirmSerializer(data=request.data)
+        if not serializer.is_valid():
+            return APIResponse.error(
+                message="Invalid data", status_code=400, errors=serializer.errors
+            )
+
+        user = request.user
+        user.profile_picture_key = serializer.validated_data["object_key"]
+        user.save()
+
+        return APIResponse.success(
+            data=UserSerializer(user).data,
+            message="Profile picture updated successfully."
+        )
+
+
+class ProfilePictureDeleteView(APIView):
+    """Delete the user's profile picture."""
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    @extend_schema(
+        summary="Delete Profile Picture",
+        responses={200: UserSerializer}
+    )
+    def delete(self, request):
+        user = request.user
+        if user.profile_picture_key:
+            S3Service.delete_object(user.profile_picture_key)
+            user.profile_picture_key = None
+            user.save()
+
+        return APIResponse.success(
+            data=UserSerializer(user).data,
+            message="Profile picture deleted successfully."
+        )

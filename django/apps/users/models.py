@@ -107,6 +107,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_superadmin = models.BooleanField(
         default=False, help_text="Platform operator flag"
     )
+    profile_picture_key = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -453,8 +454,8 @@ class UserSession(models.Model):
         Tenant, on_delete=models.CASCADE, related_name="sessions", null=True, blank=True
     )
 
-    # Session identifier (JWT jti claim)
-    session_id = models.CharField(max_length=255, unique=True, db_index=True)
+    # Current valid refresh token tracking (for rotation/reuse detection)
+    current_refresh_jti = models.CharField(max_length=255, db_index=True)
 
     # Device and location info
     device_name = models.CharField(max_length=255, blank=True)
@@ -465,6 +466,7 @@ class UserSession(models.Model):
     is_active = models.BooleanField(default=True)
     is_revoked = models.BooleanField(default=False)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_reason = models.CharField(max_length=50, blank=True)
 
     # Activity tracking
     last_activity_at = models.DateTimeField(auto_now=True)
@@ -476,7 +478,7 @@ class UserSession(models.Model):
         indexes = [
             models.Index(fields=["tenant"]),
             models.Index(fields=["user", "is_active"]),
-            models.Index(fields=["session_id"]),
+            models.Index(fields=["current_refresh_jti"]),
             models.Index(fields=["expires_at"]),
         ]
 

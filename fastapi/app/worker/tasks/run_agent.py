@@ -217,6 +217,45 @@ async def _execute_run_agent(
                     new_s3_key=parsed_event.s3_path,
                 )
 
+                try:
+                    # Link this raw log event to the existing grouped incident in ES
+                    # This ensures status/severity filters work properly in Log Explorer
+                    # Note: Need a fresh ES client here if we closed the old one
+                    from elasticsearch import AsyncElasticsearch
+                    from app.database.elasticsearch_client import get_settings
+                    es_settings = get_settings()
+                    es_kwargs = {
+                        "hosts": es_settings.ELASTICSEARCH_HOSTS,
+                        "request_timeout": 10,
+                    }
+                    if es_settings.ELASTICSEARCH_USERNAME and es_settings.ELASTICSEARCH_PASSWORD:
+                        es_kwargs["basic_auth"] = (es_settings.ELASTICSEARCH_USERNAME, es_settings.ELASTICSEARCH_PASSWORD)
+                    if any(h.startswith("https") for h in es_settings.ELASTICSEARCH_HOSTS):
+                        es_kwargs["verify_certs"] = True
+                        if es_settings.ELASTICSEARCH_CA_CERT_PATH:
+                            es_kwargs["ca_certs"] = es_settings.ELASTICSEARCH_CA_CERT_PATH
+                    else:
+                        es_kwargs["verify_certs"] = False
+
+                    es_client_dup = AsyncElasticsearch(**es_kwargs)
+                    es_indexer_dup = LogEventIndexer(es_client=es_client_dup)
+                    try:
+                        await es_indexer_dup.link_log_to_incident(
+                            raw_log_id=incident_id_str,
+                            tenant_id=tenant_id_str,
+                            plan_tier=plan_tier,
+                            grouped_incident_id=str(existing_incident.id),
+                            severity=existing_incident.severity,
+                            status=existing_incident.status,
+                        )
+                    finally:
+                        await es_client_dup.close()
+                except Exception as e:
+                    logger.exception(
+                        "es_link_log_failed",
+                        extra={"error": str(e), "incident_id": incident_id_str},
+                    )
+
                 from app.services.ws_publisher import notify_duplicate_recorded
 
                 try:
@@ -308,6 +347,43 @@ async def _execute_run_agent(
                         is_draft=is_draft,
                     )
                 )
+
+                try:
+                    # Link this raw log event to the new grouped incident in ES
+                    from elasticsearch import AsyncElasticsearch
+                    from app.database.elasticsearch_client import get_settings
+                    es_settings = get_settings()
+                    es_kwargs = {
+                        "hosts": es_settings.ELASTICSEARCH_HOSTS,
+                        "request_timeout": 10,
+                    }
+                    if es_settings.ELASTICSEARCH_USERNAME and es_settings.ELASTICSEARCH_PASSWORD:
+                        es_kwargs["basic_auth"] = (es_settings.ELASTICSEARCH_USERNAME, es_settings.ELASTICSEARCH_PASSWORD)
+                    if any(h.startswith("https") for h in es_settings.ELASTICSEARCH_HOSTS):
+                        es_kwargs["verify_certs"] = True
+                        if es_settings.ELASTICSEARCH_CA_CERT_PATH:
+                            es_kwargs["ca_certs"] = es_settings.ELASTICSEARCH_CA_CERT_PATH
+                    else:
+                        es_kwargs["verify_certs"] = False
+
+                    es_client_new = AsyncElasticsearch(**es_kwargs)
+                    es_indexer_new = LogEventIndexer(es_client=es_client_new)
+                    try:
+                        await es_indexer_new.link_log_to_incident(
+                            raw_log_id=incident_id_str,
+                            tenant_id=tenant_id_str,
+                            plan_tier=plan_tier,
+                            grouped_incident_id=str(persistence_result["incident_id"]),
+                            severity="unknown" if is_draft else (agent_result.get("severity") or parsed_event.get("severity", "unknown")),
+                            status="draft" if is_draft else "open",
+                        )
+                    finally:
+                        await es_client_new.close()
+                except Exception as e:
+                    logger.exception(
+                        "es_link_log_failed",
+                        extra={"error": str(e), "incident_id": incident_id_str},
+                    )
 
                 from app.services.ws_publisher import notify_incident_analysis_complete
 

@@ -41,6 +41,7 @@ from app.api.v1.incidents import router as incidents_router  # ← Phase 4
 from app.api.v1.ingest import router as ingest_router  # ← Phase 2
 from app.api.v1.log_search_endpoint import router as logs_router
 from app.api.v1.webhooks import router as webhooks_router
+from app.api.v1.dashboard import router as dashboard_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.database.elasticsearch_client import close_es_client, get_es_client
@@ -202,3 +203,4 @@ app.include_router(incidents_router, prefix="/api/v1")
 app.include_router(ingest_router, prefix="/api/v1")
 app.include_router(logs_router)
 app.include_router(webhooks_router, prefix="/api/v1")
+app.include_router(dashboard_router)

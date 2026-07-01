@@ -71,6 +71,7 @@ async def search_logs(
     environment: Optional[str] = Query(None),
     error_type: Optional[str] = Query(None),
     file_path: Optional[str] = Query(None),
+    search_query: Optional[str] = Query(None, description="Wildcard search across file_path and error_type"),
     status: Optional[str] = Query(None, description="open | resolved"),
     # ── Time filters ──
     # Use time_window for preset ranges (recommended for the UI)
@@ -115,6 +116,7 @@ async def search_logs(
         environment=environment,
         error_type=error_type,
         file_path=file_path,
+        search_query=search_query,
         status=status,
         time_window=time_window,
         time_from=time_from,

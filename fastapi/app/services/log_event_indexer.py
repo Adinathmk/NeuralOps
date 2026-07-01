@@ -223,6 +223,58 @@ class LogEventIndexer:
             request_timeout=30,
         )
 
+    async def link_log_to_incident(
+        self,
+        raw_log_id: str,
+        tenant_id: str,
+        plan_tier: str,
+        grouped_incident_id: str,
+        severity: str,
+        status: str,
+    ) -> None:
+        """
+        Link a raw log event to a grouped incident, updating its severity and status.
+        Called after deduplication in run_agent.py.
+        """
+        search_index = get_write_alias(tenant_id=tenant_id, plan_tier=plan_tier)
+        
+        import asyncio
+        max_retries = 6
+        for attempt in range(max_retries):
+            resp = await self.es.update_by_query(
+                index=search_index,
+                body={
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"tenant_id": tenant_id}},
+                                {"term": {"incident_id": raw_log_id}},
+                            ]
+                        }
+                    },
+                    "script": {
+                        "source": """
+                            ctx._source.incident_id = params.grouped_incident_id;
+                            ctx._source.severity = params.severity.toLowerCase();
+                            ctx._source.status = params.status;
+                        """,
+                        "lang": "painless",
+                        "params": {
+                            "grouped_incident_id": grouped_incident_id,
+                            "severity": severity,
+                            "status": status,
+                        },
+                    },
+                },
+                conflicts="proceed",
+                request_timeout=30,
+                refresh=True,
+            )
+            if resp.get("updated", 0) > 0:
+                break
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.5)
+
     async def update_parsed_fields(
         self,
         incident_id: str,
@@ -262,7 +314,9 @@ class LogEventIndexer:
                             if (params.line_number != null) {
                                 ctx._source.line_number = params.line_number;
                             }
-                            ctx._source.severity = params.severity;
+                            if (params.severity != null) {
+                                ctx._source.severity = params.severity.toLowerCase();
+                            }
                         """,
                         "lang": "painless",
                         "params": {
@@ -275,6 +329,7 @@ class LogEventIndexer:
                 },
                 conflicts="proceed",
                 request_timeout=30,
+                refresh=True,
             )
             if resp.get("updated", 0) > 0:
                 break
@@ -306,7 +361,7 @@ class LogEventIndexer:
             # Filter fields — all normalised to lowercase
             "service_name": parsed_log.service_name.lower().strip(),
             "environment": parsed_log.environment.lower().strip(),
-            "severity": parsed_log.severity.upper(),  # Severity stays uppercase: ERROR
+            "severity": parsed_log.severity.lower(),
             "error_type": parsed_log.error_type.strip(),
             "file_path": parsed_log.file_path.strip() if parsed_log.file_path else None,
             "line_number": parsed_log.line_number,

@@ -267,6 +267,10 @@ class GitHubIntegrationView(APIView):
             repo_str = f"{integration.repo_owner}/{integration.repo_name}"
             integration.delete()
 
+            # Wipe the analytics projection to stay in sync with FastAPI's wipe
+            from analytics.models import IncidentSnapshot
+            IncidentSnapshot.objects.filter(tenant=tenant).delete()
+
             # Audit trail
             AuditLog.log(
                 action="TENANT_CONFIG_UPDATED",

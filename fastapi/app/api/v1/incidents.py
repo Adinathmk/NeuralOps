@@ -112,6 +112,10 @@ async def list_incidents(
         None,
         description="Filter incidents assigned to this user.",
     ),
+    search: Optional[str] = Query(
+        None,
+        description="Search by error type or file path.",
+    ),
     is_draft: bool = Query(
         False,
         description="Include draft incidents. Defaults to false.",
@@ -193,6 +197,16 @@ async def list_incidents(
     # Assigned User filter
     if assigned_user_id:
         base_filter.append(Incident.assigned_user_ids.any(assigned_user_id))
+
+    # Search filter
+    if search:
+        search_term = f"%{search}%"
+        base_filter.append(
+            or_(
+                Incident.error_type.ilike(search_term),
+                Incident.crash_file.ilike(search_term),
+            )
+        )
 
     # ── Count total matching rows ─────────────────────────────────────────
     count_stmt = select(func.count()).select_from(Incident).where(*base_filter)

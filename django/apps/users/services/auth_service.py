@@ -168,33 +168,64 @@ class AuthService:
         and generates a new access/refresh token pair.
         Returns (access_token, refresh_token).
         """
+        import jwt
         payload = JWTAuthentication.verify_token(refresh_token_str)
         user = User.objects.get(id=payload["user_id"])
-        access_token, refresh_token = JWTAuthentication.generate_tokens(user)
+        
+        sid = payload.get("sid")
+        jti = payload.get("jti")
+        
+        try:
+            session = UserSession.objects.get(id=sid)
+        except UserSession.DoesNotExist:
+            raise ValidationException("Session not found")
+            
+        if session.is_revoked:
+            raise ValidationException("Session has been revoked")
+            
+        if session.current_refresh_jti != jti:
+            # Reuse detected! Revoke the whole session instantly.
+            session.is_revoked = True
+            session.revoked_at = timezone.now()
+            session.revoked_reason = "reuse_detected"
+            session.save()
+            cache_manager.blocklist_session(sid, 86400) # block for 1 day
+            raise ValidationException("Token reuse detected. Session revoked.")
+            
+        access_token, refresh_token = JWTAuthentication.generate_tokens(user, existing_sid=sid)
+        
+        # Update session with new refresh jti
+        new_payload = jwt.decode(refresh_token, options={"verify_signature": False})
+        session.current_refresh_jti = new_payload["jti"]
+        session.save()
+        
         return access_token, refresh_token
 
     @staticmethod
     def logout(request):
         """
-        Blocklists the JWT's JTI, revokes the session record,
+        Blocklists the session's sid, revokes the session record,
         and creates an AuditLog entry.
         """
-        jti = request.auth.get("jti")
+        sid = request.auth.get("sid")
 
-        if not jti:
+        if not sid:
             raise ValidationException("Invalid token format")
 
-        # Add token to revocation blocklist
+        # Add session to revocation blocklist
         exp_time = request.auth.get("exp")
         if exp_time:
             remaining_seconds = int(exp_time - timezone.now().timestamp())
             if remaining_seconds > 0:
-                cache_manager.blocklist_token(jti, remaining_seconds)
+                cache_manager.blocklist_session(sid, remaining_seconds)
 
         # Revoke session record
         try:
-            session = UserSession.objects.get(session_id=jti)
-            session.revoke()
+            session = UserSession.objects.get(id=sid)
+            session.is_revoked = True
+            session.revoked_at = timezone.now()
+            session.revoked_reason = "user_logout"
+            session.save()
         except UserSession.DoesNotExist:
             pass
 

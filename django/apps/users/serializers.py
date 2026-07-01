@@ -54,7 +54,9 @@ class UserSerializer(serializers.ModelSerializer):
         return TOTPDevice.objects.filter(user=obj, is_confirmed=True).exists()
 
     def get_avatar_url(self, obj):
-        """Placeholder - no avatar field on model yet."""
+        if hasattr(obj, 'profile_picture_key') and obj.profile_picture_key:
+            from .services.s3_service import S3Service
+            return S3Service.generate_presigned_get_url(obj.profile_picture_key)
         return None
 
 
@@ -623,3 +625,12 @@ class APIKeyCreateSerializer(serializers.ModelSerializer):
         )
         
         return api_key_obj
+
+
+class ProfilePicturePresignedUrlSerializer(serializers.Serializer):
+    filename = serializers.CharField(max_length=255)
+    content_type = serializers.CharField(max_length=100)
+
+
+class ProfilePictureConfirmSerializer(serializers.Serializer):
+    object_key = serializers.CharField(max_length=255)
