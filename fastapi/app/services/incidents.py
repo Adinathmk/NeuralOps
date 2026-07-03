@@ -554,6 +554,9 @@ class IncidentService:
         # Extract structured_patch produced by PatchGeneratorNode
         structured_patch: Optional[str] = agent_result.get("structured_patch") or None
 
+        # Extract error_category produced by ClassifierNode
+        error_category: str = agent_result.get("error_category") or "unknown"
+
         # Always promote to "open" to ensure collaboration threads sync via Kafka.
         # If the confidence was low (is_draft), flag severity as "unknown".
         if is_draft:
@@ -581,6 +584,7 @@ class IncidentService:
         node_results: Dict[str, Any] = _build_node_results(
             agent_result=agent_result,
             severity=severity,
+            error_category=error_category,
             confidence_score=confidence_score,
             is_draft=is_draft,
         )
@@ -612,6 +616,7 @@ class IncidentService:
                 suggested_fix=suggested_fix,
                 confidence_score=confidence_score,
                 severity=severity,
+                error_category=error_category,
                 status=status,
                 is_draft=is_draft,
                 assigned_user_ids=[],
@@ -690,6 +695,7 @@ class IncidentService:
                         parsed_event=parsed_event,
                         status=status,
                         severity=severity,
+                        error_category=error_category,
                         root_cause=root_cause,
                         suggested_fix=suggested_fix,
                         confidence_score=confidence_score,
@@ -776,6 +782,7 @@ def _safe_uuid(value: Any) -> Optional[_uuid_module.UUID]:
 def _build_node_results(
     agent_result: Dict[str, Any],
     severity: str,
+    error_category: str,
     confidence_score: Optional[float],
     is_draft: bool,
 ) -> Dict[str, Any]:
@@ -795,6 +802,7 @@ def _build_node_results(
         "classifier": {
             "latency_ms": agent_result.get("classifier_latency_ms", 0),
             "severity": severity,
+            "error_category": error_category,
             "actionable": True,
         },
         "code_retriever": {
@@ -850,6 +858,7 @@ def _build_incident_created_payload(
     parsed_event: ParsedLogEvent,
     status: str,
     severity: str,
+    error_category: str,
     root_cause: str,
     suggested_fix: str,
     confidence_score: Optional[float],
@@ -878,6 +887,7 @@ def _build_incident_created_payload(
             "fingerprint": fingerprint,
             "status": status,
             "severity": severity,
+            "error_category": error_category,
             "is_draft": False,
             "error_type": parsed_event.error_type,
             "error_message": parsed_event.error_message,

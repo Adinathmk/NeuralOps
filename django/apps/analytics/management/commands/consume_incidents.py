@@ -275,6 +275,7 @@ class Command(BaseCommand):
                 "tenant_id": tenant_id,
                 "status": data.get("status", "open"),
                 "severity": data.get("severity", "unknown"),
+                "error_category": data.get("error_category", "unknown"),
                 "confidence_score": data.get("confidence_score"),
                 "error_type": data.get("error_type", ""),
                 "error_message": data.get("error_message", ""),

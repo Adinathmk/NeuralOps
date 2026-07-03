@@ -85,6 +85,7 @@ class IncidentListItem(BaseModel):
     fingerprint: str
     status: IncidentStatus
     severity: Severity
+    error_category: str = "unknown"
     error_type: str
     error_message: Optional[str] = None
     service_name: str
@@ -159,6 +160,7 @@ class IncidentDetail(BaseModel):
     fingerprint: str
     status: IncidentStatus
     severity: Severity
+    error_category: str = "unknown"
     error_type: str
     error_message: Optional[str] = None
     service_name: str

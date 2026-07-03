@@ -100,6 +100,13 @@ async def list_incidents(
         None,
         description="Comma-separated severity filter: critical,high,medium,low,info",
     ),
+    error_category: Optional[str] = Query(
+        None,
+        description=(
+            "Comma-separated category filter: "
+            "code_bug,database,infra_config,external_dependency,security,unknown"
+        ),
+    ),
     service_name: Optional[str] = Query(
         None,
         description="Exact match on service name.",
@@ -185,6 +192,11 @@ async def list_incidents(
                 ),
             )
         base_filter.append(Incident.severity.in_(requested_sev))
+
+    # Error category filter
+    if error_category:
+        requested_cat = [c.strip() for c in error_category.split(",")]
+        base_filter.append(Incident.error_category.in_(requested_cat))
 
     # Service name filter
     if service_name:

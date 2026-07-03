@@ -77,6 +77,15 @@ class IncidentSnapshot(models.Model):
         default="unknown",
         help_text="critical | high | medium | low | info | unknown.",
     )
+    error_category = models.CharField(
+        max_length=32,
+        default="unknown",
+        db_index=True,
+        help_text=(
+            "code_bug | database | infra_config | external_dependency | "
+            "security | unknown."
+        ),
+    )
     confidence_score = models.FloatField(
         null=True,
         blank=True,
@@ -198,6 +207,10 @@ class IncidentSnapshot(models.Model):
             models.Index(
                 fields=["tenant", "severity"],
                 name="inc_sn_severity_idx",
+            ),
+            models.Index(
+                fields=["tenant", "error_category"],
+                name="inc_sn_category_idx",
             ),
             models.Index(
                 fields=["tenant", "status", "created_at"],

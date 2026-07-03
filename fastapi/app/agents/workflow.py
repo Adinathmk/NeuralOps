@@ -69,6 +69,7 @@ class AgentState(TypedDict, total=False):
     severity: str  # critical | high | medium | low | unknown
     actionable: bool
     classifier_latency_ms: int
+    error_category: str  # code_bug | database | infra_config | external_dependency | security | unknown
 
     # ── CodeRetriever outputs ───────────────────────────────────────────────
     code_context: str  # assembled and token-capped snippets
@@ -127,12 +128,28 @@ def _route_after_classifier(state: AgentState) -> str:
     return "code_retriever"
 
 
+# Error categories for which the patch_generator is allowed to run.
+# Infra, external-dependency, security, and unknown incidents are never
+# auto-patched — they either require ops intervention or human triage.
+_PATCHABLE_CATEGORIES: frozenset[str] = frozenset({"code_bug", "database"})
+
+
 def _route_after_action_decision(state: AgentState) -> str:
     """
     Route to patch_generator only when the agent decided to create a full
-    incident. Drafts skip patch generation and go straight to END.
+    incident AND the error category is one we can safely auto-patch.
+
+    Incident creation and patch generation are intentionally decoupled:
+      - "create_incident" controls whether the incident record is promoted
+        to open status in the database.
+      - Routing to patch_generator is additionally gated on error_category
+        so that infra / external-dependency / security / unknown incidents
+        are never sent to the patch generator, regardless of confidence.
     """
-    if state.get("action") == "create_incident":
+    if (
+        state.get("action") == "create_incident"
+        and state.get("error_category") in _PATCHABLE_CATEGORIES
+    ):
         return "patch_generator"
     return END
 

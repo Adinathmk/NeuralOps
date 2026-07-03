@@ -38,8 +38,10 @@ Inputs consumed from AgentState
 
 Outputs written to AgentState
 ------------------------------
-  severity            : str — one of critical | high | medium | low
-  actionable          : bool
+  severity              : str — one of critical | high | medium | low
+  actionable            : bool
+  error_category        : str — one of code_bug | database | infra_config |
+                               external_dependency | security | unknown
   classifier_latency_ms : int
 """
 
@@ -143,6 +145,100 @@ _NON_ACTIONABLE_LEVELS: frozenset[str] = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# Category lookup tables (purely additive — do not affect severity logic)
+# ---------------------------------------------------------------------------
+
+# Programmer / logic errors that can realistically be auto-patched.
+_CODE_BUG_ERROR_TYPES: frozenset[str] = frozenset(
+    _MEDIUM_ERROR_TYPES
+    | {
+        "NullPointerException",
+        "NullReferenceException",
+        "NullReferenceError",
+        "AttributeError",
+        "AssertionError",
+        "ZeroDivisionError",
+    }
+)
+
+# Database-layer errors — safe to create an incident but patch is rarely a
+# simple code change; keep as a separate bucket so routing can decide.
+_DATABASE_ERROR_TYPES: frozenset[str] = frozenset(
+    {
+        "DatabaseError",
+        "OperationalError",
+        "IntegrityError",
+        "TransactionError",
+        "DeadlockError",
+        "DataCorruptionError",
+    }
+)
+
+# Infrastructure / memory errors — require ops intervention, not code patches.
+_INFRA_ERROR_TYPES: frozenset[str] = frozenset(
+    {
+        "OutOfMemoryError",
+        "MemoryError",
+        "SystemError",
+        "SystemExit",
+        "OutOfMemoryException",
+        "KernelPanic",
+        "RuntimePanic",
+    }
+)
+
+# External service / network errors — flaky third-party; patching source code
+# rarely helps.
+_EXTERNAL_DEPENDENCY_ERROR_TYPES: frozenset[str] = frozenset(
+    {
+        "TimeoutError",
+        "ReadTimeoutError",
+        "ConnectTimeoutError",
+        "ConnectionRefusedError",
+        "ServiceUnavailableError",
+        "CircuitBreakerOpenError",
+    }
+)
+
+# Security errors — must always require human triage regardless of confidence.
+_SECURITY_ERROR_TYPES: frozenset[str] = frozenset(
+    {
+        "AuthenticationError",
+        "AuthorizationError",
+        "PermissionError",
+    }
+)
+
+
+def _classify_category(error_type: str) -> str:
+    """
+    Return a best-effort error category for the given error_type string.
+
+    Evaluated in security-first precedence order so that an error type
+    that appears in multiple tables is always assigned the highest-risk
+    category.  This is a cheap lookup-table operation — no LLM call.
+
+    The Analyzer node may later refine this via its root-cause output,
+    but that is backlog; for now the category is fixed at classifier time.
+
+    Returns one of:
+        "security" | "database" | "infra_config" |
+        "external_dependency" | "code_bug" | "unknown"
+    """
+    if error_type in _SECURITY_ERROR_TYPES:
+        return "security"
+    if error_type in _DATABASE_ERROR_TYPES:
+        return "database"
+    if error_type in _INFRA_ERROR_TYPES:
+        return "infra_config"
+    if error_type in _EXTERNAL_DEPENDENCY_ERROR_TYPES:
+        return "external_dependency"
+    if error_type in _CODE_BUG_ERROR_TYPES:
+        return "code_bug"
+    return "unknown"
+
+
 class ClassifierNode:
     """
     LangGraph node: Classifier
@@ -165,7 +261,7 @@ class ClassifierNode:
         -------
         dict
             Partial AgentState update:
-            {severity, actionable, classifier_latency_ms}
+            {severity, actionable, error_category, classifier_latency_ms}
         """
         start: float = time.monotonic()
         parsed: Dict[str, Any] = state["parsed_event"]
@@ -174,6 +270,9 @@ class ClassifierNode:
         error_type: str = str(parsed.get("error_type") or "").strip()
         service_name: str = str(parsed.get("service_name") or "")
         environment: str = str(parsed.get("environment") or "")
+
+        # ── Category (computed once, reused in both return paths) ─────────────
+        error_category: str = _classify_category(error_type)
 
         # ── Rule 1: Non-actionable log levels ─────────────────────────────────
         if raw_severity in _NON_ACTIONABLE_LEVELS:
@@ -184,6 +283,7 @@ class ClassifierNode:
                     "reason": "non_actionable_level",
                     "raw_severity": raw_severity,
                     "error_type": error_type,
+                    "error_category": error_category,
                     "service_name": service_name,
                     "environment": environment,
                     "latency_ms": latency_ms,
@@ -192,6 +292,7 @@ class ClassifierNode:
             return {
                 "actionable": False,
                 "severity": raw_severity,
+                "error_category": error_category,
                 "classifier_latency_ms": latency_ms,
             }
 
@@ -222,6 +323,7 @@ class ClassifierNode:
             extra={
                 "actionable": True,
                 "severity": severity,
+                "error_category": error_category,
                 "raw_severity": raw_severity,
                 "error_type": error_type,
                 "service_name": service_name,
@@ -233,5 +335,6 @@ class ClassifierNode:
         return {
             "actionable": True,
             "severity": severity,
+            "error_category": error_category,
             "classifier_latency_ms": latency_ms,
         }

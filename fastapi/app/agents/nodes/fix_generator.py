@@ -70,8 +70,8 @@ def _get_client():
         generation_config={
             "response_mime_type": "application/json",
             "temperature": 0.15,
-            # 4096 tokens avoids mid-string JSON truncation for complex fixes.
-            "max_output_tokens": 4096,
+            # 8192 tokens avoids mid-string JSON truncation for complex fixes.
+            "max_output_tokens": 8192,
         },
     )
 

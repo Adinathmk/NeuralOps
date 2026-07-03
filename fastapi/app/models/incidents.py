@@ -183,6 +183,17 @@ class Incident(Base):
         server_default="low",
         comment="Classified severity: critical | high | medium | low.",
     )
+    error_category = Column(
+        String(32),
+        nullable=False,
+        default="unknown",
+        server_default="unknown",
+        comment=(
+            "Pipeline classification used to gate patch generation: "
+            "code_bug | database | infra_config | external_dependency | "
+            "security | unknown."
+        ),
+    )
 
     # ── PR / patch fields (added for patch_generator + github_pr task) ────────
     pr_url = Column(Text, nullable=True, comment="HTML URL of the GitHub PR created by NeuralOps.")
@@ -287,6 +298,12 @@ class Incident(Base):
             "ix_incidents_tenant_severity",
             "tenant_id",
             "severity",
+            sa.text("created_at DESC"),
+        ),
+        Index(
+            "ix_incidents_tenant_category",
+            "tenant_id",
+            "error_category",
             sa.text("created_at DESC"),
         ),
         Index(

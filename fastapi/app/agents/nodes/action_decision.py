@@ -3,13 +3,16 @@ fastapi/app/agents/nodes/action_decision.py
 
 Action Decision Node — Phase 4 LangGraph Agent Pipeline
 
-The final node in the LangGraph graph. Compares confidence_score against
-the tenant's configured confidence_threshold (read from alert_rule_snapshots
-or a default of 0.70) and sets the action field, which the run_agent task
-reads to determine whether to persist the incident as 'open' or 'draft'.
+The final decision node before patch generation. Compares confidence_score
+against the tenant's configured confidence_threshold (read from
+alert_rule_snapshots or a default of 0.70) and sets the action field.
 
-Decision logic
---------------
+Additionally applies a hard category override: security incidents always
+require human review and are forced to store_draft regardless of confidence.
+
+Decision logic (evaluated in order)
+--------------------------------------
+  error_category == "security"   →  action = "store_draft"  (hard block)
   confidence_score >= threshold  →  action = "create_incident"
   confidence_score <  threshold  →  action = "store_draft"
 
@@ -26,6 +29,7 @@ Inputs consumed from AgentState
 --------------------------------
   tenant_id
   confidence_score
+  error_category   (code_bug | database | infra_config | external_dependency | security | unknown)
   session  (AsyncSession — used to read alert_rule_snapshots)
 
 Outputs written to AgentState
@@ -72,11 +76,16 @@ class ActionDecisionNode:
 
         confidence_score: float = float(state.get("confidence_score") or 0.0)
         tenant_id: str = str(state.get("tenant_id") or "")
+        error_category: str = str(state.get("error_category") or "unknown")
         session = state.get("session")
 
         threshold: float = await _fetch_tenant_threshold(session, tenant_id)
 
-        if confidence_score >= threshold:
+        if error_category == "security":
+            # Security incidents always require human review before promotion,
+            # regardless of model confidence.
+            action = "store_draft"
+        elif confidence_score >= threshold:
             action = "create_incident"
         else:
             action = "store_draft"
@@ -89,6 +98,7 @@ class ActionDecisionNode:
                 "action": action,
                 "confidence_score": confidence_score,
                 "threshold": threshold,
+                "error_category": error_category,
                 "tenant_id": tenant_id,
                 "latency_ms": latency_ms,
             },
