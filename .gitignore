@@ -74,3 +74,10 @@ desktop.ini
 _stage_*/
 package/
 deps/
+
+# Ignore pip-installed dependencies inside lambda source folders
+# (installed by build scripts for packaging, not source code)
+lambdas/lambda-push-dispatch/*/
+lambdas/lambda-push-router/*/
+lambdas/*/*.dist-info/
+lambdas/*/bin/
