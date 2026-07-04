@@ -220,7 +220,7 @@ def user_session(owner_user):
     from django.utils import timezone
 
     return UserSession.objects.create(
-        session_id="test-session-id",
+        current_refresh_jti="test-session-id",
         user=owner_user,
         tenant=owner_user.tenant,
         device_name="Test Device",

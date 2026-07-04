@@ -62,7 +62,7 @@ def _build_outbox_payload(integration: GitHubIntegration) -> dict:
                 "repo_url": integration.repo_url,
                 "repo_owner": integration.repo_owner,
                 "repo_name": integration.repo_name,
-                "installation_id": int(integration.github_installation_id) if integration.github_installation_id else None,
+                "installation_id": str(integration.github_installation_id) if integration.github_installation_id else None,
                 "default_branch": integration.default_branch,
                 "indexing_status": integration.indexing_status,
                 "last_indexed_commit": integration.last_indexed_commit,
