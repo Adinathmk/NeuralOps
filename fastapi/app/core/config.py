@@ -138,6 +138,14 @@ class Settings(BaseSettings):
         description="Google Gemini API Key for the LangGraph agent pipeline.",
     )
 
+    # ── LangSmith Tracing ─────────────────────────────────────────────────────
+    # Optional — the pipeline runs identically with these unset. LangSmith's
+    # @traceable decorator no-ops when LANGCHAIN_TRACING_V2 is false/unset,
+    # so this is safe to leave off in local dev and turn on per-environment.
+    LANGCHAIN_TRACING_V2: bool = Field(default=False)
+    LANGCHAIN_API_KEY: Optional[str] = Field(default=None)
+    LANGCHAIN_PROJECT: str = Field(default="neuralops")
+
     # ── Embedding ────────────────────────────────────────────────────────────
     EMBEDDING_MODEL: str = "models/gemini-embedding-2"
     EMBEDDING_DIMENSIONS: int = 768
@@ -209,3 +217,23 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a cached singleton Settings instance."""
     return Settings()
+
+
+def export_langsmith_env() -> None:
+    """
+    LangSmith's SDK reads its config from process environment variables
+    directly (LANGCHAIN_TRACING_V2, LANGCHAIN_API_KEY, LANGCHAIN_PROJECT) —
+    it does not accept them as constructor args to @traceable. Since this
+    project keeps all config in Settings/pydantic-settings rather than
+    reading os.environ ad-hoc elsewhere, this bridges the two: call once at
+    process startup (FastAPI startup event and Celery worker init) so
+    LangSmith's env-based config picks up whatever Settings resolved from
+    .env.local / the real environment.
+    """
+    import os
+
+    settings = get_settings()
+    os.environ["LANGCHAIN_TRACING_V2"] = str(settings.LANGCHAIN_TRACING_V2).lower()
+    if settings.LANGCHAIN_API_KEY:
+        os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
+    os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT

@@ -8,6 +8,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+celerybeat-schedule*
 
 # ── Virtual Environments ──────────────────────────────────────
 venv/
@@ -19,13 +20,17 @@ fvenv/
 
 # ── Nox Automation & Testing Cache ────────────────────────────
 .nox/
+.tox/
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+coverage.xml
 
 # ── Application State, Statics & Logs ─────────────────────────
 logs/
 *.log
+*_logs.txt
 staticfiles/
 mediafiles/
 media/
@@ -37,14 +42,18 @@ django/htmlcov/
 
 # ── Databases (Local Development) ─────────────────────────────
 *.sqlite3
+*.sqlite3-journal
 *.db
 db.sqlite3
 
-# ── Environment Secrets (Never Commit Real Credentials) ────────
+# ── Environment Secrets & Configs ─────────────────────────────
 .env
 .env.local
 .env*.local
 .env.docker
+*.pem
+*.key
+docker-compose.override.yml
 
 # ── IDEs, Editors & OS Files ──────────────────────────────────
 .vscode/

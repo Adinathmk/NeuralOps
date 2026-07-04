@@ -43,6 +43,9 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Dict, Optional
+from langsmith import traceable
+
+from app.agents.trace_utils import strip_node_state
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,7 @@ class ActionDecisionNode:
     Stateless — safe to instantiate once at module level.
     """
 
+    @traceable(run_type="chain", name="action_decision_node", process_inputs=strip_node_state)
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Decide whether to create an incident or store a draft.

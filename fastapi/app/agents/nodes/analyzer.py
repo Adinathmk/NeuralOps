@@ -50,6 +50,10 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator
+from langsmith import traceable
+
+from app.agents.nodes._gemini_utils import generate_with_truncation_retry
+from app.agents.trace_utils import strip_node_state
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +74,7 @@ def _get_client():
     genai.configure(api_key=get_settings().GEMINI_API_KEY)
     return genai.GenerativeModel(
         "models/gemini-2.5-flash",
+        system_instruction=_SYSTEM_PROMPT,
         generation_config={
             "response_mime_type": "application/json",
             "response_schema": AnalyzerOutput,
@@ -123,6 +128,35 @@ The JSON object MUST match this exact schema:
 
 If code context is absent, base your analysis on the error type and stack trace \
 and reduce root_cause_confidence accordingly.
+
+Calibration example — how confidence should scale with available evidence:
+
+  HIGH evidence (crashed function's exact source code provided, stack trace \
+matches a specific line, error type is unambiguous):
+    root_cause_confidence: 0.85–0.95
+    e.g. "Line 42 of order_service.py divides `total` by `item_count` without \
+checking for zero, and the stack trace confirms item_count was 0 at the time \
+of the crash."
+
+  MEDIUM evidence (error type and stack trace present, but the exact source \
+code at the crash location was NOT provided — you are reasoning from the \
+error type and surrounding context only):
+    root_cause_confidence: 0.40–0.60
+    e.g. "Based on the error type and stack trace, this is likely a null \
+reference when accessing a related object that was not eagerly loaded, but \
+the exact line cannot be confirmed without the source file."
+
+  LOW evidence (only error type and message available, no stack trace, no \
+code context, no playbook match):
+    root_cause_confidence: 0.15–0.30
+    e.g. "The error type suggests a timeout while calling an external \
+service, but without stack trace or code context the specific call site \
+cannot be identified."
+
+Do NOT default to 0.7–0.9 out of habit when evidence is thin. A confidence \
+score above 0.7 should only be used when you can point to a specific line, \
+function, or variable from the provided code context that directly explains \
+the error.
 """
 
 
@@ -209,6 +243,13 @@ class AnalyzerOutput(BaseModel):
             return 0.5
 
 
+class AnalyzerJSONParseError(Exception):
+    """Raised when Gemini's response can't be parsed as JSON. Treated as a
+    non-network failure (like ValidationError) so it doesn't trip the
+    circuit breaker, but still correctly routes through the fallback path
+    so analyzer_fallback_used is set."""
+
+
 # ---------------------------------------------------------------------------
 # Node implementation
 # ---------------------------------------------------------------------------
@@ -222,6 +263,7 @@ class AnalyzerNode:
     and falls back to playbook instructions on circuit-open or API error.
     """
 
+    @traceable(run_type="chain", name="analyzer_node", process_inputs=strip_node_state)
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Run root-cause analysis via GPT-4o.
@@ -270,6 +312,7 @@ class AnalyzerNode:
         fallback_used: bool = False
         raw_output: str = ""
         root_cause: str = ""
+        root_cause_confidence: float = 0.5
         tokens: Dict[str, int] = {"prompt": 0, "completion": 0, "total": 0}
 
         try:
@@ -297,8 +340,9 @@ class AnalyzerNode:
 
             # ── Gemini call ───────────────────────────────────────────────────
             client = _get_client()
-            full_prompt = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
-            response = await client.generate_content_async(full_prompt)
+            response = await generate_with_truncation_retry(
+                client, user_prompt, node_name="analyzer", logger=logger
+            )
 
             raw_output = response.text or ""
             usage = getattr(response, "usage_metadata", None)
@@ -316,17 +360,21 @@ class AnalyzerNode:
             try:
                 output_dict = json.loads(cleaned_output)
             except json.JSONDecodeError:
-                output_dict = {}
+                raise AnalyzerJSONParseError(
+                    "Gemini response was not valid JSON after cleaning."
+                )
 
-            root_cause = output_dict.get(
-                "root_cause",
-                "Automated analysis completed, but root cause extraction failed. Please check raw output.",
-            )
+            root_cause = output_dict.get("root_cause") or ""
+            if not root_cause.strip():
+                raise AnalyzerJSONParseError(
+                    "Gemini JSON parsed but 'root_cause' was empty."
+                )
             root_cause_confidence = output_dict.get("root_cause_confidence", 0.5)
             try:
                 root_cause_confidence = float(root_cause_confidence)
             except (ValueError, TypeError):
                 root_cause_confidence = 0.5
+            root_cause_confidence = max(0.0, min(1.0, root_cause_confidence))
 
             tokens = {
                 "prompt": usage.prompt_token_count if usage else 0,
@@ -350,7 +398,7 @@ class AnalyzerNode:
             # Record failure on the circuit breaker only for API/network errors,
             # not for Pydantic validation failures (those are transient GPT quirks)
             error_name = type(exc).__name__
-            if "ValidationError" not in error_name:
+            if "ValidationError" not in error_name and error_name != "AnalyzerJSONParseError":
                 await cb.record_failure(redis)
 
             fallback_used = True
@@ -361,6 +409,9 @@ class AnalyzerNode:
                 crash_method=crash_method,
                 crash_line=crash_line,
             )
+            # Fallback root causes have no model-reported confidence — treat
+            # them as low so downstream FixGenerator calibrates accordingly.
+            root_cause_confidence = 0.20
 
             logger.warning(
                 f"analyzer_fallback_used: {error_name} - {str(exc)[:300]}",
@@ -376,6 +427,7 @@ class AnalyzerNode:
 
         return {
             "root_cause": root_cause,
+            "root_cause_confidence": root_cause_confidence,
             "raw_analysis_output": raw_output,
             "analyzer_latency_ms": latency_ms,
             "analyzer_fallback_used": fallback_used,

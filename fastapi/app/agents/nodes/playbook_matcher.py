@@ -44,7 +44,9 @@ import time
 from typing import Any, Dict, Optional
 
 from sqlalchemy.future import select
+from langsmith import traceable
 
+from app.agents.trace_utils import strip_node_state
 from app.core.config import get_settings
 from app.database.redis import get_redis
 from app.models.snapshots import PlaybookSnapshot
@@ -66,6 +68,7 @@ class PlaybookMatcherNode:
     Stateless — safe to instantiate once at module level.
     """
 
+    @traceable(run_type="chain", name="playbook_matcher_node", process_inputs=strip_node_state)
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Match the incident against tenant playbook vectors.

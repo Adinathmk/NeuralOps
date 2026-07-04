@@ -60,6 +60,9 @@ import json
 import logging
 import time
 from typing import Any, Dict, Optional
+from langsmith import traceable
+
+from app.agents.trace_utils import strip_node_state
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,7 @@ class ConfidenceScorerNode:
     no I/O.
     """
 
+    @traceable(run_type="chain", name="confidence_scorer_node", process_inputs=strip_node_state)
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Compute composite confidence score.
@@ -98,6 +102,7 @@ class ConfidenceScorerNode:
         raw_analysis: str = str(state.get("raw_analysis_output") or "")
         analyzer_fallback: bool = bool(state.get("analyzer_fallback_used", False))
         fix_fallback: bool = bool(state.get("fix_fallback_used", False))
+        fix_confidence: float = float(state.get("fix_confidence") or 0.0)
         matched_playbook_id: Optional[str] = state.get("matched_playbook_id")
 
         # ── Retrieval score ────────────────────────────────────────────────────
@@ -111,6 +116,7 @@ class ConfidenceScorerNode:
         coherence_score: float = _compute_coherence_score(
             analyzer_fallback=analyzer_fallback,
             fix_fallback=fix_fallback,
+            fix_confidence=fix_confidence,
             raw_analysis_output=raw_analysis,
         )
 
@@ -179,6 +185,7 @@ def _compute_retrieval_score(
 def _compute_coherence_score(
     analyzer_fallback: bool,
     fix_fallback: bool,
+    fix_confidence: float,
     raw_analysis_output: str,
 ) -> float:
     """
@@ -205,9 +212,14 @@ def _compute_coherence_score(
 
     base: float = model_confidence if model_confidence is not None else 0.80
 
-    # Penalise slightly if fix generation also fell back
+    # If fix generation fell back, penalise flatly (no signal to blend).
+    # If it succeeded, blend in its self-reported confidence rather than
+    # ignoring it — a low-confidence fix should pull coherence down even
+    # when the analyzer itself was confident.
     if fix_fallback:
         base = max(0.0, base - 0.15)
+    elif fix_confidence > 0.0:
+        base = (base * 0.7) + (fix_confidence * 0.3)
 
     return round(base, 4)
 

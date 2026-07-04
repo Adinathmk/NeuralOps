@@ -31,6 +31,16 @@ Classification rules (evaluated in precedence order)
    → severity = low, actionable = True
    (Unclassified errors proceed to the agent; the Analyzer node can refine severity)
 
+Coverage
+--------
+Error-type tables intentionally span multiple languages/runtimes since
+tenants report from heterogeneous stacks (Python, JVM/Java/Kotlin, .NET,
+Node/JS/TS, Go, Ruby, PHP, Rust) plus common infra/network/DB errors.
+An error_type that isn't in any table still gets a severity via the raw
+log level (Rule 2/3/5/6) and error_category falls through to "unknown" —
+nothing is ever dropped, coverage gaps just lose the free severity/category
+bump and fall back to raw-level-based classification.
+
 Inputs consumed from AgentState
 --------------------------------
   parsed_event.severity   : raw severity string from the SDK log entry
@@ -50,6 +60,9 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Dict
+from langsmith import traceable
+
+from app.agents.trace_utils import strip_node_state
 
 logger = logging.getLogger(__name__)
 
@@ -59,30 +72,76 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Error types that always map to critical severity regardless of log level.
-# These represent process-terminating or data-loss events.
+# These represent process-terminating, data-loss, or total-outage events.
 _CRITICAL_ERROR_TYPES: frozenset[str] = frozenset(
     {
+        # ── Memory / process termination ─────────────────────────────────
         "OutOfMemoryError",
-        "StackOverflowError",
-        "SystemExit",
-        "FatalError",
-        "PanicError",
-        "KernelPanic",
         "OutOfMemoryException",
         "MemoryError",
+        "StackOverflowError",
+        "StackOverflowException",
+        "SystemExit",
         "SystemError",
-        "AssertionError",  # Python: only raised by assert; indicates invariant violation
+        "FatalError",
+        "FatalExecutionEngineError",
+        "PanicError",
+        "KernelPanic",
         "RuntimePanic",
         "UnrecoverableError",
+        "AssertionError",  # Python: only raised by assert; indicates invariant violation
+        "Abort",
+        "SIGSEGV",
+        "SIGABRT",
+        "SIGKILL",
+        "CoreDumpError",
+
+        # ── JVM / Java / Kotlin ──────────────────────────────────────────
+        "InternalError",
+        "VirtualMachineError",
+        "LinkageError",
+        "NoClassDefFoundError",
+        "ThreadDeath",
+
+        # ── .NET / C# ─────────────────────────────────────────────────────
+        "AccessViolationException",
+        "AppDomainUnloadedException",
+        "ExecutionEngineException",
+        "BadImageFormatException",
+
+        # ── Go ────────────────────────────────────────────────────────────
+        "GoPanic",
+        "FatalGoroutineError",
+
+        # ── Node / JS / TS ────────────────────────────────────────────────
+        "RangeError",  # frequently a stack-overflow / max call stack indicator
+        "UnhandledPromiseRejection",
+        "FatalProcessOutOfMemoryError",
+
+        # ── Rust ──────────────────────────────────────────────────────────
+        "RustPanic",
+        "UnwrapNoneError",
+
+        # ── Data loss / corruption at the platform level ────────────────
+        "DiskFullError",
+        "DataLossError",
+        "IrrecoverableStateError",
     }
 )
 
 # Error types that map to high severity.
-# These represent data integrity or availability failures.
+# These represent data integrity, availability, security, or payment
+# failures — serious but not process-terminating.
 _HIGH_ERROR_TYPES: frozenset[str] = frozenset(
     {
+        # ── Null / reference errors across languages ─────────────────────
         "NullPointerException",
         "NullReferenceException",
+        "NullReferenceError",
+        "NoneTypeError",
+        "NullError",
+
+        # ── Database / persistence ────────────────────────────────────────
         "DatabaseError",
         "OperationalError",
         "ConnectionRefusedError",
@@ -90,32 +149,108 @@ _HIGH_ERROR_TYPES: frozenset[str] = frozenset(
         "TransactionError",
         "IntegrityError",
         "DataCorruptionError",
+        "PoolExhaustedError",
+        "TooManyConnectionsError",
+        "ReplicationLagError",
+        "QueryTimeoutError",
+        "LockWaitTimeoutError",
+        "ConstraintViolationError",
+        "ForeignKeyViolationError",
+        "UniqueViolationError",
+        "DuplicateKeyError",  # Mongo/SQL duplicate key
+        "MongoServerError",
+        "RedisConnectionError",
+        "RedisTimeoutError",
+
+        # ── Auth / payments / security-adjacent availability ─────────────
         "PaymentError",
+        "PaymentDeclinedError",
         "AuthenticationError",
         "AuthorizationError",
         "PermissionError",
+        "AccessDeniedException",
+        "ForbiddenError",
+        "UnauthorizedError",
+        "TokenExpiredError",
+        "InvalidTokenError",
+        "JWTError",
+        "JWTExpiredError",
+
+        # ── Timeouts / network / external dependency failures ────────────
         "TimeoutError",
         "ReadTimeoutError",
         "ConnectTimeoutError",
+        "WriteTimeoutError",
+        "GatewayTimeoutError",
         "ServiceUnavailableError",
         "CircuitBreakerOpenError",
-        "NullReferenceError",
+        "DNSResolutionError",
+        "SSLCertificateError",
+        "SSLHandshakeError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "BrokenPipeError",
+        "SocketTimeoutError",
+        "TooManyRequestsError",
+        "RateLimitExceededError",
+
+        # ── OS / process-level access failures ────────────────────────────
         "AccessViolation",
         "SegmentationFault",
         "IOException",
+        "DiskIOError",
+        "FileSystemError",
+        "OSError",
+
+        # ── Java/Kotlin equivalents ────────────────────────────────────────
+        "SQLException",
+        "DataAccessException",
+        "CannotAcquireLockException",
+        "OptimisticLockException",
+        "ConcurrentModificationException",
+
+        # ── Node/JS equivalents ────────────────────────────────────────────
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "ETIMEDOUT",
+        "EPIPE",
+        "EADDRINUSE",
+
+        # ── Message queue / streaming ───────────────────────────────────────
+        "KafkaTimeoutError",
+        "MessageBrokerUnavailableError",
+        "QueueFullError",
+        "ConsumerGroupRebalanceError",
     }
 )
 
 # Error types that map to medium severity.
-# These represent programmer errors that are typically recoverable.
+# These represent programmer errors that are typically recoverable and
+# fixable via a straightforward code change.
 _MEDIUM_ERROR_TYPES: frozenset[str] = frozenset(
     {
+        # ── Python builtins ────────────────────────────────────────────────
         "ValueError",
         "KeyError",
         "IndexError",
         "AttributeError",
         "TypeError",
         "NotImplementedError",
+        "ZeroDivisionError",
+        "StopIteration",
+        "RecursionError",
+        "UnboundLocalError",
+        "NameError",
+        "ImportError",
+        "ModuleNotFoundError",
+        "LookupError",
+        "OverflowError",
+        "FileNotFoundError",
+        "FileExistsError",
+        "IsADirectoryError",
+        "NotADirectoryError",
+
+        # ── Generic validation / parsing / serialization ────────────────
         "InvalidArgumentError",
         "BadRequestError",
         "ValidationError",
@@ -123,6 +258,17 @@ _MEDIUM_ERROR_TYPES: frozenset[str] = frozenset(
         "DeserializationError",
         "ParseError",
         "FormatError",
+        "SchemaValidationError",
+        "TypeValidationError",
+        "MissingFieldError",
+        "UnexpectedFieldError",
+        "EncodingError",
+        "DecodingError",
+        "JSONDecodeError",
+        "XMLParseError",
+        "YAMLParseError",
+
+        # ── Java / Kotlin ───────────────────────────────────────────────────
         "IllegalArgumentException",
         "IllegalStateException",
         "UnsupportedOperationException",
@@ -130,6 +276,52 @@ _MEDIUM_ERROR_TYPES: frozenset[str] = frozenset(
         "NumberFormatException",
         "StringIndexOutOfBoundsException",
         "ArrayIndexOutOfBoundsException",
+        "IndexOutOfBoundsException",
+        "NoSuchElementException",
+        "NoSuchMethodException",
+        "NoSuchFieldException",
+        "ClassNotFoundException",
+        "NegativeArraySizeException",
+        "ArithmeticException",
+        "EmptyStackException",
+
+        # ── .NET / C# ─────────────────────────────────────────────────────
+        "ArgumentException",
+        "ArgumentNullException",
+        "ArgumentOutOfRangeException",
+        "InvalidOperationException",
+        "InvalidCastException",
+        "FormatException",
+        "IndexOutOfRangeException",
+        "KeyNotFoundException",
+        "NotSupportedException",
+        "DivideByZeroException",
+
+        # ── Node / JS / TS ────────────────────────────────────────────────
+        "SyntaxError",
+        "ReferenceError",
+        "TypeMismatchError",
+        "ZodValidationError",
+        "JoiValidationError",
+
+        # ── Go ────────────────────────────────────────────────────────────
+        "NilPointerDereference",
+        "IndexOutOfRange",
+        "TypeAssertionError",
+
+        # ── Ruby ──────────────────────────────────────────────────────────
+        "NoMethodError",
+        "ArgumentError",
+        "RuntimeError",
+        "FrozenError",
+
+        # ── PHP ───────────────────────────────────────────────────────────
+        "UndefinedIndexError",
+        "UndefinedVariableError",
+
+        # ── Rust ──────────────────────────────────────────────────────────
+        "UnwrapPanic",
+        "IndexOutOfBoundsPanic",
     }
 )
 
@@ -141,6 +333,11 @@ _NON_ACTIONABLE_LEVELS: frozenset[str] = frozenset(
         "info",
         "information",
         "verbose",
+        "notice",
+        "silly",  # npm/winston-style log levels
+        "fine",
+        "finer",
+        "finest",  # java.util.logging levels
     }
 )
 
@@ -156,9 +353,12 @@ _CODE_BUG_ERROR_TYPES: frozenset[str] = frozenset(
         "NullPointerException",
         "NullReferenceException",
         "NullReferenceError",
+        "NoneTypeError",
+        "NullError",
         "AttributeError",
         "AssertionError",
         "ZeroDivisionError",
+        "ConcurrentModificationException",
     }
 )
 
@@ -172,10 +372,29 @@ _DATABASE_ERROR_TYPES: frozenset[str] = frozenset(
         "TransactionError",
         "DeadlockError",
         "DataCorruptionError",
+        "PoolExhaustedError",
+        "TooManyConnectionsError",
+        "ReplicationLagError",
+        "QueryTimeoutError",
+        "LockWaitTimeoutError",
+        "ConstraintViolationError",
+        "ForeignKeyViolationError",
+        "UniqueViolationError",
+        "DuplicateKeyError",
+        "MongoServerError",
+        "RedisConnectionError",
+        "RedisTimeoutError",
+        "SQLException",
+        "DataAccessException",
+        "CannotAcquireLockException",
+        "OptimisticLockException",
+        "NoResultFound",
+        "MultipleResultsFound",
     }
 )
 
-# Infrastructure / memory errors — require ops intervention, not code patches.
+# Infrastructure / memory / disk / process errors — require ops
+# intervention, not code patches.
 _INFRA_ERROR_TYPES: frozenset[str] = frozenset(
     {
         "OutOfMemoryError",
@@ -185,19 +404,56 @@ _INFRA_ERROR_TYPES: frozenset[str] = frozenset(
         "OutOfMemoryException",
         "KernelPanic",
         "RuntimePanic",
+        "StackOverflowError",
+        "StackOverflowException",
+        "FatalError",
+        "FatalExecutionEngineError",
+        "InternalError",
+        "VirtualMachineError",
+        "ExecutionEngineException",
+        "DiskFullError",
+        "DiskIOError",
+        "FileSystemError",
+        "OSError",
+        "GoPanic",
+        "FatalGoroutineError",
+        "RustPanic",
+        "FatalProcessOutOfMemoryError",
+        "CoreDumpError",
+        "AppDomainUnloadedException",
     }
 )
 
-# External service / network errors — flaky third-party; patching source code
-# rarely helps.
+# External service / network / third-party errors — flaky dependency;
+# patching source code rarely helps.
 _EXTERNAL_DEPENDENCY_ERROR_TYPES: frozenset[str] = frozenset(
     {
         "TimeoutError",
         "ReadTimeoutError",
         "ConnectTimeoutError",
+        "WriteTimeoutError",
+        "GatewayTimeoutError",
         "ConnectionRefusedError",
         "ServiceUnavailableError",
         "CircuitBreakerOpenError",
+        "DNSResolutionError",
+        "SSLCertificateError",
+        "SSLHandshakeError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "BrokenPipeError",
+        "SocketTimeoutError",
+        "TooManyRequestsError",
+        "RateLimitExceededError",
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "ETIMEDOUT",
+        "EPIPE",
+        "EADDRINUSE",
+        "KafkaTimeoutError",
+        "MessageBrokerUnavailableError",
+        "QueueFullError",
+        "ConsumerGroupRebalanceError",
     }
 )
 
@@ -207,6 +463,14 @@ _SECURITY_ERROR_TYPES: frozenset[str] = frozenset(
         "AuthenticationError",
         "AuthorizationError",
         "PermissionError",
+        "AccessDeniedException",
+        "ForbiddenError",
+        "UnauthorizedError",
+        "TokenExpiredError",
+        "InvalidTokenError",
+        "JWTError",
+        "JWTExpiredError",
+        "PaymentDeclinedError",
     }
 )
 
@@ -248,6 +512,7 @@ class ClassifierNode:
     as a partial state update dict.
     """
 
+    @traceable(run_type="chain", name="classifier_node", process_inputs=strip_node_state)
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Classify the parsed log event.

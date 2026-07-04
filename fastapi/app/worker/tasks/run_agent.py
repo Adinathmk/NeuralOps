@@ -32,6 +32,7 @@ from typing import Any, Dict, Optional
 import redis.asyncio as aioredis
 import sqlalchemy.exc
 from celery.utils.log import get_task_logger
+from langsmith import traceable
 
 from app.database.redis import get_redis
 from app.database.session import AsyncSessionLocal
@@ -48,6 +49,38 @@ logger = get_task_logger(__name__)
 
 _AGENT_SOFT_TIME_LIMIT: int = 480
 _AGENT_HARD_TIME_LIMIT: int = 600
+
+
+def _strip_non_serializable_inputs(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    LangSmith serializes @traceable inputs for the trace UI. initial_state
+    carries a live AsyncSession and a Redis client, neither serializable
+    and neither useful to see in a trace. Keep only the JSON-safe fields.
+    """
+    state = inputs.get("initial_state", {})
+    return {
+        "tenant_id": state.get("tenant_id"),
+        "fingerprint": state.get("fingerprint"),
+        "error_type": (state.get("parsed_event") or {}).get("error_type"),
+    }
+
+
+@traceable(
+    run_type="chain",
+    name="neuralops_incident_pipeline",
+    process_inputs=_strip_non_serializable_inputs,
+)
+async def _invoke_workflow_traced(
+    workflow: Any,
+    initial_state: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Thin wrapper so the entire LangGraph run (all 8 nodes, including their
+    own @traceable spans) nests under ONE top-level trace per incident in
+    LangSmith, instead of each node showing up as an unrelated top-level
+    trace. This function does nothing else — no logic lives here.
+    """
+    return await workflow.ainvoke(initial_state)
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +337,9 @@ async def _execute_run_agent(
                 "redis": redis,
             }
 
-            agent_result: Dict[str, Any] = await workflow.ainvoke(initial_state)
+            agent_result: Dict[str, Any] = await _invoke_workflow_traced(
+                workflow, initial_state
+            )
 
             total_latency_ms: int = int((time.monotonic() - agent_start_time) * 1000)
             agent_result["total_latency_ms"] = total_latency_ms

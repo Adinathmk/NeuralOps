@@ -82,6 +82,7 @@ class AgentState(TypedDict, total=False):
 
     # ── Analyzer outputs ────────────────────────────────────────────────────
     root_cause: str
+    root_cause_confidence: float
     raw_analysis_output: str
     analyzer_latency_ms: int
     analyzer_fallback_used: bool
@@ -93,6 +94,10 @@ class AgentState(TypedDict, total=False):
     fix_generator_latency_ms: int
     fix_fallback_used: bool
     fix_tokens: Dict[str, int]  # prompt, completion, total
+    code_patch: str
+    fix_confidence: float
+    fix_complexity: str  # trivial | minor | moderate | major
+    fix_target_file: str  # POSIX-relative path of the file that needs the patch
 
     # ── ConfidenceScorer outputs ────────────────────────────────────────────
     confidence_score: float  # composite score in [0.0, 1.0]

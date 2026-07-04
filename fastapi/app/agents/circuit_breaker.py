@@ -119,6 +119,9 @@ class CircuitBreaker:
     def _opened_at_key(self) -> str:
         return f"cb:{self.name}:opened_at"
 
+    def _probe_lock_key(self) -> str:
+        return f"cb:{self.name}:probe_lock"
+
     async def _get_state(self, redis: aioredis.Redis) -> str:
         """Return current state string, defaulting to CLOSED if key missing."""
         raw = await redis.get(self._state_key())
@@ -164,7 +167,16 @@ class CircuitBreaker:
                 elapsed = time.time() - opened_at
 
                 if elapsed >= self.timeout_seconds:
-                    # Transition to HALF_OPEN to probe
+                    # Atomically claim the first probe slot before
+                    # transitioning. If multiple replicas race this same
+                    # elapsed-timeout check, only one gets to actually
+                    # transition and probe — the rest fall through to
+                    # "blocked" below, exactly like a normal OPEN request.
+                    acquired = await redis.set(
+                        self._probe_lock_key(), "1", nx=True, ex=self.timeout_seconds
+                    )
+                    if not acquired:
+                        return False
                     await redis.set(self._state_key(), CircuitState.HALF_OPEN.value)
                     await redis.set(self._successes_key(), "0")
                     logger.info(
@@ -187,9 +199,14 @@ class CircuitBreaker:
                 return False
 
             if state == CircuitState.HALF_OPEN.value:
-                # Allow exactly one probe through; subsequent concurrent
-                # requests are still blocked until the probe resolves
-                return True
+                # Allow exactly one probe through. SET NX is atomic across
+                # all Celery worker replicas sharing this Redis instance,
+                # so only the first concurrent caller gets True; the rest
+                # are blocked until the probe resolves or the lock expires.
+                acquired = await redis.set(
+                    self._probe_lock_key(), "1", nx=True, ex=self.timeout_seconds
+                )
+                return bool(acquired)
 
             # Unknown state — default safe
             return True
@@ -222,6 +239,7 @@ class CircuitBreaker:
                     pipe.set(self._failures_key(), "0")
                     pipe.set(self._successes_key(), "0")
                     pipe.delete(self._opened_at_key())
+                    pipe.delete(self._probe_lock_key())
                     await pipe.execute()
 
                     logger.info(
@@ -231,6 +249,12 @@ class CircuitBreaker:
                             "successes_required": self.success_threshold,
                         },
                     )
+                else:
+                    # Probe succeeded but threshold not yet reached — release
+                    # the lock so the NEXT probe is allowed through. Without
+                    # this, success_threshold > 1 would deadlock: nothing
+                    # else can acquire the lock until its TTL expires.
+                    await redis.delete(self._probe_lock_key())
 
             elif state == CircuitState.CLOSED.value:
                 # Reset failure counter on any success while closed
@@ -262,6 +286,7 @@ class CircuitBreaker:
                 pipe.set(self._state_key(), CircuitState.OPEN.value)
                 pipe.set(self._opened_at_key(), str(time.time()))
                 pipe.set(self._successes_key(), "0")
+                pipe.delete(self._probe_lock_key())
                 await pipe.execute()
 
                 logger.warning(
@@ -325,6 +350,7 @@ class CircuitBreaker:
         pipe.set(self._failures_key(), "0")
         pipe.set(self._successes_key(), "0")
         pipe.delete(self._opened_at_key())
+        pipe.delete(self._probe_lock_key())
         await pipe.execute()
 
         logger.info(

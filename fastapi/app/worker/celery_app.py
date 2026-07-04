@@ -36,12 +36,19 @@ Architecture reference: NeuralOps Technical Documentation — Section 6
 
 from __future__ import annotations
 
-from celery import Celery
+from typing import Any
 
-from app.core.config import get_settings
+from celery import Celery
+from celery.signals import worker_process_init
+
+from app.core.config import get_settings, export_langsmith_env
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 _settings = get_settings()
+
+@worker_process_init.connect
+def _init_worker(**kwargs: Any) -> None:
+    export_langsmith_env()
 
 # ── Celery application instance ───────────────────────────────────────────────
 # The main_module name ("neuralops_tasks") is used internally by Celery as a

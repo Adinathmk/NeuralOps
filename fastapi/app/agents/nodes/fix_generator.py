@@ -48,6 +48,10 @@ import time
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
+from langsmith import traceable
+
+from app.agents.nodes._gemini_utils import generate_with_truncation_retry
+from app.agents.trace_utils import strip_node_state
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +71,7 @@ def _get_client():
     genai.configure(api_key=get_settings().GEMINI_API_KEY)
     return genai.GenerativeModel(
         "models/gemini-2.5-flash",
+        system_instruction=_SYSTEM_PROMPT,
         generation_config={
             "response_mime_type": "application/json",
             "temperature": 0.15,
@@ -104,8 +109,11 @@ You will receive:
 3. The error metadata (type, message, location).
 
 Your task:
-- Produce a specific, implementable code fix.
-- If you can write the exact corrected code, include it in "code_patch".
+- If you can write the exact corrected code, include it in "code_patch" as \
+  the corrected code snippet itself (the actual lines as they should appear \
+  in the file after the fix) — NOT a unified diff, NOT a +/- style patch. \
+  It will be matched verbatim against the real source file downstream, so \
+  diff syntax will never match anything.
 - If the fix requires broader context you do not have, describe it clearly \
   in "suggested_fix" and leave "code_patch" as an empty string.
 - Do NOT hallucinate variable names or function signatures not present in \
@@ -115,10 +123,38 @@ Your task:
 The JSON object MUST match this exact schema:
 {
   "suggested_fix":  "<string: 1–4 sentence description of the fix>",
-  "code_patch":     "<string: corrected code snippet or unified diff, or empty string>",
+  "code_patch":     "<string: corrected code snippet exactly as it should appear in the file, or empty string>",
   "fix_confidence": <float between 0.0 and 1.0>,
-  "fix_complexity": "<one of: trivial | minor | moderate | major>"
+  "fix_complexity": "<one of: trivial | minor | moderate | major>",
+  "target_file":    "<string: POSIX-style relative file path that must be modified to apply this fix>"
 }
+
+For "target_file":
+- This is the file the Patch Generator will fetch from the repository and \
+  apply the code_patch to.
+- If the fix belongs in the file that crashed, repeat that file path here.
+- If the fix belongs in a DIFFERENT file (e.g. the caller that passed the \
+  wrong type, a router that declared the wrong parameter type, a config \
+  that set an invalid value), set this to that file's path instead.
+- Use the exact relative path as it appears in the source code index \
+  (e.g. "app/api/payments.py", NOT an absolute Windows path).
+- If you cannot identify the file confidently, set to empty string "".
+
+You will also be told the Analyzer's root_cause_confidence for the root \
+cause you're building on. Calibrate fix_confidence relative to it:
+
+  - If root_cause_confidence was HIGH (0.7+) and you can write exact \
+    corrected code from the provided source: fix_confidence 0.75–0.95.
+  - If root_cause_confidence was MEDIUM (0.4–0.7), or you could only write \
+    a partial/descriptive fix without exact code: fix_confidence 0.35–0.60.
+  - If root_cause_confidence was LOW (<0.4): fix_confidence should not \
+    exceed 0.35, regardless of how clean your suggested_fix text reads. A \
+    fix built on an uncertain root cause is itself uncertain — do not let \
+    confident-sounding prose inflate the number.
+
+Never assign a fix_confidence higher than the root_cause_confidence you \
+were given plus 0.1. A fix cannot be more certain than the diagnosis it's \
+based on.
 """
 
 
@@ -129,6 +165,7 @@ def _build_user_prompt(
     crash_line: int,
     crash_method: str,
     root_cause: str,
+    root_cause_confidence: float,
     code_context: str,
     sdk_meta: Optional[Dict[str, Any]],
 ) -> str:
@@ -136,6 +173,7 @@ def _build_user_prompt(
 
     parts.append("## Root Cause (confirmed by Analyzer)")
     parts.append(root_cause or "(Root cause analysis unavailable.)")
+    parts.append(f"**Analyzer's root_cause_confidence:** {root_cause_confidence:.2f}")
 
     parts.append("\n## Error Details")
     parts.append(f"**Type:** {error_type}")
@@ -173,7 +211,7 @@ class FixGeneratorOutput(BaseModel):
     )
     code_patch: str = Field(
         default="",
-        description="Corrected code snippet or unified diff. Empty if not available.",
+        description="Corrected code snippet exactly as it should appear in the file. Empty if not available.",
     )
     fix_confidence: float = Field(
         default=0.5,
@@ -184,6 +222,10 @@ class FixGeneratorOutput(BaseModel):
     fix_complexity: str = Field(
         default="minor",
         description="Estimated fix complexity: trivial | minor | moderate | major.",
+    )
+    target_file: str = Field(
+        default="",
+        description="POSIX-style relative path of the file the patch should be applied to.",
     )
 
     @field_validator("fix_confidence", mode="before")
@@ -215,6 +257,7 @@ class FixGeneratorNode:
     breaker protection and graceful fallback.
     """
 
+    @traceable(run_type="chain", name="fix_generator_node", process_inputs=strip_node_state)
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate a code fix for the incident.
@@ -244,11 +287,16 @@ class FixGeneratorNode:
 
         code_context: str = str(state.get("code_context") or "")
         root_cause: str = str(state.get("root_cause") or "")
+        root_cause_confidence: float = float(state.get("root_cause_confidence") or 0.5)
 
         cb = _get_circuit_breaker()
         fallback_used: bool = False
         raw_output: str = ""
         suggested_fix: str = ""
+        code_patch: str = ""
+        fix_confidence: float = 0.0
+        fix_complexity: str = "minor"
+        fix_target_file: str = ""
         tokens: Dict[str, int] = {"prompt": 0, "completion": 0, "total": 0}
 
         try:
@@ -266,31 +314,19 @@ class FixGeneratorNode:
                 crash_line=crash_line,
                 crash_method=crash_method,
                 root_cause=root_cause,
+                root_cause_confidence=root_cause_confidence,
                 code_context=code_context,
                 sdk_meta=sdk_meta,
             )
 
             # ── Gemini call ───────────────────────────────────────────────
             client = _get_client()
-            full_prompt = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
-            response = await client.generate_content_async(full_prompt)
+            response = await generate_with_truncation_retry(
+                client, user_prompt, node_name="fix_generator", logger=logger
+            )
 
             raw_output = response.text or ""
             usage = getattr(response, "usage_metadata", None)
-
-            # ── Detect truncated JSON and retry once ──────────────────────
-            # Gemini sometimes returns a JSON string cut off before the
-            # closing brace when the response length approaches the token
-            # limit. Detect this early and retry rather than letting Pydantic
-            # raise a ValidationError that triggers the fallback path.
-            if _looks_truncated(raw_output):
-                logger.warning(
-                    "fix_generator_truncated_response_retry",
-                    extra={"error_type": error_type, "raw_tail": raw_output[-80:]},
-                )
-                response = await client.generate_content_async(full_prompt)
-                raw_output = response.text or ""
-                usage = getattr(response, "usage_metadata", None)
 
             # ── Pydantic validation ───────────────────────────────────────
             # Strip markdown fences (```json ... ```) that the model sometimes
@@ -299,6 +335,10 @@ class FixGeneratorNode:
             clean_json = json_match.group(0) if json_match else raw_output
             output = FixGeneratorOutput.model_validate_json(clean_json)
             suggested_fix = output.suggested_fix
+            code_patch = output.code_patch
+            fix_confidence = output.fix_confidence
+            fix_complexity = output.fix_complexity
+            fix_target_file = output.target_file or ""
 
             tokens = {
                 "prompt": usage.prompt_token_count if usage else 0,
@@ -314,6 +354,7 @@ class FixGeneratorNode:
                     "error_type": error_type,
                     "fix_complexity": output.fix_complexity,
                     "fix_confidence": output.fix_confidence,
+                    "fix_target_file": fix_target_file or "(crash file)",
                     "prompt_tokens": tokens["prompt"],
                     "completion_tokens": tokens["completion"],
                 },
@@ -349,6 +390,10 @@ class FixGeneratorNode:
             "fix_generator_latency_ms": latency_ms,
             "fix_fallback_used": fallback_used,
             "fix_tokens": tokens,
+            "code_patch": code_patch,
+            "fix_confidence": fix_confidence,
+            "fix_complexity": fix_complexity,
+            "fix_target_file": fix_target_file,
         }
 
 
@@ -384,25 +429,4 @@ def _build_fallback_fix(
         f"Review {location} and apply a fix based on the error details "
         f"in the stack trace above."
     )
-
-
-def _looks_truncated(raw: str) -> bool:
-    """
-    Return True if the Gemini response looks like it was cut off before
-    the JSON object was closed.
-
-    Heuristics (any one is sufficient):
-    - The text does not end with a closing brace '}' (after stripping
-      whitespace) — the most reliable signal.
-    - The text ends mid-string (last non-whitespace char is a double-quote
-      without a preceding backslash, yet the overall brace count is unbalanced).
-    """
-    stripped = raw.strip()
-    if not stripped:
-        return False
-    if not stripped.endswith("}"):
-        return True
-    # Brace balance check — handles the edge case where the last char is '}'
-    # but an earlier object was never closed.
-    return stripped.count("{") != stripped.count("}")
 

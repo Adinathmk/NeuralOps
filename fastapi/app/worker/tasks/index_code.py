@@ -392,6 +392,83 @@ async def _fetch_file_content(
     return response.content
 
 
+async def _fetch_changed_files_from_compare(
+    owner: str,
+    repo: str,
+    before_sha: str,
+    after_sha: str,
+    token: str,
+) -> tuple[list[str], list[str]]:
+    """
+    Call the GitHub Compare API to retrieve the list of files changed between
+    two commits.  Used as a fallback when the push payload's ``commits`` array
+    is empty (merge commits, force-pushes, tag events).
+
+    Returns
+    -------
+    (changed_files, removed_files)
+        Both lists contain POSIX-relative file paths filtered to
+        ``SUPPORTED_EXTENSIONS``.
+    """
+    if not before_sha or before_sha == "0" * 40:
+        # First push to a branch — no base to compare against, skip.
+        return [], []
+
+    url = f"{_GITHUB_API_BASE}/repos/{owner}/{repo}/compare/{before_sha}...{after_sha}"
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            response = await client.get(url, headers=_github_headers(token))
+    except Exception as exc:
+        logger.warning(
+            "compare_api_request_failed",
+            extra={"owner": owner, "repo": repo, "error": str(exc)},
+        )
+        return [], []
+
+    if response.status_code != 200:
+        logger.warning(
+            "compare_api_non_200",
+            extra={"status": response.status_code, "url": url},
+        )
+        return [], []
+
+    try:
+        import json as _json
+        data = _json.loads(response.content)
+    except Exception:
+        return [], []
+
+    changed: list[str] = []
+    removed: list[str] = []
+    seen: set[str] = set()
+
+    for file_entry in data.get("files", []):
+        path: str = file_entry.get("filename", "")
+        status: str = file_entry.get("status", "")
+        if not path or path in seen:
+            continue
+        if Path(path).suffix not in SUPPORTED_EXTENSIONS:
+            continue
+        seen.add(path)
+        if status == "removed":
+            removed.append(path)
+        else:  # added, modified, renamed, copied
+            changed.append(path)
+
+    logger.info(
+        "compare_api_file_list_resolved",
+        extra={
+            "owner": owner,
+            "repo": repo,
+            "before": before_sha[:8],
+            "after": after_sha[:8],
+            "changed": len(changed),
+            "removed": len(removed),
+        },
+    )
+    return changed, removed
+
+
 # ---------------------------------------------------------------------------
 # Core async logic — initial indexing
 # ---------------------------------------------------------------------------
@@ -663,16 +740,77 @@ async def _run_incremental_index(
             )
 
         except Exception as exc:
-            logger.error(
-                "incremental_index_file_failed",
-                extra={
-                    "file_path": file_path,
-                    "tenant_id": tenant_id_str,
-                    "error": str(exc),
-                },
-                exc_info=True,
-            )
-            # Continue processing other files.
+            # Classify the error: network/transient vs permanent.
+            exc_str = str(exc).lower()
+            cls_name = exc.__class__.__name__.lower()
+            is_transient = isinstance(
+                exc,
+                (ConnectionError, TimeoutError, OSError)
+            ) or "connect" in cls_name or "timeout" in cls_name or "connect" in exc_str or "timeout" in exc_str
+
+            if is_transient:
+                # Exponential backoff: retry up to 3 times (2s, 4s, 8s).
+                _retried = False
+                for attempt in range(1, 4):
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "incremental_index_file_retry",
+                        extra={
+                            "file_path": file_path,
+                            "tenant_id": tenant_id_str,
+                            "attempt": attempt,
+                            "wait_seconds": wait,
+                            "error": str(exc),
+                        },
+                    )
+                    await asyncio.sleep(wait)
+                    try:
+                        file_bytes = await _fetch_file_content(
+                            owner, repo, file_path, commit_sha, token
+                        )
+                        if file_bytes:
+                            await _upload_file_to_s3(file_bytes, new_s3_key, tenant_id_str)
+                            symbols = _INDEXER.extract_symbols(file_bytes, ext)
+                            async with AsyncSessionLocal() as session:
+                                async with session.begin():
+                                    await _delete_file_rows(session, tenant_id, repo_url, file_path)
+                                    if symbols:
+                                        await _insert_symbols(
+                                            session, tenant_id, repo_url,
+                                            file_path, commit_sha, new_s3_key, symbols,
+                                        )
+                            if old_s3_key and old_s3_key != new_s3_key:
+                                await _invalidate_redis_cache(old_s3_key)
+                            logger.info(
+                                "incremental_index_file_retry_success",
+                                extra={"file_path": file_path, "attempt": attempt},
+                            )
+                        _retried = True
+                        break
+                    except Exception as retry_exc:
+                        exc = retry_exc  # track latest error for final log
+
+                if not _retried:
+                    logger.error(
+                        "incremental_index_file_failed_permanent",
+                        extra={
+                            "file_path": file_path,
+                            "tenant_id": tenant_id_str,
+                            "attempts": 4,
+                            "error": str(exc),
+                        },
+                        exc_info=True,
+                    )
+            else:
+                logger.error(
+                    "incremental_index_file_failed",
+                    extra={
+                        "file_path": file_path,
+                        "tenant_id": tenant_id_str,
+                        "error": str(exc),
+                    },
+                    exc_info=True,
+                )
             continue
 
     # ── Process removed files ─────────────────────────────────────────────────
@@ -801,12 +939,42 @@ async def _run_index(
             tenant_id_str=tenant_id_str,
         )
     else:
+        # ── Merge-commit fallback ─────────────────────────────────────────
+        # GitHub push payloads for merge commits (and some force-pushes)
+        # have an empty ``commits`` array, so ``changed_files`` arrives
+        # empty even though real files changed.  Detect this by checking
+        # the snapshot's last-indexed SHA against the incoming ``after``
+        # SHA and calling the Compare API to get the real file diff.
+        resolved_changed = list(changed_files)
+        resolved_removed = list(removed_files)
+
+        if not resolved_changed and not resolved_removed:
+            before_sha = snapshot.github_last_indexed_commit or ""
+            if before_sha and before_sha != commit_sha:
+                logger.info(
+                    "incremental_index_empty_payload_compare_fallback",
+                    extra={
+                        "tenant_id": tenant_id_str,
+                        "before": before_sha[:8],
+                        "after": commit_sha[:8],
+                    },
+                )
+                resolved_changed, resolved_removed = (
+                    await _fetch_changed_files_from_compare(
+                        owner=owner,
+                        repo=repo_name,
+                        before_sha=before_sha,
+                        after_sha=commit_sha,
+                        token=plain_token,
+                    )
+                )
+
         await _run_incremental_index(
             tenant_id=tenant_uuid,
             repo_url=repo_url,
             commit_sha=commit_sha,
-            changed_files=changed_files,
-            removed_files=removed_files,
+            changed_files=resolved_changed,
+            removed_files=resolved_removed,
             owner=owner,
             repo=repo_name,
             token=plain_token,

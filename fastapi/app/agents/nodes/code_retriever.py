@@ -58,6 +58,9 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
+from langsmith import traceable
+
+from app.agents.trace_utils import strip_node_state
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +99,10 @@ class CodeRetrieverNode:
     calls node functions synchronously (the graph itself is not async),
     we use asyncio.run_until_complete() to bridge into async code.
     In Python 3.10+ with an already-running event loop (as in async
-    Celery tasks), we instead use asyncio.get_event_loop().
+    Celery tasks), we use asyncio.get_event_loop().
     """
 
+    @traceable(run_type="chain", name="code_retriever_node", process_inputs=strip_node_state)
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Retrieve source code context for the crashed function.

@@ -36,6 +36,10 @@ import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
+from langsmith import traceable
+
+from app.agents.nodes._gemini_utils import generate_with_truncation_retry
+from app.agents.trace_utils import strip_node_state
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,24 @@ logger = logging.getLogger(__name__)
 # Redis TTL for file content cache (mirrors code_retriever.py)
 # ---------------------------------------------------------------------------
 _REDIS_FILE_CACHE_TTL: int = 86_400  # 24 hours
+
+# File paths PatchGenerator will never touch, regardless of confidence or
+# error category. These require human review no matter what the model says.
+_PATCH_EXCLUDED_PATTERNS: tuple[str, ...] = (
+    "/migrations/",
+    "settings.py",
+    ".env",
+    "/terraform/",
+    "/.github/",
+    "alembic/versions/",
+    "docker-compose",
+    "Dockerfile",
+)
+
+
+def _is_patch_excluded(file_path: str) -> bool:
+    return any(pattern in file_path for pattern in _PATCH_EXCLUDED_PATTERNS)
+
 
 # ---------------------------------------------------------------------------
 # Lazy singletons
@@ -59,6 +81,7 @@ def _get_client():
     genai.configure(api_key=get_settings().GEMINI_API_KEY)
     return genai.GenerativeModel(
         "models/gemini-2.5-flash",
+        system_instruction=_SYSTEM_PROMPT,
         generation_config={
             "response_mime_type": "application/json",
             "temperature": 0.10,
@@ -122,6 +145,7 @@ def _build_user_prompt(
     crash_line: int,
     root_cause: str,
     suggested_fix: str,
+    fix_generator_code_patch: str,
     code_context: str,
     full_file_content: str,
 ) -> str:
@@ -132,6 +156,14 @@ def _build_user_prompt(
 
     parts.append("\n## Suggested Fix")
     parts.append(suggested_fix or "(unavailable)")
+
+    if fix_generator_code_patch.strip():
+        parts.append(
+            "\n## Draft Code Change (from an earlier pass — use as a starting "
+            "point, but verify every line is verbatim-correct against the "
+            "full source file below before using it in your patch)"
+        )
+        parts.append(fix_generator_code_patch)
 
     parts.append(f"\n## Crash Location\nFile: `{crash_file}`  Line: {crash_line}")
 
@@ -257,6 +289,56 @@ async def _find_symbol_by_location(
         return None
 
 
+async def _find_any_symbol_by_filename(
+    session: Any,
+    tenant_id: str,
+    file_path: str,
+) -> Optional[Any]:
+    """
+    Return ANY indexed symbol for the given file, regardless of line range.
+    Used when fix_target_file differs from crash_file — the crash line won't
+    fall inside the target file's symbols, so we can't use a line filter.
+    We just need the s3_key for the file.
+    """
+    import uuid as _uuid_module
+
+    from sqlalchemy.future import select
+
+    from app.models.code_index import CodeIndex
+
+    try:
+        tenant_uuid = _uuid_module.UUID(tenant_id)
+    except (ValueError, AttributeError):
+        return None
+
+    normalized_path = file_path.replace("\\", "/")
+    filename = normalized_path.split("/")[-1]
+
+    try:
+        stmt = (
+            select(CodeIndex)
+            .where(
+                CodeIndex.tenant_id == tenant_uuid,
+                CodeIndex.file_path.ilike(f"%{filename}%"),
+            )
+            .order_by(CodeIndex.start_line.asc())
+        )
+        result = await session.execute(stmt)
+        matches = result.scalars().all()
+
+        # Prefer the row whose file_path is a suffix of the requested path
+        for match in matches:
+            if normalized_path.endswith(match.file_path):
+                return match
+        return matches[0] if matches else None
+    except Exception as exc:
+        logger.warning(
+            "patch_generator_filename_query_failed",
+            extra={"file_path": file_path, "error": str(exc)},
+        )
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Three-tier file fetch (request dict → Redis → S3)
 # ---------------------------------------------------------------------------
@@ -324,6 +406,7 @@ class PatchGeneratorNode:
     using Gemini, with circuit breaker protection. Never fails the pipeline.
     """
 
+    @traceable(run_type="chain", name="patch_generator_node", process_inputs=strip_node_state)
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
         start: float = time.monotonic()
 
@@ -332,10 +415,17 @@ class PatchGeneratorNode:
         crash_line: int = int(parsed.get("crash_line") or 0)
         root_cause: str = str(state.get("root_cause") or "")
         suggested_fix: str = str(state.get("suggested_fix") or "")
+        fix_generator_code_patch: str = str(state.get("code_patch") or "")
         code_context: str = str(state.get("code_context") or "")
         tenant_id: str = str(state.get("tenant_id") or "")
         session = state.get("session")
         redis = state.get("redis")
+
+        # FixGenerator explicitly names which file needs the patch. Fall back
+        # to crash_file when the field is absent (older pipeline runs).
+        fix_target_file: str = str(state.get("fix_target_file") or "")
+        lookup_file: str = fix_target_file if fix_target_file else crash_file
+        lookup_line: int = crash_line  # always use crash_line for code-index lookup
 
         structured_patch: str = ""
         patch_confidence: float = 0.0
@@ -361,24 +451,53 @@ class PatchGeneratorNode:
                 )
                 return _empty_result(patch_skip_reason, latency_ms)
 
-            # ── 1. Find the s3_key for the crashed file ───────────────────────
-            if not crash_file or not session:
-                patch_skip_reason = "Missing crash_file or DB session — cannot retrieve source."
+            # ── 1. Find the s3_key for the target file ────────────────────────
+            if not lookup_file or not session:
+                patch_skip_reason = "Missing target file path or DB session — cannot retrieve source."
                 latency_ms = int((time.monotonic() - start) * 1000)
                 return _empty_result(patch_skip_reason, latency_ms)
 
-            symbol = await _find_symbol_by_location(
-                session, tenant_id, crash_file, crash_line
+            logger.info(
+                "patch_generator_lookup_file",
+                extra={
+                    "tenant_id": tenant_id,
+                    "lookup_file": lookup_file,
+                    "source": "fix_target_file" if fix_target_file else "crash_file",
+                },
             )
+
+            # When the target file differs from the crash file the crash line
+            # won't fall inside any symbol in that file, so use a filename-
+            # only lookup to still retrieve the s3_key.
+            if fix_target_file and fix_target_file != crash_file:
+                symbol = await _find_any_symbol_by_filename(
+                    session, tenant_id, lookup_file
+                )
+            else:
+                symbol = await _find_symbol_by_location(
+                    session, tenant_id, lookup_file, crash_line
+                )
             if symbol is None:
                 patch_skip_reason = (
-                    f"No code_index entry found for {crash_file}:{crash_line}."
+                    f"No code_index entry found for '{lookup_file}'."
                 )
                 latency_ms = int((time.monotonic() - start) * 1000)
                 return _empty_result(patch_skip_reason, latency_ms)
 
             s3_key: str = getattr(symbol, "s3_key", None) or ""
             file_path_from_index: str = getattr(symbol, "file_path", crash_file) or crash_file
+
+            if _is_patch_excluded(file_path_from_index):
+                patch_skip_reason = (
+                    f"File '{file_path_from_index}' matches an excluded pattern "
+                    "(migrations/config/infra) — auto-patch blocked by policy."
+                )
+                latency_ms = int((time.monotonic() - start) * 1000)
+                logger.info(
+                    "patch_generator_excluded_by_policy",
+                    extra={"tenant_id": tenant_id, "file_path": file_path_from_index},
+                )
+                return _empty_result(patch_skip_reason, latency_ms)
 
             if not s3_key:
                 patch_skip_reason = "CodeIndex row has no s3_key."
@@ -409,13 +528,15 @@ class PatchGeneratorNode:
                 crash_line=crash_line,
                 root_cause=root_cause,
                 suggested_fix=suggested_fix,
+                fix_generator_code_patch=fix_generator_code_patch,
                 code_context=code_context,
                 full_file_content=full_file_content,
             )
-            full_prompt = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
 
             client = _get_client()
-            response = await client.generate_content_async(full_prompt)
+            response = await generate_with_truncation_retry(
+                client, user_prompt, node_name="patch_generator", logger=logger
+            )
             raw_output: str = response.text or ""
 
             # ── 5. Parse and validate JSON response ───────────────────────────

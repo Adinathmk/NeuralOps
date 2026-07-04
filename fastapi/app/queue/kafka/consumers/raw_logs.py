@@ -46,6 +46,7 @@ class RawLogConsumer:
                         group_id="neuralops_fastapi_raw_logs_group",
                         auto_offset_reset="earliest",
                         enable_auto_commit=False,
+                        metadata_max_age_ms=30000,
                         value_deserializer=lambda raw: (
                             raw.decode("utf-8") if raw else None
                         ),
