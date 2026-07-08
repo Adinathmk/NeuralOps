@@ -208,6 +208,7 @@ async def _execute_create_github_pr(
     error_type: str,
     root_cause: str,
     suggested_fix: str,
+    is_draft: bool = False,
 ) -> None:
     """
     Core async coroutine. Called via asyncio.run() from the Celery task.
@@ -542,6 +543,7 @@ async def _execute_create_github_pr(
                 "body": pr_body,
                 "base": default_branch,
                 "head": branch_name,
+                "draft": is_draft,
             },
         )
 
@@ -566,7 +568,7 @@ async def _execute_create_github_pr(
         incident_id=incident_id,
         pr_url=pr_html_url,
         pr_number=pr_number_val,
-        pr_status="open",
+        pr_status="draft" if is_draft else "open",
         pr_title=f"fix({error_type}): NeuralOps AI fix for incident {incident_id[:8]}",
     )
 
@@ -614,6 +616,7 @@ def create_github_pr(
     error_type: str,
     root_cause: str,
     suggested_fix: str,
+    is_draft: bool = False,
 ) -> Dict[str, Any]:
     """
     Celery task: create a GitHub PR for an AI-generated patch.
@@ -649,6 +652,7 @@ def create_github_pr(
                 error_type=error_type,
                 root_cause=root_cause,
                 suggested_fix=suggested_fix,
+                is_draft=is_draft,
             )
         )
     except Exception as exc:

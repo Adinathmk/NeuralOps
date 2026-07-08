@@ -23,6 +23,7 @@ import app.models.incidents  # noqa: F401
 import app.models.logs  # noqa: F401
 import app.models.outbox  # noqa: F401
 import app.models.snapshots  # noqa: F401
+import app.models.github_integration_snapshots  # noqa: F401
 from alembic import context
 from app.core.config import get_settings
 

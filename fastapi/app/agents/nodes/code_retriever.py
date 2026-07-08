@@ -150,10 +150,36 @@ class CodeRetrieverNode:
 
         crashed_symbol = None
 
+        # ── Step 0: Resolve explicitly mapped repository (if configured) ──────
+        from sqlalchemy.future import select
+        from app.models.github_integration_snapshots import ServiceRepoMappingSnapshot
+        
+        service_name = parsed.get("service_name")
+        target_repo_url: Optional[str] = None
+        
+        if service_name:
+            import uuid as _uuid_module
+            try:
+                t_uuid = _uuid_module.UUID(tenant_id)
+                stmt = select(ServiceRepoMappingSnapshot).where(
+                    ServiceRepoMappingSnapshot.tenant_id == t_uuid,
+                    ServiceRepoMappingSnapshot.service_name == service_name
+                ).order_by(ServiceRepoMappingSnapshot.synced_at.desc()).limit(1)
+                res = await session.execute(stmt)
+                mapping = res.scalar_one_or_none()
+                if mapping:
+                    target_repo_url = mapping.repo_url
+                    logger.debug(
+                        "code_retriever_resolved_repo_from_mapping",
+                        extra={"service": service_name, "repo_url": target_repo_url}
+                    )
+            except Exception as e:
+                logger.warning(f"Error fetching service mapping: {e}")
+
         # ── Step 1: Find the crashed function ─────────────────────────────────
         if crash_file and crash_line > 0:
             crashed_symbol = await self._find_symbol_by_location(
-                session, tenant_id, crash_file, crash_line
+                session, tenant_id, crash_file, crash_line, target_repo_url
             )
 
             if crashed_symbol is not None:
@@ -188,7 +214,7 @@ class CodeRetrieverNode:
                 continue
 
             symbol = await self._find_symbol_by_location(
-                session, tenant_id, frame_file, frame_line
+                session, tenant_id, frame_file, frame_line, target_repo_url
             )
 
             if symbol is None or str(symbol.id) in fetched_symbol_ids:
@@ -224,7 +250,7 @@ class CodeRetrieverNode:
                     continue
 
                 helper = await self._find_symbol_by_name(
-                    session, tenant_id, called_name.strip()
+                    session, tenant_id, called_name.strip(), target_repo_url
                 )
 
                 if helper is None or str(helper.id) in fetched_symbol_ids:
@@ -286,6 +312,7 @@ class CodeRetrieverNode:
         tenant_id: str,
         file_path: str,
         line_number: int,
+        repo_url: Optional[str] = None,
     ) -> Optional[Any]:
         """
         Find the CodeIndex row whose [start_line, end_line] range
@@ -317,18 +344,22 @@ class CodeRetrieverNode:
         filename = normalized_path.split("/")[-1]
 
         try:
+            if not repo_url:
+                return None
+            
             stmt = (
                 select(CodeIndex)
                 .where(
                     and_(
                         CodeIndex.tenant_id == tenant_uuid,
+                        CodeIndex.repo_url == repo_url,
                         CodeIndex.file_path.ilike(f"%{filename}%"),
                         CodeIndex.start_line <= line_number,
                         CodeIndex.end_line >= line_number,
                     )
                 )
-                .order_by((CodeIndex.end_line - CodeIndex.start_line).asc())
             )
+            stmt = stmt.order_by((CodeIndex.end_line - CodeIndex.start_line).asc())
             result = await session.execute(stmt)
             matches = result.scalars().all()
             
@@ -340,10 +371,7 @@ class CodeRetrieverNode:
                     best_match = match
                     break
             
-            # Fallback to the first match if no exact suffix match was found
-            if not best_match and matches:
-                best_match = matches[0]
-
+            # Since fallback is removed, we only return if there is an exact suffix match.
             return best_match
 
         except Exception as exc:
@@ -362,6 +390,7 @@ class CodeRetrieverNode:
         session: Any,
         tenant_id: str,
         symbol_name: str,
+        repo_url: Optional[str] = None,
     ) -> Optional[Any]:
         """
         Find a CodeIndex row by exact symbol name within the tenant.
@@ -383,11 +412,15 @@ class CodeRetrieverNode:
             return None
 
         try:
+            if not repo_url:
+                return None
+                
             stmt = (
                 select(CodeIndex)
                 .where(
                     and_(
                         CodeIndex.tenant_id == tenant_uuid,
+                        CodeIndex.repo_url == repo_url,
                         CodeIndex.symbol_name == symbol_name,
                     )
                 )

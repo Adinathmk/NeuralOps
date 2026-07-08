@@ -1,7 +1,7 @@
 import logging
 
 from core.exceptions import RateLimitException
-from core.permissions import IsTenantAdmin
+from core.permissions import IsTenantAdmin, IsTenantOwner
 from core.responses import APIResponse
 from core.utils.errors import extract_error_message
 from django.conf import settings
@@ -215,6 +215,66 @@ class ListTeamMembersView(APIView):
         return APIResponse.success(
             data=serializer.data, message="Team members retrieved successfully."
         )
+
+
+class UpdateTeamMemberRoleView(APIView):
+    """
+    Update a team member's role.
+    Requires IsTenantAdmin.
+    """
+
+    permission_classes = [IsAuthenticated, IsTenantAdmin]
+    authentication_classes = [JWTAuthentication]
+
+    @extend_schema(
+        summary="Update team member role",
+        request=inline_serializer(
+            name="UpdateRoleRequest",
+            fields={"role": serializers.ChoiceField(choices=["admin", "engineer", "viewer", "owner"])},
+        ),
+        responses={200: UserSerializer},
+    )
+    def patch(self, request, member_id):
+        try:
+            target_user = User.objects.get(id=member_id, tenant=request.user.tenant, is_active=True)
+        except User.DoesNotExist:
+            return APIResponse.error(message="Member not found", status_code=404, code="not_found")
+        
+        new_role = request.data.get("role")
+        if new_role not in dict(User.ROLE_CHOICES).keys():
+            return APIResponse.error(message="Invalid role", status_code=400, code="validation_error")
+
+        if target_user.id == request.user.id:
+            return APIResponse.error(message="Cannot change your own role", status_code=400, code="invalid_action")
+
+        if target_user.role == "owner":
+            return APIResponse.error(message="Cannot change the role of an owner", status_code=403, code="forbidden")
+
+        if new_role == "owner" and request.user.role != "owner":
+            return APIResponse.error(message="Only owners can promote to owner", status_code=403, code="forbidden")
+            
+        target_user.role = new_role
+        target_user.save()
+
+        # Just in case outbox is needed
+        try:
+            from outbox.models import OutboxEvent
+            OutboxEvent.objects.create(
+                topic="users.role_updated",
+                payload={
+                    "id": str(target_user.id),
+                    "tenant_id": str(target_user.tenant_id),
+                    "role": target_user.role,
+                }
+            )
+        except ImportError:
+            pass
+
+        return APIResponse.success(
+            data=UserSerializer(target_user).data,
+            message=f"Role updated to {new_role}"
+        )
+
 
 
 class LogoutView(APIView):
@@ -605,7 +665,7 @@ class GitHubOAuthCallbackView(APIView):
 class InviteEngineerView(APIView):
     """Admin invites engineer to tenant."""
 
-    permission_classes = [IsAuthenticated, IsTenantAdmin]
+    permission_classes = [IsAuthenticated, IsTenantOwner]
     authentication_classes = [JWTAuthentication]
 
     @extend_schema(
@@ -779,7 +839,7 @@ class JoinWithEmailPasswordView(APIView):
 class ListInvitationsView(APIView):
     """List pending invitations for tenant."""
 
-    permission_classes = [IsAuthenticated, IsTenantAdmin]
+    permission_classes = [IsAuthenticated, IsTenantOwner]
     authentication_classes = [JWTAuthentication]
 
     @extend_schema(
@@ -810,7 +870,7 @@ class ListInvitationsView(APIView):
 class CancelInvitationView(APIView):
     """Cancel pending invitation."""
 
-    permission_classes = [IsAuthenticated, IsTenantAdmin]
+    permission_classes = [IsAuthenticated, IsTenantOwner]
     authentication_classes = [JWTAuthentication]
 
     @extend_schema(
@@ -832,7 +892,7 @@ class CancelInvitationView(APIView):
 class ResendInvitationView(APIView):
     """Resend invitation email."""
 
-    permission_classes = [IsAuthenticated, IsTenantAdmin]
+    permission_classes = [IsAuthenticated, IsTenantOwner]
     authentication_classes = [JWTAuthentication]
 
     @extend_schema(

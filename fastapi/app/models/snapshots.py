@@ -120,46 +120,28 @@ class TenantSnapshot(Base):
         comment="Timestamp of the last successful snapshot upsert.",
     )
 
-    # ── Phase 3: GitHub Integration columns ───────────────────────────────────
-    # All nullable — only populated once a tenant connects a GitHub repository.
-
-    github_repo_url: Column = Column(
-        Text,
-        nullable=True,
-        comment="Full HTTPS clone URL of the connected repository.",
-    )
-    github_repo_owner: Column = Column(
-        String(255),
-        nullable=True,
-        comment="GitHub organisation or user name that owns the repository.",
-    )
-    github_repo_name: Column = Column(
-        String(255),
-        nullable=True,
-        comment="Repository name (without the owner prefix).",
-    )
-    github_installation_id: Column = Column(
-        BigInteger,
-        nullable=True,
-        comment="GitHub App installation ID assigned when tenant installs the NeuralOps GitHub App.",
-    )
-    github_default_branch: Column = Column(
-        String(255),
-        nullable=True,
-        comment="Branch that is indexed and monitored for push events.",
-    )
-    github_indexing_status: Column = Column(
-        String(20),
-        nullable=True,
-        comment="Current AST indexing lifecycle state: pending | indexing | indexed | failed.",
-    )
-    github_last_indexed_commit: Column = Column(
-        String(40),
-        nullable=True,
-        comment="SHA of the last successfully indexed commit.",
-    )
+    # ── DEPRECATED GitHub Integration (Phase 3) ───────────────────────────────
+    # These columns are deprecated. We now use the GitHubIntegrationSnapshot model (1-to-many).
+    # Do not rely on these in new code. They will be dropped in a future migration.
+    github_repo_url: Column = Column(Text, nullable=True)
+    github_repo_owner: Column = Column(String(255), nullable=True)
+    github_repo_name: Column = Column(String(255), nullable=True)
+    github_installation_id: Column = Column(BigInteger, nullable=True)
+    github_default_branch: Column = Column(String(255), nullable=True)
+    github_indexing_status: Column = Column(String(20), nullable=True)
+    github_last_indexed_commit: Column = Column(String(40), nullable=True)
 
     # ── Relationships ─────────────────────────────────────────────────────────
+    github_integrations = relationship(
+        "GitHubIntegrationSnapshot",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
+    )
+    service_mappings = relationship(
+        "ServiceRepoMappingSnapshot",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
+    )
     alert_rule_snapshots = relationship(
         "AlertRuleSnapshot",
         back_populates="tenant",

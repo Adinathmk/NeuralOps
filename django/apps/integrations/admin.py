@@ -17,6 +17,7 @@ class GitHubIntegrationAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "tenant",
+        "repo_url",
         "repo_owner",
         "repo_name",
         "default_branch",

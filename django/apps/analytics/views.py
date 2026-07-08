@@ -36,20 +36,20 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         yesterday = now - timedelta(days=1)
 
         # 1. Active Criticals
-        active_criticals = IncidentSnapshot.objects.filter(
+        active_criticals = IncidentSnapshot.objects.exclude(status='draft').filter(
             tenant_id=tenant_id,
             status="open",
             severity="critical"
         ).count()
 
         # 2. New Issues (created in last 24h)
-        new_issues = IncidentSnapshot.objects.filter(
+        new_issues = IncidentSnapshot.objects.exclude(status='draft').filter(
             tenant_id=tenant_id,
             created_at__gte=yesterday
         ).count()
 
         # 3. Avg MTTR
-        resolved_incidents = IncidentSnapshot.objects.filter(
+        resolved_incidents = IncidentSnapshot.objects.exclude(status='draft').filter(
             tenant_id=tenant_id,
             status__in=["resolved", "closed"],
             resolved_at__isnull=False,
@@ -78,7 +78,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
     def crash_locations(self, request):
         tenant_id = request.tenant_id
 
-        locations = IncidentSnapshot.objects.filter(
+        locations = IncidentSnapshot.objects.exclude(status='draft').filter(
             tenant_id=tenant_id,
             crash_file__isnull=False
         ).exclude(
@@ -106,7 +106,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
 
         incidents = IncidentSnapshot.objects.filter(
             tenant_id=tenant_id,
-            status__in=["open", "investigating"]
+            status__in=["open", "investigating", "draft"]
         ).order_by("-created_at")[:5]
 
         result = []
@@ -127,7 +127,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
     def insights(self, request):
         tenant_id = request.tenant_id
 
-        incidents = IncidentSnapshot.objects.filter(
+        incidents = IncidentSnapshot.objects.exclude(status='draft').filter(
             tenant_id=tenant_id,
         ).exclude(
             root_cause=""
@@ -149,52 +149,32 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"], url_path="incident-trend")
     def incident_trend(self, request):
         """
-        Daily incident creation and resolution counts for the last N days.
-
-        Returns a list of { date, created, resolved } objects ordered by date.
+        Daily incident counts for the last N days, grouped by current status.
+        Returns a list of { date, open, investigating, resolved, closed }.
         """
         tenant_id = request.tenant_id
         days = self._get_days(request, default=30)
         since = timezone.now() - timedelta(days=days)
 
-        # Daily created counts
-        created_qs = (
-            IncidentSnapshot.objects
+        rows = (
+            IncidentSnapshot.objects.exclude(status='draft')
             .filter(tenant_id=tenant_id, created_at__gte=since)
             .annotate(date=TruncDate("created_at"))
-            .values("date")
-            .annotate(created=Count("incident_id"))
-            .order_by("date")
+            .values("date", "status")
+            .annotate(count=Count("incident_id"))
         )
 
-        # Daily resolved counts
-        resolved_qs = (
-            IncidentSnapshot.objects
-            .filter(
-                tenant_id=tenant_id,
-                resolved_at__gte=since,
-                resolved_at__isnull=False,
-            )
-            .annotate(date=TruncDate("resolved_at"))
-            .values("date")
-            .annotate(resolved=Count("incident_id"))
-            .order_by("date")
-        )
+        date_map = {}
+        for r in rows:
+            d = r["date"].isoformat()
+            if d not in date_map:
+                date_map[d] = {"date": d, "open": 0, "investigating": 0, "resolved": 0, "closed": 0}
+            
+            status = r["status"]
+            if status in date_map[d]:
+                date_map[d][status] += r["count"]
 
-        # Merge by date
-        created_map = {row["date"]: row["created"] for row in created_qs}
-        resolved_map = {row["date"]: row["resolved"] for row in resolved_qs}
-        all_dates = sorted(set(created_map) | set(resolved_map))
-
-        result = [
-            {
-                "date": d.isoformat(),
-                "created": created_map.get(d, 0),
-                "resolved": resolved_map.get(d, 0),
-            }
-            for d in all_dates
-        ]
-
+        result = sorted(date_map.values(), key=lambda x: x["date"])
         return Response(result)
 
     @action(detail=False, methods=["get"], url_path="severity-distribution")
@@ -209,7 +189,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         since = timezone.now() - timedelta(days=days)
 
         rows = (
-            IncidentSnapshot.objects
+            IncidentSnapshot.objects.exclude(status='draft')
             .filter(tenant_id=tenant_id, created_at__gte=since)
             .values("severity")
             .annotate(count=Count("incident_id"))
@@ -235,7 +215,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         since = timezone.now() - timedelta(days=days)
 
         rows = (
-            IncidentSnapshot.objects
+            IncidentSnapshot.objects.exclude(status='draft')
             .filter(tenant_id=tenant_id, created_at__gte=since)
             .values("status")
             .annotate(count=Count("incident_id"))
@@ -257,7 +237,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         since = timezone.now() - timedelta(days=days)
 
         rows = (
-            IncidentSnapshot.objects
+            IncidentSnapshot.objects.exclude(status='draft')
             .filter(
                 tenant_id=tenant_id,
                 created_at__gte=since,
@@ -277,7 +257,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         for row in rows:
             # Find worst severity for this service
             worst = (
-                IncidentSnapshot.objects
+                IncidentSnapshot.objects.exclude(status='draft')
                 .filter(
                     tenant_id=tenant_id,
                     service_name=row["service_name"],
@@ -313,7 +293,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         since = timezone.now() - timedelta(days=days)
 
         rows = (
-            IncidentSnapshot.objects
+            IncidentSnapshot.objects.exclude(status='draft')
             .filter(tenant_id=tenant_id, created_at__gte=since)
             .exclude(error_type="")
             .values("error_type")
@@ -346,7 +326,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         since = timezone.now() - timedelta(days=days)
 
         rows = (
-            IncidentSnapshot.objects
+            IncidentSnapshot.objects.exclude(status='draft')
             .filter(
                 tenant_id=tenant_id,
                 status__in=["resolved", "closed"],
@@ -380,7 +360,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         since = timezone.now() - timedelta(days=days)
 
         rows = (
-            IncidentSnapshot.objects
+            IncidentSnapshot.objects.exclude(status='draft')
             .filter(tenant_id=tenant_id, created_at__gte=since)
             .values("status")
             .annotate(count=Count("incident_id"))
@@ -407,7 +387,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         since = timezone.now() - timedelta(days=days)
 
         rows = (
-            IncidentSnapshot.objects
+            IncidentSnapshot.objects.exclude(status='draft')
             .filter(tenant_id=tenant_id, created_at__gte=since)
             .exclude(environment="")
             .values("environment")
@@ -430,7 +410,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         since = timezone.now() - timedelta(days=days)
 
         rows = (
-            IncidentSnapshot.objects
+            IncidentSnapshot.objects.exclude(status='draft')
             .filter(tenant_id=tenant_id, created_at__gte=since)
             .annotate(
                 dow=ExtractWeekDay("created_at"),
@@ -461,7 +441,7 @@ class DashboardAnalyticsViewSet(viewsets.ViewSet):
         since = now - timedelta(days=days)
         prev_since = since - timedelta(days=days)
 
-        base_qs = IncidentSnapshot.objects.filter(tenant_id=tenant_id)
+        base_qs = IncidentSnapshot.objects.exclude(status='draft').filter(tenant_id=tenant_id)
 
         # Current period
         current = base_qs.filter(created_at__gte=since)

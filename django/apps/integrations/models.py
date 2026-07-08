@@ -52,11 +52,11 @@ class GitHubIntegration(models.Model):
     )
 
     # ── Tenant relationship ───────────────────────────────────────────────────
-    tenant = models.OneToOneField(
+    tenant = models.ForeignKey(
         Tenant,
         on_delete=models.CASCADE,
-        related_name="github_integration",
-        help_text="Each tenant may have at most one GitHub integration.",
+        related_name="github_integrations",
+        help_text="The tenant this GitHub integration belongs to.",
     )
 
     # ── Repository metadata ───────────────────────────────────────────────────
@@ -122,6 +122,7 @@ class GitHubIntegration(models.Model):
 
     class Meta:
         db_table = "github_integrations"
+        unique_together = ("tenant", "repo_url")
         indexes = [
             models.Index(fields=["tenant"]),
             models.Index(fields=["indexing_status"]),
@@ -154,9 +155,44 @@ class GitHubIntegration(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:
-        return (
-            f"GitHubIntegration("
-            f"tenant={self.tenant_id}, "
-            f"repo={self.repo_owner}/{self.repo_name}, "
-            f"status={self.indexing_status})"
-        )
+        return f"<GitHubIntegration {self.repo_owner}/{self.repo_name} (tenant={self.tenant_id})>"
+
+
+class ServiceRepoMapping(models.Model):
+    """
+    Explicitly maps a service_name (from the SDK) to a specific GitHub Integration.
+    This replaces the expensive AST scanning heuristic with O(1) determinism.
+    """
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="service_mappings",
+        help_text="The tenant this mapping belongs to.",
+    )
+    service_name = models.CharField(
+        max_length=255,
+        help_text="The service_name sent by the SDK (e.g. 'payment-api').",
+    )
+    github_integration = models.ForeignKey(
+        GitHubIntegration,
+        on_delete=models.CASCADE,
+        related_name="service_mappings",
+        help_text="The repository to map this service to.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "service_repo_mappings"
+        unique_together = ("tenant", "service_name")
+        indexes = [
+            models.Index(fields=["tenant", "service_name"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"<ServiceRepoMapping {self.service_name} -> {self.github_integration.repo_name}>"

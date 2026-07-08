@@ -102,30 +102,33 @@ def _verify_signature(
 # ---------------------------------------------------------------------------
 
 
-async def _find_tenant_by_repo_url(
+async def _find_tenant_and_integration_by_repo_url(
     repo_clone_url: str,
     db: AsyncSession,
-) -> Optional[TenantSnapshot]:
+) -> tuple[Optional[TenantSnapshot], Optional[Any]]:
     """
-    Return the ``TenantSnapshot`` whose ``github_repo_url`` matches
-    *repo_clone_url*, or ``None`` if not found.
+    Return the (TenantSnapshot, GitHubIntegrationSnapshot) whose ``repo_url`` matches
+    *repo_clone_url*, or (None, None) if not found.
 
     GitHub sends both HTTPS and SSH variants; we normalise both to bare
     HTTPS by stripping trailing ``.git`` before comparing.
     """
+    from app.models.github_integration_snapshots import GitHubIntegrationSnapshot
+    from sqlalchemy.orm import selectinload
+
     normalised = repo_clone_url.rstrip("/").removesuffix(".git")
 
     result = await db.execute(
-        select(TenantSnapshot).where(TenantSnapshot.github_repo_url.isnot(None))
+        select(GitHubIntegrationSnapshot).options(selectinload(GitHubIntegrationSnapshot.tenant))
     )
-    snapshots = result.scalars().all()
+    integrations = result.scalars().all()
 
-    for snap in snapshots:
-        stored = (snap.github_repo_url or "").rstrip("/").removesuffix(".git")
+    for integration in integrations:
+        stored = (integration.repo_url or "").rstrip("/").removesuffix(".git")
         if stored == normalised:
-            return snap
+            return integration.tenant, integration
 
-    return None
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +245,8 @@ async def receive_github_webhook(
             detail="Push payload is missing repository.clone_url.",
         )
 
-    tenant = await _find_tenant_by_repo_url(clone_url, db)
-    if tenant is None:
+    tenant, integration = await _find_tenant_and_integration_by_repo_url(clone_url, db)
+    if tenant is None or integration is None:
         logger.warning(
             "github_webhook_tenant_not_found",
             extra={"clone_url": clone_url},
@@ -302,7 +305,7 @@ async def receive_github_webhook(
 
     index_code.delay(
         tenant_id=str(tenant.tenant_id),
-        repo_url=tenant.github_repo_url,
+        repo_url=integration.repo_url,
         commit_sha=commit_sha,
         changed_files=changed_files,
         removed_files=removed_files,

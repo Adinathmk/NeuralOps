@@ -115,3 +115,41 @@ class GitHubIntegrationStatusSerializer(serializers.ModelSerializer):
             "github_installation_id",
         ]
         read_only_fields = fields
+
+
+class ServiceRepoMappingSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the ServiceRepoMapping model.
+    """
+    github_integration_id = serializers.UUIDField()
+    repo_name = serializers.CharField(source="github_integration.repo_name", read_only=True)
+
+    class Meta:
+        from .models import ServiceRepoMapping
+        model = ServiceRepoMapping
+        fields = [
+            "id",
+            "service_name",
+            "github_integration_id",
+            "repo_name",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "repo_name", "created_at", "updated_at"]
+
+    def create(self, validated_data):
+        tenant_id = self.context["request"].tenant_id
+        github_integration_id = validated_data.pop("github_integration_id")
+
+        from .models import GitHubIntegration
+        try:
+            github_integration = GitHubIntegration.objects.get(
+                id=github_integration_id, tenant_id=tenant_id
+            )
+        except GitHubIntegration.DoesNotExist:
+            raise serializers.ValidationError({"github_integration_id": "Integration not found."})
+
+        validated_data["tenant_id"] = tenant_id
+        validated_data["github_integration"] = github_integration
+
+        return super().create(validated_data)

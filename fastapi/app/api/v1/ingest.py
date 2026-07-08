@@ -248,6 +248,30 @@ async def ingest_logs(
         context_log_count=len(payload.context_logs),
     )
 
+    # ── Step 0: Enforce Code Mapping ──────────────────────────────────────────
+    from sqlalchemy.future import select
+    from app.models.github_integration_snapshots import ServiceRepoMappingSnapshot
+
+    stmt = (
+        select(ServiceRepoMappingSnapshot)
+        .where(
+            ServiceRepoMappingSnapshot.tenant_id == tenant.tenant_id,
+            ServiceRepoMappingSnapshot.service_name == payload.service_name
+        )
+        .limit(1)
+    )
+    res = await db.execute(stmt)
+    if not res.scalar_one_or_none():
+        logger.warning(
+            "ingest_logs_rejected_no_mapping",
+            tenant_id=tenant_id_str,
+            service_name=payload.service_name,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Log rejected: No code mapping configured for service '{payload.service_name}'. Please map this service in the GitHub Integrations dashboard.",
+        )
+
     # ── Step 1: Compress context logs ─────────────────────────────────────────
     try:
         compressed = _compress_context_logs(payload.context_logs)

@@ -33,20 +33,16 @@ from rest_framework.views import APIView
 from users.models import AuditLog
 
 from .models import GitHubIntegration
-from .serializers import GitHubIntegrationSerializer, GitHubIntegrationStatusSerializer
+from .serializers import GitHubIntegrationSerializer, GitHubIntegrationStatusSerializer, ServiceRepoMappingSerializer
 
 logger = logging.getLogger(__name__)
 
 
-def _build_outbox_payload(integration: GitHubIntegration) -> dict:
+def _build_outbox_payload(integration: GitHubIntegration, action: str) -> dict:
     """
     Build the config.tenants Kafka event payload for a GitHub integration change.
 
-    The nested `github_integration` block is consumed by FastAPI's
-    _handle_tenant_event() to upsert the github_* columns in tenant_snapshots.
-
-    IMPORTANT: The installation_id IS included so FastAPI can
-    fetch tokens when authenticating against GitHub at index time.
+    `action` should be one of "created", "updated", or "deleted".
     """
     import time
 
@@ -58,101 +54,161 @@ def _build_outbox_payload(integration: GitHubIntegration) -> dict:
             "plan_tier": tenant.plan_tier,
             "is_suspended": tenant.status == "suspended",
             "source_version": int(time.time() * 1000),
-            "github_integration": {
-                "repo_url": integration.repo_url,
-                "repo_owner": integration.repo_owner,
-                "repo_name": integration.repo_name,
-                "installation_id": str(integration.github_installation_id) if integration.github_installation_id else None,
-                "default_branch": integration.default_branch,
-                "indexing_status": integration.indexing_status,
-                "last_indexed_commit": integration.last_indexed_commit,
+            "github_integration_event": {
+                "action": action,
+                "integration": {
+                    "id": str(integration.id),
+                    "repo_url": integration.repo_url,
+                    "repo_owner": integration.repo_owner,
+                    "repo_name": integration.repo_name,
+                    "installation_id": str(integration.github_installation_id) if integration.github_installation_id else None,
+                    "default_branch": integration.default_branch,
+                    "indexing_status": integration.indexing_status,
+                    "last_indexed_commit": integration.last_indexed_commit,
+                },
             },
         },
     }
 
 
-class GitHubIntegrationView(APIView):
+class GitHubIntegrationListCreateView(APIView):
     """
-    GET  /api/integrations/github/  — read the tenant's GitHub integration.
-    POST /api/integrations/github/  — create or update (upsert) the integration.
-
-    Only tenant admins (admin | owner role) may access these endpoints.
+    GET  /api/integrations/github/  — list the tenant's GitHub integrations.
+    POST /api/integrations/github/  — create a new integration.
     """
 
     permission_classes = [IsTenantAdmin]
 
-    # ── GET ────────────────────────────────────────────────────────────────────
+    @extend_schema(
+        summary="List GitHub Integrations",
+        description="Returns a list of all repository connection metadata and indexing status for the authenticated tenant.",
+        responses={200: GitHubIntegrationStatusSerializer(many=True)},
+    )
+    def get(self, request) -> APIResponse:
+        integrations = GitHubIntegration.objects.filter(tenant_id=request.tenant_id)
+        serializer = GitHubIntegrationStatusSerializer(integrations, many=True)
+        return APIResponse.success(
+            data=serializer.data,
+            message="GitHub integrations retrieved successfully.",
+        )
+
+    @extend_schema(
+        summary="Create GitHub Integration",
+        description="Connect a new repository.",
+        request=GitHubIntegrationSerializer,
+        responses={201: GitHubIntegrationStatusSerializer},
+    )
+    def post(self, request) -> APIResponse:
+        tenant_id = request.tenant_id
+
+        # Unique constraint is on (tenant_id, repo_url). We can check it manually for better error message.
+        repo_url = request.data.get("repo_url")
+        if repo_url and GitHubIntegration.objects.filter(tenant_id=tenant_id, repo_url=repo_url).exists():
+            return APIResponse.error(
+                message="This repository is already connected.",
+                status_code=409,
+                code="duplicate_repo",
+            )
+
+        serializer = GitHubIntegrationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return APIResponse.error(
+                message="Validation failed.",
+                status_code=400,
+                code="validation_error",
+                errors=serializer.errors,
+            )
+
+        with transaction.atomic():
+            integration: GitHubIntegration = serializer.save(tenant_id=tenant_id)
+
+            AuditLog.log(
+                action="TENANT_CONFIG_UPDATED",
+                user=request.user,
+                tenant=integration.tenant,
+                resource_type="GitHubIntegration",
+                resource_id=str(integration.id),
+                description=f"GitHub integration created for repo {integration.repo_owner}/{integration.repo_name}",
+            )
+
+            payload = _build_outbox_payload(integration, "created")
+            write_outbox(
+                topic="config.tenants",
+                key=str(tenant_id),
+                payload=payload,
+                source_version=payload["tenant"]["source_version"],
+            )
+
+        logger.info(
+            "github_integration_created",
+            extra={
+                "tenant_id": str(tenant_id),
+                "repo": f"{integration.repo_owner}/{integration.repo_name}",
+                "integration_id": str(integration.id),
+            },
+        )
+
+        response_serializer = GitHubIntegrationStatusSerializer(integration)
+        return APIResponse.success(
+            data=response_serializer.data,
+            message="GitHub integration connected successfully.",
+            status_code=201,
+        )
+
+
+class GitHubIntegrationDetailView(APIView):
+    """
+    GET    /api/integrations/github/{id}/  — read a specific integration.
+    PATCH  /api/integrations/github/{id}/  — update a specific integration.
+    DELETE /api/integrations/github/{id}/  — delete a specific integration.
+    """
+
+    permission_classes = [IsTenantAdmin]
+
+    def _get_object(self, tenant_id, pk):
+        try:
+            return GitHubIntegration.objects.get(id=pk, tenant_id=tenant_id)
+        except GitHubIntegration.DoesNotExist:
+            return None
 
     @extend_schema(
         summary="Retrieve GitHub Integration",
-        description="Returns the current repository connection metadata and indexing status for the authenticated tenant (credentials are excluded).",
+        description="Returns the repository connection metadata for a specific integration.",
         responses={200: GitHubIntegrationStatusSerializer},
     )
-    def get(self, request) -> APIResponse:
-        """
-        Return the current GitHub integration for the authenticated tenant.
-
-        Returns:
-            200 with integration details (no credentials exposed).
-            404 if no integration exists yet.
-        """
-        tenant_id = request.tenant_id
-
-        try:
-            integration = GitHubIntegration.objects.get(tenant_id=tenant_id)
-        except GitHubIntegration.DoesNotExist:
+    def get(self, request, pk) -> APIResponse:
+        integration = self._get_object(request.tenant_id, pk)
+        if not integration:
             return APIResponse.error(
-                message="No GitHub integration found for this tenant.",
+                message="Integration not found.",
                 status_code=404,
                 code="not_found",
             )
-
         serializer = GitHubIntegrationStatusSerializer(integration)
         return APIResponse.success(
             data=serializer.data,
             message="GitHub integration retrieved successfully.",
         )
 
-    # ── POST (upsert) ──────────────────────────────────────────────────────────
-
     @extend_schema(
-        summary="Create or Update GitHub Integration",
-        description="Connect a repository or update credentials.",
+        summary="Update GitHub Integration",
+        description="Update credentials or settings for a specific repository connection.",
         request=GitHubIntegrationSerializer,
-        responses={
-            200: GitHubIntegrationStatusSerializer,
-            201: GitHubIntegrationStatusSerializer,
-        },
+        responses={200: GitHubIntegrationStatusSerializer},
     )
-    def post(self, request) -> APIResponse:
-        """
-        Create or update (upsert) the GitHub integration for this tenant.
+    def patch(self, request, pk) -> APIResponse:
+        integration = self._get_object(request.tenant_id, pk)
+        if not integration:
+            return APIResponse.error(
+                message="Integration not found.",
+                status_code=404,
+                code="not_found",
+            )
 
-        On create:  `github_installation_id` is required.
-        On update:  `github_installation_id` is optional.
-
-        An outbox event is published so FastAPI's snapshot table stays in sync.
-
-        Returns:
-            201 on successful create.
-            200 on successful update.
-            400 on validation error.
-        """
-        tenant_id = request.tenant_id
-
-        # ── Determine create vs update ────────────────────────────────────────
-        try:
-            existing = GitHubIntegration.objects.get(tenant_id=tenant_id)
-            is_create = False
-        except GitHubIntegration.DoesNotExist:
-            existing = None
-            is_create = True
-
-        # ── Validate ──────────────────────────────────────────────────────────
         serializer = GitHubIntegrationSerializer(
-            instance=existing,
+            instance=integration,
             data=request.data,
-            partial=not is_create,  # Full validation on create; partial on update
+            partial=True,
         )
 
         if not serializer.is_valid():
@@ -163,115 +219,81 @@ class GitHubIntegrationView(APIView):
                 errors=serializer.errors,
             )
 
-        # ── Atomic write: model + audit log + outbox ──────────────────────────
         with transaction.atomic():
-            if is_create:
-                integration: GitHubIntegration = serializer.save(tenant_id=tenant_id)
-            else:
-                integration: GitHubIntegration = serializer.save()
+            integration = serializer.save()
 
-            # Audit trail
             AuditLog.log(
                 action="TENANT_CONFIG_UPDATED",
                 user=request.user,
                 tenant=integration.tenant,
                 resource_type="GitHubIntegration",
                 resource_id=str(integration.id),
-                description=(
-                    f"GitHub integration {'created' if is_create else 'updated'} "
-                    f"for repo {integration.repo_owner}/{integration.repo_name}"
-                ),
+                description=f"GitHub integration updated for repo {integration.repo_owner}/{integration.repo_name}",
             )
 
-            # Transactional outbox event → config.tenants → FastAPI snapshot
-            payload = _build_outbox_payload(integration)
+            payload = _build_outbox_payload(integration, "updated")
             write_outbox(
                 topic="config.tenants",
-                key=str(tenant_id),
+                key=str(request.tenant_id),
                 payload=payload,
                 source_version=payload["tenant"]["source_version"],
             )
 
         logger.info(
-            "github_integration_%s",
-            "created" if is_create else "updated",
+            "github_integration_updated",
             extra={
-                "tenant_id": str(tenant_id),
+                "tenant_id": str(request.tenant_id),
                 "repo": f"{integration.repo_owner}/{integration.repo_name}",
                 "integration_id": str(integration.id),
             },
         )
 
         response_serializer = GitHubIntegrationStatusSerializer(integration)
-        status_code = 201 if is_create else 200
-        message = (
-            "GitHub integration connected successfully."
-            if is_create
-            else "GitHub integration updated successfully."
-        )
-
         return APIResponse.success(
             data=response_serializer.data,
-            message=message,
-            status_code=status_code,
+            message="GitHub integration updated successfully.",
+            status_code=200,
         )
-
-    # ── DELETE ────────────────────────────────────────────────────────────────
 
     @extend_schema(
         summary="Delete GitHub Integration",
-        description="Removes the GitHub integration and credentials for this tenant.",
+        description="Removes the specific GitHub integration and credentials.",
         responses={200: dict},
     )
-    def delete(self, request) -> APIResponse:
-        """
-        Delete the GitHub integration for this tenant.
-
-        An outbox event is published so FastAPI's snapshot table clears out
-        the github_* columns.
-
-        Returns:
-            200 on successful deletion.
-            404 if no integration exists.
-        """
+    def delete(self, request, pk) -> APIResponse:
         import time
 
         tenant_id = request.tenant_id
-
-        try:
-            integration = GitHubIntegration.objects.get(tenant_id=tenant_id)
-        except GitHubIntegration.DoesNotExist:
+        integration = self._get_object(tenant_id, pk)
+        if not integration:
             return APIResponse.error(
-                message="No GitHub integration found for this tenant.",
+                message="Integration not found.",
                 status_code=404,
                 code="not_found",
             )
 
         with transaction.atomic():
-            # Build the outbox payload with github_integration = None
             tenant = integration.tenant
             source_version = int(time.time() * 1000)
-            payload = {
-                "event_type": "tenant.updated",
-                "tenant": {
-                    "id": str(tenant.id),
-                    "plan_tier": tenant.plan_tier,
-                    "is_suspended": tenant.status == "suspended",
-                    "source_version": source_version,
-                    "github_integration": None,
-                },
-            }
+            
+            # Send the outbox payload before deleting so we can read the properties
+            payload = _build_outbox_payload(integration, "deleted")
+            # Ensure the deleted action payload sends the proper event type
+            payload["tenant"]["source_version"] = source_version
 
-            # Delete the integration
             integration_id_str = str(integration.id)
             repo_str = f"{integration.repo_owner}/{integration.repo_name}"
+            
+            # Check if this is the LAST integration for the tenant.
+            is_last = GitHubIntegration.objects.filter(tenant_id=tenant_id).count() == 1
+
             integration.delete()
 
-            # Wipe the analytics projection to stay in sync with FastAPI's wipe
-            from analytics.models import IncidentSnapshot
-            IncidentSnapshot.objects.filter(tenant=tenant).delete()
+            # Wipe the analytics projection if it was the last integration
+            if is_last:
+                from analytics.models import IncidentSnapshot
+                IncidentSnapshot.objects.filter(tenant=tenant).delete()
 
-            # Audit trail
             AuditLog.log(
                 action="TENANT_CONFIG_UPDATED",
                 user=request.user,
@@ -281,7 +303,6 @@ class GitHubIntegrationView(APIView):
                 description=f"GitHub integration deleted for repo {repo_str}",
             )
 
-            # Transactional outbox event
             write_outbox(
                 topic="config.tenants",
                 key=str(tenant_id),
@@ -409,3 +430,117 @@ class GitHubAvailableReposView(APIView):
             data={"repositories": formatted_repos},
             message="Repositories fetched successfully.",
         )
+
+
+def _build_service_mapping_payload(mapping, action: str) -> dict:
+    import time
+    tenant = mapping.tenant
+    return {
+        "event_type": "tenant.updated",
+        "tenant": {
+            "id": str(tenant.id),
+            "plan_tier": tenant.plan_tier,
+            "is_suspended": tenant.status == "suspended",
+            "source_version": int(time.time() * 1000),
+            "service_repo_mapping_event": {
+                "action": action,
+                "mapping": {
+                    "id": str(mapping.id),
+                    "service_name": mapping.service_name,
+                    "repo_url": mapping.github_integration.repo_url,
+                },
+            },
+        },
+    }
+
+
+class ServiceRepoMappingListCreateView(APIView):
+    permission_classes = [IsTenantAdmin]
+
+    @extend_schema(
+        summary="List Service Repo Mappings",
+        responses={200: ServiceRepoMappingSerializer(many=True)},
+    )
+    def get(self, request) -> APIResponse:
+        from .models import ServiceRepoMapping
+        mappings = ServiceRepoMapping.objects.filter(tenant_id=request.tenant_id)
+        serializer = ServiceRepoMappingSerializer(mappings, many=True)
+        return APIResponse.success(data=serializer.data)
+
+    @extend_schema(
+        summary="Create Service Repo Mapping",
+        request=ServiceRepoMappingSerializer,
+        responses={201: ServiceRepoMappingSerializer},
+    )
+    def post(self, request) -> APIResponse:
+        import time
+        serializer = ServiceRepoMappingSerializer(
+            data=request.data, context={"request": request}
+        )
+        if not serializer.is_valid():
+            return APIResponse.error(
+                message="Validation failed", errors=serializer.errors, status_code=400
+            )
+
+        with transaction.atomic():
+            mapping = serializer.save()
+            AuditLog.log(
+                tenant=mapping.tenant,
+                user=request.user,
+                action="TENANT_CONFIG_UPDATED",
+                resource_type="ServiceRepoMapping",
+                resource_id=str(mapping.id),
+                description=f"Created mapping {mapping.service_name} -> {mapping.github_integration.repo_name}",
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+            payload = _build_service_mapping_payload(mapping, "created")
+            write_outbox(
+                topic="config.tenants",
+                key=str(mapping.tenant_id),
+                payload=payload,
+                source_version=int(time.time() * 1000),
+            )
+
+        return APIResponse.success(
+            data=serializer.data,
+            message="Mapping created successfully.",
+            status_code=201,
+        )
+
+
+class ServiceRepoMappingDetailView(APIView):
+    permission_classes = [IsTenantAdmin]
+
+    @extend_schema(
+        summary="Delete Service Repo Mapping",
+        responses={200: dict},
+    )
+    def delete(self, request, mapping_id: str) -> APIResponse:
+        import time
+        from .models import ServiceRepoMapping
+        try:
+            mapping = ServiceRepoMapping.objects.get(
+                id=mapping_id, tenant_id=request.tenant_id
+            )
+        except ServiceRepoMapping.DoesNotExist:
+            return APIResponse.error(message="Mapping not found.", status_code=404)
+
+        with transaction.atomic():
+            payload = _build_service_mapping_payload(mapping, "deleted")
+            mapping.delete()
+            AuditLog.log(
+                user=request.user,
+                action="TENANT_CONFIG_UPDATED",
+                resource_type="ServiceRepoMapping",
+                resource_id=mapping_id,
+                description=f"Deleted mapping for {mapping.service_name}",
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+            write_outbox(
+                topic="config.tenants",
+                key=str(request.tenant_id),
+                payload=payload,
+                source_version=int(time.time() * 1000),
+            )
+
+        return APIResponse.success(message="Mapping deleted successfully.")

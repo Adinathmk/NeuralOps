@@ -14,6 +14,7 @@ from .views import (
     ListInvitationsView,
     ListNotificationsView,
     ListTeamMembersView,
+    UpdateTeamMemberRoleView,
     LoginView,
     LogoutView,
     MarkNotificationReadView,
@@ -84,6 +85,7 @@ urlpatterns = [
         name="join_with_invitation",
     ),
     path("team/members", ListTeamMembersView.as_view(), name="list_team_members"),
+    path("team/members/<uuid:member_id>/role", UpdateTeamMemberRoleView.as_view(), name="update_team_member_role"),
     path("invitations/", ListInvitationsView.as_view(), name="list_invitations"),
     path(
         "invitations/<uuid:invitation_id>/cancel",

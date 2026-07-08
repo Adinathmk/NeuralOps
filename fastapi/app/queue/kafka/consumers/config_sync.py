@@ -57,6 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.database.session import AsyncSessionLocal
 from app.models.snapshots import AlertRuleSnapshot, PlaybookSnapshot, TenantSnapshot, APIKeySnapshot
+from app.models.github_integration_snapshots import GitHubIntegrationSnapshot
 from app.worker.tasks.wipe_data import wipe_tenant_data
 
 logger = logging.getLogger(__name__)
@@ -68,45 +69,6 @@ TOPIC_PLAYBOOKS = "config.playbooks"
 TOPIC_API_KEYS = "config.api_keys"
 
 CONFIG_TOPICS = (TOPIC_TENANTS, TOPIC_ALERT_RULES, TOPIC_PLAYBOOKS, TOPIC_API_KEYS)
-
-
-# ── GitHub field mapping ───────────────────────────────────────────────────────
-# Maps incoming Kafka payload keys → TenantSnapshot column names.
-# All values are nullable; missing keys in the payload leave the column unchanged.
-_GITHUB_FIELD_MAP: Dict[str, str] = {
-    "repo_url": "github_repo_url",
-    "repo_owner": "github_repo_owner",
-    "repo_name": "github_repo_name",
-    "installation_id": "github_installation_id",
-    "default_branch": "github_default_branch",
-    "indexing_status": "github_indexing_status",
-    "last_indexed_commit": "github_last_indexed_commit",
-}
-
-
-def _apply_github_fields(
-    snapshot: TenantSnapshot,
-    github_data: Dict[str, Any],
-) -> None:
-    """
-    Apply the nested `github_integration` block from the Kafka payload to the
-    TenantSnapshot ORM instance.
-
-    Only keys present in `github_data` are written — missing keys in the
-    payload are treated as "no change" (they preserve the existing column
-    value).  Explicit null values in the payload WILL overwrite the column
-    (allowing a disconnect flow to clear the columns).
-
-    Args:
-        snapshot:    The TenantSnapshot instance to mutate (in-session).
-        github_data: Dict from payload["tenant"]["github_integration"].
-    """
-    for payload_key, column_name in _GITHUB_FIELD_MAP.items():
-        if payload_key in github_data:
-            val = github_data[payload_key]
-            if payload_key == "installation_id" and val is not None:
-                val = int(val)
-            setattr(snapshot, column_name, val)
 
 
 # ── Initial-index dispatch helpers ────────────────────────────────────────────
@@ -508,43 +470,18 @@ class ConfigSyncConsumer:
         """
         Process a config.tenants event.
 
-        Core tenant fields and the optional nested github_integration block
+        Core tenant fields and the optional nested github_integration_event block
         are both handled here.
-
-        Expected payload shape:
-        {
-            "event_type": "tenant.updated" | "tenant.created" | ...,
-            "tenant": {
-                "id": "<uuid>",
-                "plan_tier": "free" | "pro" | "enterprise",
-                "vector_namespace": "<string>",
-                "kafka_group_id": "<string>",
-                "is_suspended": false,
-                "source_version": <int>,
-                "github_integration": {        ← OPTIONAL (Phase 3)
-                    "repo_url": "...",
-                    "repo_owner": "...",
-                    "repo_name": "...",
-                    "installation_id": 123456,
-                    "default_branch": "main",
-                    "indexing_status": "pending",
-                    "last_indexed_commit": null
-                }
-            }
-        }
         """
         tenant_data: Dict[str, Any] = payload["tenant"]
 
         tenant_id = uuid.UUID(str(tenant_data["id"]))
         incoming_version: int = int(tenant_data["source_version"])
 
-        # Optional GitHub block — may be absent on non-integration events.
-        github_data: Optional[Dict[str, Any]] = tenant_data.get("github_integration")
+        # Optional GitHub event block
+        github_event: Optional[Dict[str, Any]] = tenant_data.get("github_integration_event")
 
         # Capture the PREVIOUS indexing status before we overwrite it.
-        # Used by _maybe_dispatch_initial_index() to enforce idempotency:
-        # if the row already says 'indexing' or 'indexed' we must not
-        # re-dispatch the task on a Kafka replay after a service restart.
         previous_indexing_status: Optional[str] = None
 
         async with AsyncSessionLocal() as session:
@@ -567,9 +504,6 @@ class ConfigSyncConsumer:
                         )
                         return  # Discard stale event
 
-                    # Snapshot the current indexing status before overwriting.
-                    previous_indexing_status = existing.github_indexing_status
-
                     # ── Update core tenant fields ─────────────────────────────
                     existing.plan_tier = tenant_data.get(
                         "plan_tier", existing.plan_tier
@@ -585,66 +519,11 @@ class ConfigSyncConsumer:
                     )
                     existing.source_version = incoming_version
 
-                    # ── Apply GitHub integration fields (Phase 3) ─────────────
-                    if "github_integration" in tenant_data:
-                        if github_data is None:
-                            # Explicit null means the integration was deleted
-                            _apply_github_fields(
-                                existing,
-                                {
-                                    "repo_url": None,
-                                    "repo_owner": None,
-                                    "repo_name": None,
-                                    "installation_id": None,
-                                    "default_branch": None,
-                                    "indexing_status": None,
-                                    "last_indexed_commit": None,
-                                },
-                            )
-                            # Wipe all tenant logs, incidents, and AST data
-                            logger.info(
-                                "config_sync_triggering_tenant_wipe",
-                                extra={"tenant_id": str(tenant_id)},
-                            )
-                            wipe_tenant_data.delay(str(tenant_id))
-                            logger.info(
-                                "config_sync_tenant_github_cleared",
-                                extra={"tenant_id": str(tenant_id)},
-                            )
-                            # Dispatch cleanup task
-                            from app.worker.tasks.index_code import cleanup_code_index
-
-                            cleanup_code_index.delay(tenant_id=str(tenant_id))
-                        else:
-                            _apply_github_fields(existing, github_data)
-                            logger.info(
-                                "config_sync_tenant_github_updated",
-                                extra={
-                                    "tenant_id": str(tenant_id),
-                                    "repo": f"{github_data.get('repo_owner')}/{github_data.get('repo_name')}",
-                                    "indexing_status": github_data.get(
-                                        "indexing_status"
-                                    ),
-                                },
-                            )
-
                     session.add(existing)
 
-                    logger.info(
-                        "config_sync_tenant_updated",
-                        extra={
-                            "tenant_id": str(tenant_id),
-                            "source_version": incoming_version,
-                            "has_github_data": github_data is not None,
-                        },
-                    )
-
                 else:
-                    # New row — previous status is implicitly None.
-                    # previous_indexing_status stays None (already initialised above).
-
                     # ── Create new snapshot ───────────────────────────────────
-                    snapshot = TenantSnapshot(
+                    existing = TenantSnapshot(
                         tenant_id=tenant_id,
                         plan_tier=tenant_data.get("plan_tier"),
                         vector_namespace=tenant_data.get("vector_namespace"),
@@ -652,28 +531,114 @@ class ConfigSyncConsumer:
                         is_suspended=bool(tenant_data.get("is_suspended", False)),
                         source_version=incoming_version,
                     )
+                    session.add(existing)
 
-                    # Apply GitHub integration fields if present.
-                    if github_data is not None:
-                        _apply_github_fields(snapshot, github_data)
-                        logger.info(
-                            "config_sync_tenant_github_set_on_create",
-                            extra={
-                                "tenant_id": str(tenant_id),
-                                "repo": f"{github_data.get('repo_owner')}/{github_data.get('repo_name')}",
-                            },
-                        )
+                # ── Handle GitHub Integration Event (Phase 4) ───────────────
+                if github_event:
+                    action = github_event.get("action")
+                    integration_data = github_event.get("integration")
 
-                    session.add(snapshot)
+                    if action and integration_data:
+                        integration_id = uuid.UUID(str(integration_data["id"]))
 
-                    logger.info(
-                        "config_sync_tenant_created",
-                        extra={
-                            "tenant_id": str(tenant_id),
-                            "source_version": incoming_version,
-                            "has_github_data": github_data is not None,
-                        },
-                    )
+                        if action == "deleted":
+                            await session.execute(
+                                select(GitHubIntegrationSnapshot).where(GitHubIntegrationSnapshot.id == integration_id)
+                            )
+                            # Actually delete
+                            stmt = select(GitHubIntegrationSnapshot).where(GitHubIntegrationSnapshot.id == integration_id)
+                            result = await session.execute(stmt)
+                            integration = result.scalar_one_or_none()
+                            if integration:
+                                repo_url_to_cleanup = integration.repo_url
+                                repo_name_to_cleanup = integration.repo_name
+                                await session.delete(integration)
+                                await session.flush()
+                                
+                                # Wipe specific repository index and caches
+                                logger.info(
+                                    "config_sync_triggering_repo_wipe",
+                                    extra={"tenant_id": str(tenant_id), "repo_url": repo_url_to_cleanup},
+                                )
+                                from app.worker.tasks.index_code import cleanup_code_index
+                                cleanup_code_index.delay(
+                                    tenant_id=str(tenant_id), 
+                                    repo_url=repo_url_to_cleanup,
+                                    repo_name=repo_name_to_cleanup,
+                                )
+
+                        elif action in ("created", "updated"):
+                            stmt = select(GitHubIntegrationSnapshot).where(GitHubIntegrationSnapshot.id == integration_id)
+                            result = await session.execute(stmt)
+                            integration = result.scalar_one_or_none()
+
+                            if integration:
+                                previous_indexing_status = integration.indexing_status
+                                integration.repo_url = integration_data.get("repo_url", integration.repo_url)
+                                integration.repo_owner = integration_data.get("repo_owner", integration.repo_owner)
+                                integration.repo_name = integration_data.get("repo_name", integration.repo_name)
+                                integration.installation_id = int(integration_data["installation_id"]) if integration_data.get("installation_id") else None
+                                integration.default_branch = integration_data.get("default_branch", integration.default_branch)
+                                integration.indexing_status = integration_data.get("indexing_status", integration.indexing_status)
+                                integration.last_indexed_commit = integration_data.get("last_indexed_commit", integration.last_indexed_commit)
+                                integration.source_version = incoming_version
+                            else:
+                                integration = GitHubIntegrationSnapshot(
+                                    id=integration_id,
+                                    tenant_id=tenant_id,
+                                    repo_url=integration_data["repo_url"],
+                                    repo_owner=integration_data["repo_owner"],
+                                    repo_name=integration_data["repo_name"],
+                                    installation_id=int(integration_data["installation_id"]) if integration_data.get("installation_id") else None,
+                                    default_branch=integration_data.get("default_branch", "main"),
+                                    indexing_status=integration_data.get("indexing_status", "pending"),
+                                    last_indexed_commit=integration_data.get("last_indexed_commit"),
+                                    source_version=incoming_version,
+                                )
+                                session.add(integration)
+
+                            logger.info(
+                                "config_sync_tenant_github_updated",
+                                extra={
+                                    "tenant_id": str(tenant_id),
+                                    "integration_id": str(integration_id),
+                                    "action": action,
+                                },
+                            )
+
+                # ── Handle Service Repo Mapping Event ────────────────────────
+                mapping_event = tenant_data.get("service_repo_mapping_event")
+                if mapping_event:
+                    action = mapping_event.get("action")
+                    mapping_data = mapping_event.get("mapping")
+                    
+                    if action and mapping_data:
+                        from app.models.github_integration_snapshots import ServiceRepoMappingSnapshot
+                        mapping_id = uuid.UUID(str(mapping_data["id"]))
+                        
+                        if action == "deleted":
+                            stmt = select(ServiceRepoMappingSnapshot).where(ServiceRepoMappingSnapshot.id == mapping_id)
+                            result = await session.execute(stmt)
+                            mapping = result.scalar_one_or_none()
+                            if mapping:
+                                await session.delete(mapping)
+                        
+                        elif action in ("created", "updated"):
+                            stmt = select(ServiceRepoMappingSnapshot).where(ServiceRepoMappingSnapshot.id == mapping_id)
+                            result = await session.execute(stmt)
+                            mapping = result.scalar_one_or_none()
+                            
+                            if mapping:
+                                mapping.service_name = mapping_data["service_name"]
+                                mapping.repo_url = mapping_data["repo_url"]
+                            else:
+                                mapping = ServiceRepoMappingSnapshot(
+                                    id=mapping_id,
+                                    tenant_id=tenant_id,
+                                    service_name=mapping_data["service_name"],
+                                    repo_url=mapping_data["repo_url"]
+                                )
+                                session.add(mapping)
 
         # ── Redis L1 cache invalidation (outside the DB transaction) ──────────
         await self._invalidate_tenant_cache(str(tenant_id))
@@ -681,12 +646,14 @@ class ConfigSyncConsumer:
         # ── Dispatch initial indexing task on first GitHub connection ──────────
         # Runs AFTER the DB transaction has committed so the worker can read
         # the fully-written TenantSnapshot without hitting a race condition.
-        if github_data is not None:
-            await _maybe_dispatch_initial_index(
-                tenant_id=str(tenant_id),
-                github_data=github_data,
-                previous_status=previous_indexing_status,
-            )
+        if github_event and github_event.get("action") in ("created", "updated"):
+            integration_data = github_event.get("integration")
+            if integration_data:
+                await _maybe_dispatch_initial_index(
+                    tenant_id=str(tenant_id),
+                    github_data=integration_data,
+                    previous_status=previous_indexing_status,
+                )
 
     async def _handle_alert_rule_event(self, payload: Dict[str, Any]) -> None:
         """

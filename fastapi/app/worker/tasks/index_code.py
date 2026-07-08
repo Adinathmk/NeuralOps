@@ -61,6 +61,7 @@ from app.database.session import AsyncSessionLocal
 from app.models.code_index import CodeIndex
 from app.models.outbox import OutboxEvent, write_outbox
 from app.models.snapshots import TenantSnapshot
+from app.models.github_integration_snapshots import GitHubIntegrationSnapshot
 from app.utils.ast_parser import ASTIndexer, SymbolInfo
 from app.worker.celery_app import celery_app
 
@@ -231,36 +232,41 @@ async def _insert_symbols(
 # ---------------------------------------------------------------------------
 
 
-async def _get_tenant_snapshot(
-    tenant_id: uuid.UUID,
-) -> Optional[TenantSnapshot]:
-    """Fetch the ``TenantSnapshot`` row for *tenant_id* from DB-2."""
+async def _get_integration_snapshot(
+    tenant_id: uuid.UUID, repo_url: str
+) -> Optional[GitHubIntegrationSnapshot]:
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(TenantSnapshot).where(TenantSnapshot.tenant_id == tenant_id)
+        stmt = select(GitHubIntegrationSnapshot).where(
+            GitHubIntegrationSnapshot.tenant_id == tenant_id,
+            GitHubIntegrationSnapshot.repo_url == repo_url,
         )
-        return result.scalar_one_or_none()
+        result = await session.execute(stmt)
+        return result.scalars().first()
 
 
 async def _update_indexing_status(
     tenant_id: uuid.UUID,
+    repo_url: str,
     status: str,
     commit_sha: Optional[str] = None,
 ) -> None:
     """
-    Update ``github_indexing_status`` (and optionally ``github_last_indexed_commit``)
-    in the ``tenant_snapshots`` table, then write an outbox event so Debezium
+    Update ``indexing_status`` (and optionally ``last_indexed_commit``)
+    in the ``github_integration_snapshots`` table, then write an outbox event so Debezium
     publishes it to the ``indexing.status`` Kafka topic for Django to consume.
     """
-    values: Dict = {"github_indexing_status": status}
+    from app.models.github_integration_snapshots import GitHubIntegrationSnapshot
+
+    values: Dict = {"indexing_status": status}
     if commit_sha:
-        values["github_last_indexed_commit"] = commit_sha
+        values["last_indexed_commit"] = commit_sha
 
     event_id = uuid.uuid4()
     outbox_payload = {
         "event_id": str(event_id),
         "event_type": "indexing.status.updated",
         "tenant_id": str(tenant_id),
+        "repo_url": repo_url,
         "status": status,
         "commit_sha": commit_sha,
         "occurred_at": _dt.now(_tz.utc).isoformat(),
@@ -268,19 +274,20 @@ async def _update_indexing_status(
 
     async with AsyncSessionLocal() as session:
         async with session.begin():
-            # 1. Update tenant_snapshots (DB-2) as before.
+            # 1. Update github_integration_snapshots (DB-2).
             await session.execute(
-                update(TenantSnapshot)
-                .where(TenantSnapshot.tenant_id == tenant_id)
+                update(GitHubIntegrationSnapshot)
+                .where(
+                    GitHubIntegrationSnapshot.tenant_id == tenant_id,
+                    GitHubIntegrationSnapshot.repo_url == repo_url,
+                )
                 .values(**values)
             )
             # 2. Write outbox event in the same transaction.
-            #    Debezium tails the DB-2 WAL and delivers this to Kafka
-            #    topic "indexing.status", which Django's consumer reads.
             write_outbox(
                 session=session,
                 topic="indexing.status",
-                key=str(tenant_id),
+                key=f"{tenant_id}:{repo_url}",
                 payload=outbox_payload,
             )
 
@@ -493,7 +500,7 @@ async def _run_initial_index(
     5. Clean up temp directory.
     """
     # Mark status as 'indexing' immediately.
-    await _update_indexing_status(tenant_id, "indexing")
+    await _update_indexing_status(tenant_id, repo_url, "indexing")
 
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"neuralops-index-{uuid.uuid4()}-"))
     logger.info(
@@ -564,6 +571,7 @@ async def _run_initial_index(
                 # Insert into DB.
                 async with AsyncSessionLocal() as session:
                     async with session.begin():
+                        await _delete_file_rows(session, tenant_id, repo_url, rel_path)
                         await _insert_symbols(
                             session,
                             tenant_id,
@@ -591,7 +599,7 @@ async def _run_initial_index(
                 continue
 
         # ── Update snapshot status ────────────────────────────────────────────
-        await _update_indexing_status(tenant_id, "indexed", commit_sha)
+        await _update_indexing_status(tenant_id, repo_url, "indexed", commit_sha)
 
         logger.info(
             "initial_index_complete",
@@ -605,7 +613,7 @@ async def _run_initial_index(
 
     except Exception as exc:
         # Mark as failed so the UI shows the error state.
-        await _update_indexing_status(tenant_id, "failed")
+        await _update_indexing_status(tenant_id, repo_url, "failed")
         logger.error(
             "initial_index_fatal_error",
             extra={"tenant_id": tenant_id_str, "error": str(exc)},
@@ -859,7 +867,7 @@ async def _run_incremental_index(
             continue
 
     # ── Update commit SHA in snapshot ─────────────────────────────────────────
-    await _update_indexing_status(tenant_id, "indexed", commit_sha)
+    await _update_indexing_status(tenant_id, repo_url, "indexed", commit_sha)
 
     logger.info(
         "incremental_index_complete",
@@ -887,24 +895,24 @@ async def _run_index(
     Top-level async coroutine invoked by the Celery task via ``asyncio.run()``.
 
     Responsibilities:
-    1. Validate tenant snapshot exists.
+    1. Validate integration snapshot exists.
     2. Fetch GitHub App installation token.
     3. Derive owner/repo/branch from snapshot.
     4. Dispatch to initial or incremental indexing coroutine.
     """
     tenant_uuid = uuid.UUID(tenant_id_str)
 
-    # ── Fetch tenant snapshot ─────────────────────────────────────────────────
-    snapshot = await _get_tenant_snapshot(tenant_uuid)
+    # ── Fetch integration snapshot ─────────────────────────────────────────────────
+    snapshot = await _get_integration_snapshot(tenant_uuid, repo_url)
     if snapshot is None:
         raise RuntimeError(
-            f"TenantSnapshot not found for tenant_id={tenant_id_str}. "
+            f"GitHubIntegrationSnapshot not found for tenant_id={tenant_id_str} and repo_url={repo_url}. "
             "Kafka config-sync consumer may be lagging."
         )
 
-    if not snapshot.github_installation_id:
+    if not snapshot.installation_id:
         raise RuntimeError(
-            f"No GitHub App installation configured for tenant {tenant_id_str}. "
+            f"No GitHub App installation configured for tenant {tenant_id_str} and repo {repo_url}. "
             "Customer must install the NeuralOps GitHub App."
         )
 
@@ -912,19 +920,19 @@ async def _run_index(
     from app.services.github_auth import get_installation_token
 
     try:
-        plain_token = await get_installation_token(snapshot.github_installation_id)
+        plain_token = await get_installation_token(snapshot.installation_id)
     except RuntimeError as exc:
         raise RuntimeError(f"Token fetch failed: {exc}") from exc
 
     # ── Derive repo owner, name, branch ──────────────────────────────────────
-    owner = snapshot.github_repo_owner
-    repo_name = snapshot.github_repo_name
-    branch = snapshot.github_default_branch or "main"
+    owner = snapshot.repo_owner
+    repo_name = snapshot.repo_name
+    branch = snapshot.default_branch or "main"
 
     if not owner or not repo_name:
         raise RuntimeError(
-            f"Tenant {tenant_id_str} snapshot is missing github_repo_owner "
-            f"or github_repo_name. Re-connect the GitHub integration."
+            f"Integration {repo_url} for tenant {tenant_id_str} is missing repo_owner "
+            f"or repo_name. Re-connect the GitHub integration."
         )
 
     if is_initial:
@@ -949,12 +957,13 @@ async def _run_index(
         resolved_removed = list(removed_files)
 
         if not resolved_changed and not resolved_removed:
-            before_sha = snapshot.github_last_indexed_commit or ""
+            before_sha = snapshot.last_indexed_commit or ""
             if before_sha and before_sha != commit_sha:
                 logger.info(
                     "incremental_index_empty_payload_compare_fallback",
                     extra={
                         "tenant_id": tenant_id_str,
+                        "repo_url": repo_url,
                         "before": before_sha[:8],
                         "after": commit_sha[:8],
                     },
@@ -1103,7 +1112,7 @@ def index_code(
 # ---------------------------------------------------------------------------
 
 
-async def _cleanup_index_async(tenant_id_str: str) -> None:
+async def _cleanup_index_async(tenant_id_str: str, repo_url: Optional[str] = None, repo_name: Optional[str] = None) -> None:
     """
     Asynchronously purge all code indexes, S3 source files, and Redis cache
     entries for a specific tenant when their GitHub integration is deleted.
@@ -1116,9 +1125,10 @@ async def _cleanup_index_async(tenant_id_str: str) -> None:
     try:
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                await session.execute(
-                    delete(CodeIndex).where(CodeIndex.tenant_id == tenant_uuid)
-                )
+                stmt = delete(CodeIndex).where(CodeIndex.tenant_id == tenant_uuid)
+                if repo_url:
+                    stmt = stmt.where(CodeIndex.repo_url == repo_url)
+                await session.execute(stmt)
     except Exception as exc:
         logger.error(
             "cleanup_db_failed",
@@ -1128,8 +1138,14 @@ async def _cleanup_index_async(tenant_id_str: str) -> None:
 
     # 2. S3 Cleanup: delete all objects under `code/{tenant_id}/`
     logger.info("cleanup_s3_started", extra={"tenant_id": tenant_id_str})
-    boto_session = aioboto3.Session()
+    boto_session = aioboto3.Session(
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_REGION_NAME,
+    )
     prefix = f"code/{tenant_id_str}/"
+    if repo_name:
+        prefix += f"{repo_name}/"
     try:
         async with boto_session.client(
             "s3", endpoint_url=settings.AWS_S3_ENDPOINT_URL
@@ -1178,22 +1194,8 @@ async def _cleanup_index_async(tenant_id_str: str) -> None:
             extra={"tenant_id": tenant_id_str, "error": str(exc)},
         )
 
-    # 4. Elasticsearch Cleanup: delete all logs for this tenant
-    logger.info("cleanup_elasticsearch_started", extra={"tenant_id": tenant_id_str})
-    from app.database.elasticsearch_client import get_es_client
-
-    try:
-        es_client = get_es_client()
-        await es_client.delete_by_query(
-            index="neuralops-logs*",
-            body={"query": {"match": {"tenant_id": tenant_id_str}}},
-            conflicts="proceed",
-        )
-    except Exception as exc:
-        logger.error(
-            "cleanup_elasticsearch_failed",
-            extra={"tenant_id": tenant_id_str, "error": str(exc)},
-        )
+    # Elasticsearch cleanup is no longer performed automatically on integration delete.
+    logger.info("cleanup_elasticsearch_skipped", extra={"tenant_id": tenant_id_str, "repo_url": repo_url})
 
 
 @celery_app.task(
@@ -1203,7 +1205,7 @@ async def _cleanup_index_async(tenant_id_str: str) -> None:
     max_retries=3,
     default_retry_delay=10,
 )
-def cleanup_code_index(self, *, tenant_id: str) -> Dict:
+def cleanup_code_index(self, *, tenant_id: str, repo_url: Optional[str] = None, repo_name: Optional[str] = None) -> Dict:
     """
     Celery task: delete all indexed AST data and source files for a tenant.
     """
@@ -1216,7 +1218,7 @@ def cleanup_code_index(self, *, tenant_id: str) -> Dict:
     )
 
     try:
-        asyncio.run(_cleanup_index_async(tenant_id))
+        asyncio.run(_cleanup_index_async(tenant_id, repo_url, repo_name))
     except Exception as exc:
         logger.error(
             "cleanup_code_index_task_failed",

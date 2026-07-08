@@ -597,13 +597,13 @@ def run_agent(
 
     # ── Dispatch GitHub PR task (synchronous, after asyncio.run returns) ──────
     # Conditions:
-    #   1. Agent decided to create a real incident (not a draft).
+    #   1. Agent decided to create a real incident or store a draft.
     #   2. PatchGeneratorNode produced at least one validated patch.
     #   3. The incident was actually persisted (new_incident_id is present).
+    action = result.get("action")
     if (
-        result.get("action") == "create_incident"
+        action in ["create_incident", "store_draft"]
         and result.get("structured_patch")
-        and not result.get("is_draft")
         and result.get("new_incident_id")
     ):
         try:
@@ -616,6 +616,7 @@ def run_agent(
                 error_type=parsed_event.get("error_type", ""),
                 root_cause=result.get("root_cause", ""),
                 suggested_fix=result.get("suggested_fix", ""),
+                is_draft=result.get("is_draft", False),
             )
             logger.info(
                 "github_pr_task_dispatched",

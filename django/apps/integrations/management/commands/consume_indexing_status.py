@@ -256,8 +256,9 @@ class Command(BaseCommand):
         tenant_id_str = payload.get("tenant_id")
         status = payload.get("status")
         commit_sha = payload.get("commit_sha")  # may be None for non-indexed states
+        repo_url = payload.get("repo_url")
 
-        if not event_id_str or not tenant_id_str or not status:
+        if not event_id_str or not tenant_id_str or not status or not repo_url:
             logger.error(
                 "indexing_status_missing_fields",
                 extra={"payload_keys": list(payload.keys()), "offset": offset},
@@ -314,13 +315,14 @@ class Command(BaseCommand):
                     update_fields["last_indexed_commit"] = commit_sha
 
                 updated_count = GitHubIntegration.objects.filter(
-                    tenant_id=tenant_uuid
+                    tenant_id=tenant_uuid,
+                    repo_url=repo_url,
                 ).update(**update_fields)
 
                 if updated_count == 0:
                     logger.warning(
                         "indexing_status_no_integration_found",
-                        extra={"tenant_id": tenant_id_str, "status": status},
+                        extra={"tenant_id": tenant_id_str, "status": status, "repo_url": repo_url},
                     )
                     # Still commit — retrying won't help if the integration
                     # row doesn't exist yet (race between consumer and create).
@@ -331,7 +333,11 @@ class Command(BaseCommand):
                     push_collaboration_event(
                         tenant_id_str,
                         "github_indexing",
-                        {"status": status, "commit_sha": commit_sha},
+                        {
+                            "status": status, 
+                            "commit_sha": commit_sha, 
+                            "repo_url": repo_url
+                        },
                     )
                 except Exception as wsexc:
                     logger.error(
