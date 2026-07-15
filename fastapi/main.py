@@ -173,7 +173,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
 
 
 # ── Exception handlers (register BEFORE middleware) ───────────────────────────
