@@ -48,6 +48,7 @@ logger = get_logger(__name__)
 UNAUTHENTICATED_PATHS: FrozenSet[str] = frozenset(
     {
         "/health",
+        "/metrics",
         "/docs",
         "/redoc",
         "/openapi.json",
