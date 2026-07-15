@@ -175,6 +175,7 @@ app = FastAPI(
 
 
 
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 # ── Exception handlers (register BEFORE middleware) ───────────────────────────
 register_exception_handlers(app)
@@ -211,8 +212,3 @@ app.include_router(webhooks_router, prefix="/api/v1")
 app.include_router(dashboard_router)
 
 
-Instrumentator().instrument(app).expose(
-    app,
-    endpoint="/metrics",
-    include_in_schema=False,
-)
