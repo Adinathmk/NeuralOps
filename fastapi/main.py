@@ -34,6 +34,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 from app.api.v1.health import router as health_router
@@ -172,6 +173,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+
 # ── Exception handlers (register BEFORE middleware) ───────────────────────────
 register_exception_handlers(app)
 
@@ -205,3 +209,10 @@ app.include_router(ingest_router, prefix="/api/v1")
 app.include_router(logs_router)
 app.include_router(webhooks_router, prefix="/api/v1")
 app.include_router(dashboard_router)
+
+
+Instrumentator().instrument(app).expose(
+    app,
+    endpoint="/metrics",
+    include_in_schema=False,
+)

@@ -68,4 +68,5 @@ asgi-lifespan==2.1.0
 nox==2024.4.15
 black==24.4.2
 isort==5.13.2
-flake8==7.0.0
+flake8==7.0.0prometheus-fastapi-instrumentator>=7.0.0
+prometheus-fastapi-instrumentator>=7.0.0
