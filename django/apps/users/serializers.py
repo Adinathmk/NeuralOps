@@ -103,6 +103,7 @@ class RegisterSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         """Create tenant and user"""
+        import time
         from django.db import connection, transaction
 
         # Registration happens on an unauthenticated endpoint.
@@ -135,6 +136,26 @@ class RegisterSerializer(serializers.Serializer):
                     role="owner",
                     is_staff=False,
                     email_verified=False,
+                )
+
+                # Publish config.tenants outbox event so FastAPI's ConfigSyncConsumer
+                # can upsert the tenant_snapshots row. Without this, FastAPI returns
+                # "Tenant configuration is not yet available" for every new user.
+                from outbox.models import OutboxEvent
+                OutboxEvent.objects.create(
+                    topic="config.tenants",
+                    key=str(tenant.id),
+                    payload={
+                        "event_type": "tenant.updated",
+                        "tenant": {
+                            "id": str(tenant.id),
+                            "plan_tier": tenant.plan_tier,
+                            "vector_namespace": tenant.vector_namespace,
+                            "kafka_group_id": tenant.kafka_group_id,
+                            "is_suspended": tenant.is_suspended,
+                            "source_version": int(time.time() * 1000),
+                        },
+                    },
                 )
 
         return user

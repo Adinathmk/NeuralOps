@@ -577,7 +577,7 @@ class ConfigSyncConsumer:
                                 integration.repo_url = integration_data.get("repo_url", integration.repo_url)
                                 integration.repo_owner = integration_data.get("repo_owner", integration.repo_owner)
                                 integration.repo_name = integration_data.get("repo_name", integration.repo_name)
-                                integration.installation_id = int(integration_data["installation_id"]) if integration_data.get("installation_id") else None
+                                integration.installation_id = integration_data.get("installation_id")
                                 integration.default_branch = integration_data.get("default_branch", integration.default_branch)
                                 integration.indexing_status = integration_data.get("indexing_status", integration.indexing_status)
                                 integration.last_indexed_commit = integration_data.get("last_indexed_commit", integration.last_indexed_commit)

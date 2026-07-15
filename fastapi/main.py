@@ -57,6 +57,7 @@ from app.models import incidents  # noqa: F401
 from app.models import logs  # noqa: F401
 from app.models import outbox  # noqa: F401
 from app.models import snapshots  # noqa: F401
+from app.models import github_integration_snapshots  # noqa: F401  ← must be after snapshots
 
 # ── Background consumers ──────────────────────────────────────────────────────
 from app.queue.kafka.consumers.config_sync import ConfigSyncConsumer

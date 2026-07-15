@@ -37,7 +37,7 @@ def get_es_client() -> AsyncElasticsearch:
         "request_timeout": 10,
         "sniff_on_start": False,
         "sniff_on_node_failure": False,
-        "min_delay_between_sniffing": 60,
+        "sniff_before_requests": False,
     }
 
     if settings.ELASTICSEARCH_USERNAME and settings.ELASTICSEARCH_PASSWORD:

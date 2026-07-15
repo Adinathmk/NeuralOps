@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-from elasticsearch import AsyncElasticsearch
+from elasticsearch import AsyncElasticsearch, NotFoundError
 
 from app.database.elasticsearch_client import get_es_client
 from app.services.index_template import get_search_index
@@ -103,11 +103,14 @@ class LogSearchRepository:
         # For counts > 10,000 ES returns 10000+ which is fine for a UI counter.
         body["track_total_hits"] = True
 
-        response = await self.es.search(
-            index=index,
-            body=body,
-            request_timeout=10,
-        )
+        try:
+            response = await self.es.search(
+                index=index,
+                body=body,
+                request_timeout=10,
+            )
+        except NotFoundError:
+            return LogSearchResult(hits=[], total=0, next_search_after=None, took_ms=0)
 
         hits = response["hits"]["hits"]
         total = response["hits"]["total"]["value"]
@@ -138,34 +141,43 @@ class LogSearchRepository:
         """
         index = get_search_index(tenant_id=tenant_id, plan_tier=plan_tier)
 
-        response = await self.es.search(
-            index=index,
-            body={
-                "query": {
-                    "bool": {
-                        "must": [
-                            {"term": {"tenant_id": tenant_id}},
-                            {"range": {"timestamp": {"gte": f"now-{time_window}"}}},
-                        ]
-                    }
-                },
-                # We only need aggregations, not the hits themselves
-                "size": 0,
-                "aggs": {
-                    "service_names": {
-                        "terms": {
-                            "field": "service_name",
-                            "size": 100,  # Max 100 distinct service names
+        try:
+            response = await self.es.search(
+                index=index,
+                body={
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"tenant_id.keyword": tenant_id}},
+                                {"range": {"timestamp": {"gte": f"now-{time_window}"}}},
+                            ]
                         }
                     },
-                    "severities": {"terms": {"field": "severity", "size": 10}},
-                    "error_types": {"terms": {"field": "error_type", "size": 50}},
-                    "environments": {"terms": {"field": "environment", "size": 10}},
-                    "statuses": {"terms": {"field": "status", "size": 5}},
+                    # We only need aggregations, not the hits themselves
+                    "size": 0,
+                    "aggs": {
+                        "service_names": {
+                            "terms": {
+                                "field": "service_name.keyword",
+                                "size": 100,  # Max 100 distinct service names
+                            }
+                        },
+                        "severities": {"terms": {"field": "severity.keyword", "size": 10}},
+                        "error_types": {"terms": {"field": "error_type.keyword", "size": 50}},
+                        "environments": {"terms": {"field": "environment.keyword", "size": 10}},
+                        "statuses": {"terms": {"field": "status.keyword", "size": 5}},
+                    },
                 },
-            },
-            request_timeout=10,
-        )
+                request_timeout=10,
+            )
+        except NotFoundError:
+            return {
+                "service_names": [],
+                "severities": [],
+                "error_types": [],
+                "environments": [],
+                "statuses": [],
+            }
 
         aggs = response["aggregations"]
         return {
@@ -187,20 +199,23 @@ class LogSearchRepository:
         Used for the dashboard metrics.
         """
         index = get_search_index(tenant_id=tenant_id, plan_tier=plan_tier)
-        response = await self.es.count(
-            index=index,
-            body={
-                "query": {
-                    "bool": {
-                        "must": [
-                            {"term": {"tenant_id": tenant_id}},
-                            {"range": {"timestamp": {"gte": f"now-{time_window}"}}},
-                        ]
+        try:
+            response = await self.es.count(
+                index=index,
+                body={
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"tenant_id.keyword": tenant_id}},
+                                {"range": {"timestamp": {"gte": f"now-{time_window}"}}},
+                            ]
+                        }
                     }
                 }
-            }
-        )
-        return response["count"]
+            )
+            return response["count"]
+        except NotFoundError:
+            return 0
 
     # ── QUERY BUILDERS ─────────────────────────────────────────────────────
 
@@ -219,16 +234,16 @@ class LogSearchRepository:
         - Slightly lower query cost than `must` for pure filtering
         """
         # tenant_id is ALWAYS in filter. This runs before any other clause.
-        filter_clauses = [{"term": {"tenant_id": filters.tenant_id}}]
+        filter_clauses = [{"term": {"tenant_id.keyword": filters.tenant_id}}]
 
         # Optional exact-match filters — only added if the value is set
         exact_match_fields = {
-            "severity": filters.severity,
-            "service_name": filters.service_name,
-            "environment": filters.environment,
-            "error_type": filters.error_type,
-            "file_path": filters.file_path,
-            "status": filters.status,
+            "severity.keyword": filters.severity,
+            "service_name.keyword": filters.service_name,
+            "environment.keyword": filters.environment,
+            "error_type.keyword": filters.error_type,
+            "file_path.keyword": filters.file_path,
+            "status.keyword": filters.status,
         }
         for field_name, value in exact_match_fields.items():
             if value:
@@ -303,7 +318,7 @@ class LogSearchRepository:
         """
         return [
             {"timestamp": {"order": "desc"}},
-            {"log_id": {"order": "asc"}},  # tiebreaker
+            {"log_id.keyword": {"order": "asc"}},  # tiebreaker
         ]
 
     def _source_fields(self) -> list[str]:

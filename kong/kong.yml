@@ -312,6 +312,14 @@ plugins:
         - Retry-After
       credentials: true
       max_age: 3600
+  
+  # ── Prometheus (Metrics) ────────────────────────────────────────────────────────
+  - name: prometheus
+    config:
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+      upstream_health_metrics: true
 
   # ── Custom 429 JSON Response & JWT Claims Injection ────────────────────────
   - name: pre-function

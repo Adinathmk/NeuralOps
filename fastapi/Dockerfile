@@ -40,4 +40,4 @@ USER app
 EXPOSE 8001
 
 # Uvicorn with 4 workers; adjust --workers based on container CPU quota
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "4", "--log-level", "info"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--log-level", "info"]

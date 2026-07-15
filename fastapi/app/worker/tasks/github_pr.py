@@ -214,37 +214,70 @@ async def _execute_create_github_pr(
     Core async coroutine. Called via asyncio.run() from the Celery task.
     """
     from sqlalchemy.future import select
-
-    from app.models.snapshots import TenantSnapshot
+    from app.models.incidents import Incident
+    from app.models.github_integration_snapshots import GitHubIntegrationSnapshot, ServiceRepoMappingSnapshot
     from app.services.github_auth import get_installation_token
 
-    # ── Step 1: Load TenantSnapshot ──────────────────────────────────────────
     try:
         tenant_uuid = _uuid_module.UUID(tenant_id)
+        incident_uuid = _uuid_module.UUID(incident_id)
     except (ValueError, AttributeError) as exc:
         logger.error(
-            "github_pr_invalid_tenant_id",
-            extra={"tenant_id": tenant_id, "error": str(exc)},
+            "github_pr_invalid_uuid",
+            extra={"tenant_id": tenant_id, "incident_id": incident_id, "error": str(exc)},
         )
         await _save_pr_fields(incident_id, None, None, "failed")
         return
 
+    # ── Step 1 & 2: Resolve Repo and GitHub Installation ──────────────────────
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(TenantSnapshot).where(TenantSnapshot.tenant_id == tenant_uuid)
-        )
-        snapshot: Optional[TenantSnapshot] = result.scalar_one_or_none()
+        # Get the incident to find its service_name
+        incident = await session.get(Incident, incident_uuid)
+        if not incident:
+            logger.warning(
+                "github_pr_no_incident_found",
+                extra={"incident_id": incident_id},
+            )
+            await _save_pr_fields(incident_id, None, None, "failed")
+            return
 
-    if snapshot is None:
-        logger.warning(
-            "github_pr_no_tenant_snapshot",
-            extra={"tenant_id": tenant_id, "incident_id": incident_id},
+        service_name = incident.service_name
+
+        # Find the repository mapping for this service
+        mapping_result = await session.execute(
+            select(ServiceRepoMappingSnapshot).where(
+                ServiceRepoMappingSnapshot.tenant_id == tenant_uuid,
+                ServiceRepoMappingSnapshot.service_name == service_name
+            )
         )
-        await _save_pr_fields(incident_id, None, None, "failed")
+        mapping = mapping_result.scalar_one_or_none()
+
+        if not mapping:
+            logger.warning(
+                "github_pr_no_service_mapping",
+                extra={"tenant_id": tenant_id, "incident_id": incident_id, "service_name": service_name},
+            )
+            await _save_pr_fields(incident_id, None, None, "skipped")
+            return
+
+        # Fetch the GitHub integration details
+        integration_result = await session.execute(
+            select(GitHubIntegrationSnapshot).where(
+                GitHubIntegrationSnapshot.tenant_id == tenant_uuid,
+                GitHubIntegrationSnapshot.repo_url == mapping.repo_url
+            )
+        )
+        integration = integration_result.scalar_one_or_none()
+
+    if integration is None:
+        logger.warning(
+            "github_pr_no_integration_found",
+            extra={"tenant_id": tenant_id, "incident_id": incident_id, "repo_url": mapping.repo_url},
+        )
+        await _save_pr_fields(incident_id, None, None, "skipped")
         return
 
-    # ── Step 2: Check GitHub App installation ─────────────────────────────────
-    installation_id: Optional[int] = snapshot.github_installation_id
+    installation_id: Optional[int] = integration.installation_id
     if installation_id is None:
         logger.warning(
             "github_pr_no_installation",
@@ -253,9 +286,9 @@ async def _execute_create_github_pr(
         await _save_pr_fields(incident_id, None, None, "skipped")
         return
 
-    owner: str = snapshot.github_repo_owner or ""
-    repo: str = snapshot.github_repo_name or ""
-    default_branch: str = snapshot.github_default_branch or "main"
+    owner: str = integration.repo_owner or ""
+    repo: str = integration.repo_name or ""
+    default_branch: str = integration.default_branch or "main"
 
     if not owner or not repo:
         logger.warning(
