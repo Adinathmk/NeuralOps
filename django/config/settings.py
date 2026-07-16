@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django_prometheus",
     #  Third-party apps
     "rest_framework",
     "corsheaders",
@@ -62,6 +63,7 @@ INSTALLED_APPS = [
 # ============================================================================
 
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # ← ADDED: Serve static files behind Kong
     "django.contrib.sessions.middleware.SessionMiddleware",  # ← FIXED: Position 2
@@ -74,6 +76,7 @@ MIDDLEWARE = [
     "core.middleware.RequestIDMiddleware",
     "users.middleware.TenantMiddleware",
     "core.middleware.ExceptionHandlingMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 # ============================================================================
