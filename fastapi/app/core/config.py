@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     APP_NAME: str = Field(default="neuralops-fastapi")
     APP_VERSION: str = Field(default="1.0.0")
     DEBUG: bool = Field(default=False)
+    SENTRY_DSN: Optional[str] = Field(default=None)
 
     # ── Database (DB-2 — FastAPI-owned PostgreSQL) ────────────────────────────
     DATABASE_URL: str = Field(

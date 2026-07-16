@@ -7,6 +7,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.celery import CeleryIntegration
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "apps"))
 
@@ -61,6 +65,20 @@ INSTALLED_APPS = [
 # ============================================================================
 # MIDDLEWARE (CORRECTED ORDER FOR MULTI-TENANCY)
 # ============================================================================
+
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(),
+            CeleryIntegration(),
+        ],
+        environment=os.getenv("APP_ENV", "development"),
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+    )
 
 MIDDLEWARE = [
     "django_prometheus.middleware.PrometheusBeforeMiddleware",

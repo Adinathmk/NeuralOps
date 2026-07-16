@@ -32,6 +32,10 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.celery import CeleryIntegration
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -158,6 +162,18 @@ async def lifespan(app: FastAPI):
 
 
 # ── FastAPI application ────────────────────────────────────────────────────────
+
+if settings.SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        integrations=[
+            FastApiIntegration(),
+            CeleryIntegration(),
+        ],
+        environment=settings.APP_ENV,
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+    )
 
 app = FastAPI(
     title="NeuralOps — AI + Real-time Service",
