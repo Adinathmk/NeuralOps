@@ -30,6 +30,11 @@ COPY --from=builder /install /usr/local
 # Copy application source
 COPY . .
 
+
+# Add entrypoint script (waits for DB, runs migrations, then hands off to CMD)
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Create non-root user for security (using Debian syntax)
 RUN addgroup --system app && \
     adduser --system --ingroup app app && \
@@ -38,6 +43,8 @@ RUN addgroup --system app && \
 USER app
 
 EXPOSE 8001
+
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Uvicorn with 4 workers; adjust --workers based on container CPU quota
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--log-level", "info"]
