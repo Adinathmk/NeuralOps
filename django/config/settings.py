@@ -167,12 +167,12 @@ DATABASE_REPLICA_URL = os.getenv("DATABASE_REPLICA_URL", DATABASE_URL)
 DATABASES = {
     "default": dj_database_url.config(
         default=DATABASE_URL,
-        conn_max_age=600,
+        conn_max_age=60,
         conn_health_checks=True,
     ),
     "replica": dj_database_url.config(
         default=DATABASE_REPLICA_URL,
-        conn_max_age=600,
+        conn_max_age=60,
         conn_health_checks=True,
     ),
 }
