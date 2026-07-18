@@ -45,3 +45,20 @@ class RequestIDMiddleware(MiddlewareMixin):
         if request_id:
             response["X-Request-ID"] = request_id
         return response
+
+
+class HealthCheckMiddleware(MiddlewareMixin):
+    """
+    Short-circuits the ALB/k8s health check path before Django's
+    CommonMiddleware runs ALLOWED_HOSTS validation. AWS ALB target
+    group health checks always send the raw target IP as the Host
+    header (no way to configure a custom Host header on ALB health
+    checks), which would otherwise always fail DisallowedHost since
+    ALLOWED_HOSTS is a real domain allowlist. Only responds to this
+    exact path/method — everything else falls through to normal
+    request handling, including host validation.
+    """
+    def process_request(self, request):
+        if request.method == "GET" and request.path == "/api/v1/health":
+            return JsonResponse({"status": "ok"})
+        return None

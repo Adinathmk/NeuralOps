@@ -83,6 +83,7 @@ if SENTRY_DSN:
 MIDDLEWARE = [
     "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "core.middleware.HealthCheckMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # ← ADDED: Serve static files behind Kong
     "django.contrib.sessions.middleware.SessionMiddleware",  # ← FIXED: Position 2
     "corsheaders.middleware.CorsMiddleware",  # ← FIXED: After session
