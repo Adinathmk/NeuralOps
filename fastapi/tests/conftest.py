@@ -1,7 +1,18 @@
+import os
+
+# Disable LangSmith background tracing threads so they never start.
+# Without this, LangSmith's daemon threads try to log debug messages after
+# pytest closes stdout/stderr, producing harmless-but-noisy
+# "ValueError: I/O operation on closed file" tracebacks at the end of every run.
+os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
+os.environ.setdefault("LANGSMITH_TRACING", "false")
+os.environ.setdefault("LANGSMITH_TRACING_V2", "false")
+
 import asyncio
 import importlib
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
+
 
 # ── Platform shims ────────────────────────────────────────────────────────────
 # aiokafka (and asyncpg) require a C compiler to build from source on Windows.
