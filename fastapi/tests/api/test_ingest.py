@@ -7,7 +7,8 @@ from fastapi import status
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from app.api.dependencies.tenant import get_validated_tenant
+from app.api.dependencies.tenant import get_tenant_from_api_key
+from app.models.github_integration_snapshots import ServiceRepoMappingSnapshot
 from app.models.logs import IngestedLogMetadata
 from app.models.outbox import OutboxEvent
 from app.models.snapshots import TenantSnapshot
@@ -48,12 +49,12 @@ def active_tenant():
 def override_tenant(active_tenant):
     """Override tenant dependency injection to return our active tenant snapshot."""
 
-    async def mock_get_validated_tenant():
+    async def mock_get_tenant_from_api_key():
         return active_tenant
 
-    app.dependency_overrides[get_validated_tenant] = mock_get_validated_tenant
+    app.dependency_overrides[get_tenant_from_api_key] = mock_get_tenant_from_api_key
     yield
-    app.dependency_overrides.pop(get_validated_tenant, None)
+    app.dependency_overrides.pop(get_tenant_from_api_key, None)
 
 
 @pytest.fixture
@@ -68,7 +69,7 @@ def auth_headers():
 
 @pytest.fixture
 async def register_tenant(db_session):
-    """Seed a test tenant snapshot in DB-2 to satisfy database foreign key integrity constraints."""
+    """Seed a test tenant snapshot and service→repo mappings in DB-2."""
     tenant = TenantSnapshot(
         tenant_id=TEST_TENANT_ID,
         plan_tier="professional",
@@ -76,6 +77,17 @@ async def register_tenant(db_session):
         is_suspended=False,
     )
     db_session.add(tenant)
+    await db_session.flush()
+
+    # Seed service mappings so the ingest code-mapping gate passes
+    for svc in ("payment-api", "billing-service"):
+        mapping = ServiceRepoMappingSnapshot(
+            id=uuid.uuid4(),
+            tenant_id=TEST_TENANT_ID,
+            service_name=svc,
+            repo_url="https://github.com/neuralops/backend",
+        )
+        db_session.add(mapping)
     await db_session.flush()
     yield tenant
 
@@ -109,9 +121,11 @@ async def test_ingest_logs_success(
         "trigger": {
             "level": "error",
             "message": "DbTimeout",
+            "timestamp": "2026-05-29T10:00:01Z",
         },
         "sdk_meta": {
-            "python_version": "3.11"
+            "sdk_version": "1.0.0",
+            "python_version": "3.11",
         }
     }
 
@@ -144,8 +158,8 @@ async def test_ingest_logs_success(
     outbox_row = (await db_session.execute(outbox_stmt)).scalar_one_or_none()
     assert outbox_row is not None
     assert outbox_row.topic == f"raw.logs.{TEST_TENANT_ID}"
-    assert outbox_row.payload.get("trigger") == {"level": "error", "message": "DbTimeout"}
-    assert outbox_row.payload.get("sdk_meta") == {"python_version": "3.11"}
+    assert outbox_row.payload.get("trigger") == {"level": "error", "message": "DbTimeout", "timestamp": "2026-05-29T10:00:01Z", "stack_trace": None}
+    assert outbox_row.payload.get("sdk_meta") == {"sdk_version": "1.0.0", "python_version": "3.11", "hostname": None, "framework": None}
 
 
 async def test_ingest_logs_suspended_tenant(
@@ -161,7 +175,7 @@ async def test_ingest_logs_suspended_tenant(
 
         raise HTTPException(status_code=403, detail="Tenant is suspended.")
 
-    app.dependency_overrides[get_validated_tenant] = mock_suspended_tenant
+    app.dependency_overrides[get_tenant_from_api_key] = mock_suspended_tenant
 
     payload = {
         "incident_id": str(uuid.uuid4()),

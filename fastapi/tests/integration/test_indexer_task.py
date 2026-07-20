@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import get_settings
 from app.models.code_index import CodeIndex
 from app.models.snapshots import TenantSnapshot
+from app.models.github_integration_snapshots import GitHubIntegrationSnapshot
 from app.worker.tasks.index_code import _run_index, index_code
 
 
@@ -65,20 +66,27 @@ class TestIndexerTask:
         """Verify initial full-repository import AST indexing and database saves."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
+        repo_url = "https://github.com/neuralops/backend"
 
         snapshot = TenantSnapshot(
             tenant_id=tenant_uuid,
             plan_tier="enterprise",
-            github_repo_url="https://github.com/neuralops/backend",
-            github_repo_owner="neuralops",
-            github_repo_name="backend",
-            github_installation_id=123456,
-            github_default_branch="main",
-            github_indexing_status="pending",
             is_suspended=False,
             source_version=1,
         )
         db_session.add(snapshot)
+        integration = GitHubIntegrationSnapshot(
+            id=uuid.uuid4(),
+            tenant_id=tenant_uuid,
+            repo_url=repo_url,
+            repo_owner="neuralops",
+            repo_name="backend",
+            installation_id=123456,
+            default_branch="main",
+            indexing_status="pending",
+            source_version=1,
+        )
+        db_session.add(integration)
         await db_session.flush()
 
         files = {
@@ -106,7 +114,7 @@ class TestIndexerTask:
 
             await _run_index(
                 tenant_id_str=tenant_id_str,
-                repo_url="https://github.com/neuralops/backend",
+                repo_url=repo_url,
                 commit_sha="a1b2c3d4e5f6",
                 changed_files=[],
                 removed_files=[],
@@ -114,9 +122,17 @@ class TestIndexerTask:
             )
 
         db_session.expire_all()
-        updated_snap = await db_session.get(TenantSnapshot, tenant_uuid)
-        assert updated_snap.github_indexing_status == "indexed"
-        assert updated_snap.github_last_indexed_commit == "a1b2c3d4e5f6"
+        # Assert on GitHubIntegrationSnapshot (indexing_status + last_indexed_commit live here)
+        from sqlalchemy import select as sa_select
+        result = await db_session.execute(
+            sa_select(GitHubIntegrationSnapshot).where(
+                GitHubIntegrationSnapshot.tenant_id == tenant_uuid
+            )
+        )
+        updated_integration = result.scalar_one_or_none()
+        assert updated_integration is not None
+        assert updated_integration.indexing_status == "indexed"
+        assert updated_integration.last_indexed_commit == "a1b2c3d4e5f6"
 
         result = await db_session.execute(
             select(CodeIndex).where(CodeIndex.tenant_id == tenant_uuid)
@@ -137,26 +153,33 @@ class TestIndexerTask:
         """Verify incremental push-webhook AST indexing updates and file prunes."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
+        repo_url = "https://github.com/neuralops/backend"
 
         snapshot = TenantSnapshot(
             tenant_id=tenant_uuid,
             plan_tier="enterprise",
-            github_repo_url="https://github.com/neuralops/backend",
-            github_repo_owner="neuralops",
-            github_repo_name="backend",
-            github_installation_id=123456,
-            github_default_branch="main",
-            github_indexing_status="indexed",
-            github_last_indexed_commit="a1b2c3d4",
             is_suspended=False,
             source_version=1,
         )
         db_session.add(snapshot)
+        integration = GitHubIntegrationSnapshot(
+            id=uuid.uuid4(),
+            tenant_id=tenant_uuid,
+            repo_url=repo_url,
+            repo_owner="neuralops",
+            repo_name="backend",
+            installation_id=123456,
+            default_branch="main",
+            indexing_status="indexed",
+            last_indexed_commit="a1b2c3d4",
+            source_version=1,
+        )
+        db_session.add(integration)
 
         existing_index = CodeIndex(
             id=uuid.uuid4(),
             tenant_id=tenant_uuid,
-            repo_url="https://github.com/neuralops/backend",
+            repo_url=repo_url,
             file_path="app/core.py",
             symbol_name="CoreService",
             chunk_type="class",
@@ -185,7 +208,7 @@ class TestIndexerTask:
 
             await _run_index(
                 tenant_id_str=tenant_id_str,
-                repo_url="https://github.com/neuralops/backend",
+                repo_url=repo_url,
                 commit_sha="f6e5d4c3",
                 changed_files=["app/core.py"],
                 removed_files=[],
@@ -208,7 +231,7 @@ class TestIndexerTask:
         ):
             await _run_index(
                 tenant_id_str=tenant_id_str,
-                repo_url="https://github.com/neuralops/backend",
+                repo_url=repo_url,
                 commit_sha="99887766",
                 changed_files=[],
                 removed_files=["app/core.py"],
@@ -227,7 +250,7 @@ class TestIndexerTask:
     # ── Edge Cases and Error Paths ────────────────────────────────────────
 
     async def test_index_code_missing_snapshot_raises_error(self):
-        """Verify error is raised when tenant snapshot is missing in DB."""
+        """Verify error is raised when GitHubIntegrationSnapshot is missing in DB."""
         tenant_id_str = str(uuid.uuid4())
         with pytest.raises(RuntimeError) as exc_info:
             await _run_index(
@@ -238,30 +261,39 @@ class TestIndexerTask:
                 removed_files=[],
                 is_initial=True,
             )
-        assert "TenantSnapshot not found" in str(exc_info.value)
+        assert "GitHubIntegrationSnapshot not found" in str(exc_info.value)
 
     async def test_index_code_missing_installation_id_raises_error(self, db_session):
-        """Verify error is raised when installation ID is missing from snapshot."""
+        """Verify error is raised when installation ID is missing from integration snapshot."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
+        repo_url = "https://github.com/neuralops/backend"
 
         snapshot = TenantSnapshot(
             tenant_id=tenant_uuid,
             plan_tier="enterprise",
-            github_repo_url="https://github.com/neuralops/backend",
-            github_repo_owner="neuralops",
-            github_repo_name="backend",
-            github_installation_id=None,  # Missing Installation ID
             is_suspended=False,
             source_version=1,
         )
         db_session.add(snapshot)
+        integration = GitHubIntegrationSnapshot(
+            id=uuid.uuid4(),
+            tenant_id=tenant_uuid,
+            repo_url=repo_url,
+            repo_owner="neuralops",
+            repo_name="backend",
+            installation_id=None,  # Missing Installation ID
+            default_branch="main",
+            indexing_status="pending",
+            source_version=1,
+        )
+        db_session.add(integration)
         await db_session.flush()
 
         with pytest.raises(RuntimeError) as exc_info:
             await _run_index(
                 tenant_id_str=tenant_id_str,
-                repo_url="https://github.com/neuralops/backend",
+                repo_url=repo_url,
                 commit_sha="a1b2c3d4",
                 changed_files=[],
                 removed_files=[],
@@ -273,18 +305,27 @@ class TestIndexerTask:
         """Verify error is raised if token fetch fails."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
+        repo_url = "https://github.com/neuralops/backend"
 
         snapshot = TenantSnapshot(
             tenant_id=tenant_uuid,
             plan_tier="enterprise",
-            github_repo_url="https://github.com/neuralops/backend",
-            github_repo_owner="neuralops",
-            github_repo_name="backend",
-            github_installation_id=123456,
             is_suspended=False,
             source_version=1,
         )
         db_session.add(snapshot)
+        integration = GitHubIntegrationSnapshot(
+            id=uuid.uuid4(),
+            tenant_id=tenant_uuid,
+            repo_url=repo_url,
+            repo_owner="neuralops",
+            repo_name="backend",
+            installation_id=123456,
+            default_branch="main",
+            indexing_status="pending",
+            source_version=1,
+        )
+        db_session.add(integration)
         await db_session.flush()
 
         with patch(
@@ -294,7 +335,7 @@ class TestIndexerTask:
             with pytest.raises(RuntimeError) as exc_info:
                 await _run_index(
                     tenant_id_str=tenant_id_str,
-                    repo_url="https://github.com/neuralops/backend",
+                    repo_url=repo_url,
                     commit_sha="a1b2c3d4",
                     changed_files=[],
                     removed_files=[],
@@ -308,20 +349,27 @@ class TestIndexerTask:
         """Verify files with unsupported extensions are uploaded/processed, but produce no CodeIndex entries."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
+        repo_url = "https://github.com/neuralops/backend"
 
         snapshot = TenantSnapshot(
             tenant_id=tenant_uuid,
             plan_tier="enterprise",
-            github_repo_url="https://github.com/neuralops/backend",
-            github_repo_owner="neuralops",
-            github_repo_name="backend",
-            github_installation_id=123456,
-            github_default_branch="main",
-            github_indexing_status="pending",
             is_suspended=False,
             source_version=1,
         )
         db_session.add(snapshot)
+        integration = GitHubIntegrationSnapshot(
+            id=uuid.uuid4(),
+            tenant_id=tenant_uuid,
+            repo_url=repo_url,
+            repo_owner="neuralops",
+            repo_name="backend",
+            installation_id=123456,
+            default_branch="main",
+            indexing_status="pending",
+            source_version=1,
+        )
+        db_session.add(integration)
         await db_session.flush()
 
         # In-memory tarball with only unsupported file extensions (e.g. .go, .txt)
@@ -343,7 +391,7 @@ class TestIndexerTask:
 
             await _run_index(
                 tenant_id_str=tenant_id_str,
-                repo_url="https://github.com/neuralops/backend",
+                repo_url=repo_url,
                 commit_sha="a1b2c3d4e5f6",
                 changed_files=[],
                 removed_files=[],
@@ -351,9 +399,16 @@ class TestIndexerTask:
             )
 
         db_session.expire_all()
-        # Verify status is indexed
-        updated_snap = await db_session.get(TenantSnapshot, tenant_uuid)
-        assert updated_snap.github_indexing_status == "indexed"
+        # Verify status is indexed (on GitHubIntegrationSnapshot)
+        from sqlalchemy import select as sa_select
+        result = await db_session.execute(
+            sa_select(GitHubIntegrationSnapshot).where(
+                GitHubIntegrationSnapshot.tenant_id == tenant_uuid
+            )
+        )
+        updated_integration = result.scalar_one_or_none()
+        assert updated_integration is not None
+        assert updated_integration.indexing_status == "indexed"
 
         # Verify no symbols inserted
         result = await db_session.execute(

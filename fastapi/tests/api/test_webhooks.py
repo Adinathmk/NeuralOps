@@ -10,6 +10,7 @@ from httpx import AsyncClient
 
 from app.core.config import get_settings
 from app.models.snapshots import TenantSnapshot
+from app.models.github_integration_snapshots import GitHubIntegrationSnapshot
 
 TEST_TENANT_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
 TEST_REPO_URL = "https://github.com/neuralops/test-repo"
@@ -31,13 +32,21 @@ async def register_tenant(db_session):
         plan_tier="enterprise",
         vector_namespace="tenant-2-namespace",
         is_suspended=False,
-        github_repo_url=TEST_REPO_URL,
-        github_repo_owner="neuralops",
-        github_repo_name="test-repo",
-        github_installation_id=123456,
-        github_default_branch="main",
     )
     db_session.add(tenant)
+    await db_session.flush()
+
+    integration = GitHubIntegrationSnapshot(
+        id=uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        tenant_id=TEST_TENANT_ID,
+        repo_url=TEST_REPO_URL,
+        repo_owner="neuralops",
+        repo_name="test-repo",
+        installation_id=123456,
+        default_branch="main",
+        indexing_status="indexed",
+    )
+    db_session.add(integration)
     await db_session.flush()
     yield tenant
 

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.dependencies.tenant import get_redis
 from app.models.snapshots import AlertRuleSnapshot, PlaybookSnapshot, TenantSnapshot
+from app.models.github_integration_snapshots import GitHubIntegrationSnapshot
 from app.queue.kafka.consumers.config_sync import ConfigSyncConsumer
 
 
@@ -51,9 +52,11 @@ class TestConfigSyncConsumer:
     # ── Tenant Event Tests ─────────────────────────────────────────────
 
     async def test_consume_tenant_created_event_upserts_db(self, db_session):
-        """Verify that a tenant.created Kafka event correctly inserts the TenantSnapshot."""
+        """Verify that a tenant.created Kafka event correctly inserts the TenantSnapshot
+        and GitHubIntegrationSnapshot."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
+        integration_id = uuid.uuid4()
 
         payload = {
             "event_type": "tenant.created",
@@ -64,14 +67,18 @@ class TestConfigSyncConsumer:
                 "kafka_group_id": "group-test",
                 "is_suspended": False,
                 "source_version": 1,
-                "github_integration": {
-                    "repo_url": "https://github.com/neuralops/backend",
-                    "repo_owner": "neuralops",
-                    "repo_name": "backend",
-                    "installation_id": 123456,
-                    "default_branch": "main",
-                    "indexing_status": "pending",
-                    "last_indexed_commit": None,
+                "github_integration_event": {
+                    "action": "created",
+                    "integration": {
+                        "id": str(integration_id),
+                        "repo_url": "https://github.com/neuralops/backend",
+                        "repo_owner": "neuralops",
+                        "repo_name": "backend",
+                        "installation_id": 123456,
+                        "default_branch": "main",
+                        "indexing_status": "pending",
+                        "last_indexed_commit": None,
+                    },
                 },
             },
         }
@@ -86,15 +93,26 @@ class TestConfigSyncConsumer:
         assert snapshot is not None
         assert snapshot.plan_tier == "pro"
         assert snapshot.vector_namespace == "ns-test"
-        assert snapshot.github_repo_owner == "neuralops"
-        assert snapshot.github_repo_name == "backend"
-        assert snapshot.github_installation_id == 123456
-        assert snapshot.github_indexing_status == "pending"
+
+        # Assert on the new GitHubIntegrationSnapshot table
+        from sqlalchemy import select as sa_select
+        result = await db_session.execute(
+            sa_select(GitHubIntegrationSnapshot).where(
+                GitHubIntegrationSnapshot.tenant_id == tenant_uuid
+            )
+        )
+        integration = result.scalar_one_or_none()
+        assert integration is not None
+        assert integration.repo_owner == "neuralops"
+        assert integration.repo_name == "backend"
+        assert integration.installation_id == 123456
+        assert integration.indexing_status == "pending"
 
     async def test_consume_tenant_updated_with_newer_version(self, db_session):
         """Verify that a newer version update event overwrites the existing DB configuration."""
         tenant_uuid = uuid.uuid4()
         tenant_id_str = str(tenant_uuid)
+        integration_id = uuid.uuid4()
 
         initial_snapshot = TenantSnapshot(
             tenant_id=tenant_uuid,
@@ -103,6 +121,18 @@ class TestConfigSyncConsumer:
             source_version=10,
         )
         db_session.add(initial_snapshot)
+        initial_integration = GitHubIntegrationSnapshot(
+            id=integration_id,
+            tenant_id=tenant_uuid,
+            repo_url="https://github.com/neuralops/backend",
+            repo_owner="neuralops",
+            repo_name="backend",
+            installation_id=123456,
+            default_branch="main",
+            indexing_status="pending",
+            source_version=10,
+        )
+        db_session.add(initial_integration)
         await db_session.flush()
 
         payload = {
@@ -112,7 +142,18 @@ class TestConfigSyncConsumer:
                 "plan_tier": "enterprise",
                 "is_suspended": True,
                 "source_version": 11,
-                "github_integration": {"indexing_status": "indexing"},
+                "github_integration_event": {
+                    "action": "updated",
+                    "integration": {
+                        "id": str(integration_id),
+                        "repo_url": "https://github.com/neuralops/backend",
+                        "repo_owner": "neuralops",
+                        "repo_name": "backend",
+                        "installation_id": 123456,
+                        "default_branch": "main",
+                        "indexing_status": "indexing",
+                    },
+                },
             },
         }
 
@@ -130,7 +171,17 @@ class TestConfigSyncConsumer:
         assert snapshot.plan_tier == "enterprise"
         assert snapshot.is_suspended is True
         assert snapshot.source_version == 11
-        assert snapshot.github_indexing_status == "indexing"
+
+        # Assert on GitHubIntegrationSnapshot — indexing_status is now there
+        from sqlalchemy import select as sa_select
+        result = await db_session.execute(
+            sa_select(GitHubIntegrationSnapshot).where(
+                GitHubIntegrationSnapshot.id == integration_id
+            )
+        )
+        integration = result.scalar_one_or_none()
+        assert integration is not None
+        assert integration.indexing_status == "indexing"
 
         cached_data = await redis.get(cache_key)
         assert cached_data is None
