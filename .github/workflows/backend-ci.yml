@@ -136,9 +136,9 @@ jobs:
         working-directory: neuralops-infra/gitops/overlays/prod
         run: |
           kustomize edit set image \
-            160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django:${{ needs.build-and-push.outputs.short_sha }} \
-            160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-worker=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-worker:${{ needs.build-and-push.outputs.short_sha }} \
-            160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-kafka-consumer=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-kafka-consumer:${{ needs.build-and-push.outputs.short_sha }}
+            PLACEHOLDER_ECR_REPO/neuralops-django=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django:${{ needs.build-and-push.outputs.short_sha }} \
+            PLACEHOLDER_ECR_REPO/neuralops-django-worker=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-worker:${{ needs.build-and-push.outputs.short_sha }} \
+            PLACEHOLDER_ECR_REPO/neuralops-django-kafka-consumer=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-kafka-consumer:${{ needs.build-and-push.outputs.short_sha }}
 
       - name: Commit and push tag bump
         working-directory: neuralops-infra

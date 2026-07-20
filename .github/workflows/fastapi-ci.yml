@@ -1,0 +1,125 @@
+name: Backend CI - FastAPI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'fastapi/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: fastapi
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: fastapi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://fastapi:testpass@localhost:5432/fastapi
+      JWT_ALGORITHM: RS256
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        working-directory: fastapi
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate dummy RSA key pair for JWT_PUBLIC_KEY
+        run: |
+          openssl genrsa -out /tmp/ci_private.pem 2048
+          openssl rsa -in /tmp/ci_private.pem -pubout -out /tmp/ci_public.pem
+          echo "JWT_PUBLIC_KEY<<EOF" >> "$GITHUB_ENV"
+          cat /tmp/ci_public.pem >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+      - name: Run migrations
+        working-directory: fastapi
+        run: alembic upgrade head
+
+      - name: Run tests
+        working-directory: fastapi
+        run: pytest -c pytest.ini
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      short_sha: ${{ steps.vars.outputs.short_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set short SHA
+        id: vars
+        run: echo "short_sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push production image
+        working-directory: fastapi
+        run: |
+          docker build --no-cache --provenance=false --sbom=false \
+            --target production \
+            -t ${{ steps.ecr-login.outputs.registry }}/neuralops-fastapi:${{ steps.vars.outputs.short_sha }} .
+          docker push ${{ steps.ecr-login.outputs.registry }}/neuralops-fastapi:${{ steps.vars.outputs.short_sha }}
+
+  bump-gitops-tag:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: Adinathmk/neuralops-infra
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          path: neuralops-infra
+
+      - name: Set up Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Bump image tag
+        working-directory: neuralops-infra/gitops/overlays/prod
+        run: |
+          kustomize edit set image \
+            PLACEHOLDER_ECR_REPO/neuralops-fastapi=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-fastapi:${{ needs.build-and-push.outputs.short_sha }}
+
+      - name: Commit and push tag bump
+        working-directory: neuralops-infra
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add gitops/overlays/prod/kustomization.yaml
+          git diff --staged --quiet && echo "No changes to commit" || \
+            (git commit -m "Bump fastapi image tag to ${{ needs.build-and-push.outputs.short_sha }} [skip ci]" && git push)
