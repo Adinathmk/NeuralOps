@@ -487,7 +487,13 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # LOGGING CONFIGURATION
 # ============================================================================
 
+# Ensure the logs directory exists before the RotatingFileHandler tries to open
+# the log file. This prevents FileNotFoundError in CI, fresh clones, and any
+# environment where logs/ is absent (it is typically gitignored).
+os.makedirs(BASE_DIR / "logs", exist_ok=True)
+
 LOGGING = {
+
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
@@ -687,6 +693,8 @@ RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "secret")
 # ============================================================================
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "").replace("\\n", "\n")
+
+# CI pipeline test commit - safe to ignore
 
 # CI pipeline test commit - safe to ignore
 
