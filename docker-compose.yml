@@ -248,6 +248,23 @@ services:
       retries: 5
       start_period: 30s
 
+  debezium-init:
+    image: python:3.11-slim
+    container_name: debezium-init
+    restart: "no"
+    depends_on:
+      debezium:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      - DEBEZIUM_HOST=debezium
+      - DEBEZIUM_PORT=8083
+    command: ["python", "scripts/register_debezium_connectors.py"]
+    networks:
+      - neuralops_network
+
   # ── Elasticsearch ──────────────────────────────────────────────────────────
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
@@ -266,6 +283,23 @@ services:
       timeout: 10s
       retries: 5
       start_period: 20s
+
+  elasticsearch-init:
+    image: python:3.11-slim
+    container_name: elasticsearch-init
+    restart: "no"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      - ELASTICSEARCH_HOSTS=["http://elasticsearch:9200"]
+    command: >
+      bash -c "pip install elasticsearch==8.11.0 aiohttp && python scripts/bootstrap_elasticsearch.py"
+    networks:
+      - neuralops_network
 
   # ── Celery Worker — Django (Core Management tasks) ─────────────────────────
   # Broker: Redis db 0  |  Tasks: analytics, notifications, Stripe sync

@@ -206,8 +206,8 @@ class LogEventIndexer:
                 "query": {
                     "bool": {
                         "must": [
-                            {"term": {"tenant_id.keyword": tenant_id}},
-                            {"term": {"incident_id.keyword": incident_id}},
+                            {"term": {"tenant_id": tenant_id}},
+                            {"term": {"incident_id": incident_id}},
                         ]
                     }
                 },
@@ -247,8 +247,8 @@ class LogEventIndexer:
                     "query": {
                         "bool": {
                             "must": [
-                                {"term": {"tenant_id.keyword": tenant_id}},
-                                {"term": {"incident_id.keyword": raw_log_id}},
+                                {"term": {"tenant_id": tenant_id}},
+                                {"term": {"incident_id": raw_log_id}},
                             ]
                         }
                     },
@@ -300,8 +300,8 @@ class LogEventIndexer:
                     "query": {
                         "bool": {
                             "must": [
-                                {"term": {"tenant_id.keyword": tenant_id}},
-                                {"term": {"incident_id.keyword": incident_id}},
+                                {"term": {"tenant_id": tenant_id}},
+                                {"term": {"incident_id": incident_id}},
                             ]
                         }
                     },

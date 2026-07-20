@@ -148,7 +148,7 @@ class LogSearchRepository:
                     "query": {
                         "bool": {
                             "must": [
-                                {"term": {"tenant_id.keyword": tenant_id}},
+                                {"term": {"tenant_id": tenant_id}},
                                 {"range": {"timestamp": {"gte": f"now-{time_window}"}}},
                             ]
                         }
@@ -158,14 +158,14 @@ class LogSearchRepository:
                     "aggs": {
                         "service_names": {
                             "terms": {
-                                "field": "service_name.keyword",
+                                "field": "service_name",
                                 "size": 100,  # Max 100 distinct service names
                             }
                         },
-                        "severities": {"terms": {"field": "severity.keyword", "size": 10}},
-                        "error_types": {"terms": {"field": "error_type.keyword", "size": 50}},
-                        "environments": {"terms": {"field": "environment.keyword", "size": 10}},
-                        "statuses": {"terms": {"field": "status.keyword", "size": 5}},
+                        "severities": {"terms": {"field": "severity", "size": 10}},
+                        "error_types": {"terms": {"field": "error_type", "size": 50}},
+                        "environments": {"terms": {"field": "environment", "size": 10}},
+                        "statuses": {"terms": {"field": "status", "size": 5}},
                     },
                 },
                 request_timeout=10,
@@ -206,7 +206,7 @@ class LogSearchRepository:
                     "query": {
                         "bool": {
                             "must": [
-                                {"term": {"tenant_id.keyword": tenant_id}},
+                                {"term": {"tenant_id": tenant_id}},
                                 {"range": {"timestamp": {"gte": f"now-{time_window}"}}},
                             ]
                         }
@@ -234,16 +234,16 @@ class LogSearchRepository:
         - Slightly lower query cost than `must` for pure filtering
         """
         # tenant_id is ALWAYS in filter. This runs before any other clause.
-        filter_clauses = [{"term": {"tenant_id.keyword": filters.tenant_id}}]
+        filter_clauses = [{"term": {"tenant_id": filters.tenant_id}}]
 
         # Optional exact-match filters — only added if the value is set
         exact_match_fields = {
-            "severity.keyword": filters.severity,
-            "service_name.keyword": filters.service_name,
-            "environment.keyword": filters.environment,
-            "error_type.keyword": filters.error_type,
-            "file_path.keyword": filters.file_path,
-            "status.keyword": filters.status,
+            "severity": filters.severity,
+            "service_name": filters.service_name,
+            "environment": filters.environment,
+            "error_type": filters.error_type,
+            "file_path": filters.file_path,
+            "status": filters.status,
         }
         for field_name, value in exact_match_fields.items():
             if value:
@@ -318,7 +318,7 @@ class LogSearchRepository:
         """
         return [
             {"timestamp": {"order": "desc"}},
-            {"log_id.keyword": {"order": "asc"}},  # tiebreaker
+            {"log_id": {"order": "asc"}},  # tiebreaker
         ]
 
     def _source_fields(self) -> list[str]:
