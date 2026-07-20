@@ -1,0 +1,135 @@
+name: Backend CI - Django
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'django/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: django
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: django
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: django
+      DB_USER: django
+      DB_PASSWORD: testpass
+      DATABASE_URL: postgresql://django:testpass@localhost:5432/django
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        working-directory: django
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        working-directory: django
+        run: pytest -c pytest.ini
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      short_sha: ${{ steps.vars.outputs.short_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set short SHA
+        id: vars
+        run: echo "short_sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push production image
+        working-directory: django
+        run: |
+          docker build --no-cache --provenance=false --sbom=false \
+            --target production \
+            -t ${{ steps.ecr-login.outputs.registry }}/neuralops-django:${{ steps.vars.outputs.short_sha }} .
+          docker push ${{ steps.ecr-login.outputs.registry }}/neuralops-django:${{ steps.vars.outputs.short_sha }}
+
+      - name: Build and push worker image
+        working-directory: django
+        run: |
+          docker build --no-cache --provenance=false --sbom=false \
+            --target worker \
+            -t ${{ steps.ecr-login.outputs.registry }}/neuralops-django-worker:${{ steps.vars.outputs.short_sha }} .
+          docker push ${{ steps.ecr-login.outputs.registry }}/neuralops-django-worker:${{ steps.vars.outputs.short_sha }}
+
+      - name: Build and push kafka-consumer image
+        working-directory: django
+        run: |
+          docker build --no-cache --provenance=false --sbom=false \
+            --target kafka-consumer \
+            -t ${{ steps.ecr-login.outputs.registry }}/neuralops-django-kafka-consumer:${{ steps.vars.outputs.short_sha }} .
+          docker push ${{ steps.ecr-login.outputs.registry }}/neuralops-django-kafka-consumer:${{ steps.vars.outputs.short_sha }}
+
+  bump-gitops-tag:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: Adinathmk/neuralops-infra
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          path: neuralops-infra
+
+      - name: Set up Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Bump image tags
+        working-directory: neuralops-infra/gitops/overlays/prod
+        run: |
+          kustomize edit set image \
+            160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django:${{ needs.build-and-push.outputs.short_sha }} \
+            160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-worker=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-worker:${{ needs.build-and-push.outputs.short_sha }} \
+            160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-kafka-consumer=160823835768.dkr.ecr.ap-south-1.amazonaws.com/neuralops-django-kafka-consumer:${{ needs.build-and-push.outputs.short_sha }}
+
+      - name: Commit and push tag bump
+        working-directory: neuralops-infra
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add gitops/overlays/prod/kustomization.yaml
+          git diff --staged --quiet && echo "No changes to commit" || \
+            (git commit -m "Bump django image tags to ${{ needs.build-and-push.outputs.short_sha }} [skip ci]" && git push)
