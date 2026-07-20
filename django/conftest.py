@@ -30,6 +30,15 @@ from django.conf import settings
 
 settings.CELERY_TASK_ALWAYS_EAGER = True
 
+# Override cache backend to LocMemCache for tests so throttling and cache calls
+# never require a real Redis connection. This keeps tests hermetic — they pass
+# whether or not Redis is reachable in the environment.
+settings.CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    }
+}
+
 
 # ============================================================================
 # FIXTURES: API Client

@@ -27,6 +27,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DB_HOST: localhost
       DB_PORT: 5432
@@ -34,6 +43,8 @@ jobs:
       DB_USER: django
       DB_PASSWORD: testpass
       DATABASE_URL: postgresql://django:testpass@localhost:5432/django
+      REDIS_URL: redis://localhost:6379/0
+      CACHE_URL: redis://localhost:6379/1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,6 +59,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Create logs directory
+        working-directory: django
+        run: mkdir -p logs
 
       - name: Run tests
         working-directory: django
