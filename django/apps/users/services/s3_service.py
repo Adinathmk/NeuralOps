@@ -8,26 +8,43 @@ logger = logging.getLogger(__name__)
 class S3Service:
     @staticmethod
     def get_s3_client():
-        return boto3.client(
-            "s3",
-            aws_access_key_id=getattr(settings, "AWS_ACCESS_KEY_ID", "minioadmin"),
-            aws_secret_access_key=getattr(settings, "AWS_SECRET_ACCESS_KEY", "minioadminpassword"),
-            endpoint_url=getattr(settings, "AWS_S3_ENDPOINT_URL", "http://minio:9000"),
-            region_name=getattr(settings, "AWS_S3_REGION_NAME", "us-east-1"),
-        )
+        from botocore.client import Config
+        endpoint = getattr(settings, "AWS_S3_ENDPOINT_URL", None)
+        
+        kwargs = {
+            "aws_access_key_id": getattr(settings, "AWS_ACCESS_KEY_ID", None),
+            "aws_secret_access_key": getattr(settings, "AWS_SECRET_ACCESS_KEY", None),
+            "region_name": getattr(settings, "AWS_S3_REGION_NAME", "us-east-1"),
+        }
+        
+        if endpoint:
+            kwargs["endpoint_url"] = endpoint
+            kwargs["config"] = Config(s3={'addressing_style': 'path'})
+            
+        return boto3.client("s3", **kwargs)
 
     @staticmethod
     def get_presign_s3_client():
-        # Uses the public endpoint URL so the frontend browser can resolve it.
-        # In development, this is localhost:9000 instead of minio:9000.
-        public_endpoint = getattr(settings, "AWS_S3_PUBLIC_ENDPOINT_URL", "http://localhost:9000")
-        return boto3.client(
-            "s3",
-            aws_access_key_id=getattr(settings, "AWS_ACCESS_KEY_ID", "minioadmin"),
-            aws_secret_access_key=getattr(settings, "AWS_SECRET_ACCESS_KEY", "minioadminpassword"),
-            endpoint_url=public_endpoint,
-            region_name=getattr(settings, "AWS_S3_REGION_NAME", "us-east-1"),
-        )
+        from botocore.client import Config
+        public_endpoint = getattr(settings, "AWS_S3_PUBLIC_ENDPOINT_URL", None)
+        internal_endpoint = getattr(settings, "AWS_S3_ENDPOINT_URL", None)
+        
+        # Fallback to localhost for local MinIO if only internal endpoint is defined
+        if internal_endpoint and not public_endpoint:
+            public_endpoint = "http://localhost:9000"
+
+        kwargs = {
+            "aws_access_key_id": getattr(settings, "AWS_ACCESS_KEY_ID", None),
+            "aws_secret_access_key": getattr(settings, "AWS_SECRET_ACCESS_KEY", None),
+            "region_name": getattr(settings, "AWS_S3_REGION_NAME", "us-east-1"),
+        }
+        
+        # Only set endpoint_url and path-style addressing if an endpoint is explicitly provided
+        if public_endpoint:
+            kwargs["endpoint_url"] = public_endpoint
+            kwargs["config"] = Config(s3={'addressing_style': 'path'})
+
+        return boto3.client("s3", **kwargs)
 
     @staticmethod
     def get_bucket_name():

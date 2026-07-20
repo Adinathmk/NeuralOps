@@ -399,6 +399,7 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadminpassword
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:3000,http://localhost:5173"
     command: server /data --console-address ":9001"
     networks:
       - neuralops_network
