@@ -36,10 +36,13 @@ echo "    Redis is ready!"
 
 
 # ── 3. Wait for Kafka ────────────────────────────────────────
-echo "==> [3/6] Waiting for Kafka at ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}..."
-KAFKA_HOST=$(echo "${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}" | cut -d: -f1)
-KAFKA_PORT=$(echo "${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}" | cut -d: -f2)
-until python -c "
+if [ "${SKIP_KAFKA_WAIT:-false}" = "true" ]; then
+  echo "==> [3/6] Skipping Kafka wait (SKIP_KAFKA_WAIT=true)"
+else
+  echo "==> [3/6] Waiting for Kafka at ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}..."
+  KAFKA_HOST=$(echo "${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}" | cut -d: -f1)
+  KAFKA_PORT=$(echo "${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}" | cut -d: -f2)
+  until python -c "
 import socket, sys
 try:
     s = socket.create_connection(('${KAFKA_HOST}', ${KAFKA_PORT}), timeout=2)
@@ -48,10 +51,11 @@ try:
 except Exception:
     sys.exit(1)
 " 2>/dev/null; do
-  echo "    Kafka not ready yet — retrying in 2s..."
-  sleep 2
-done
-echo "    Kafka is ready!"
+    echo "    Kafka not ready yet — retrying in 2s..."
+    sleep 2
+  done
+  echo "    Kafka is ready!"
+fi
 
 
 # ── 4. Run database migrations ───────────────────────────────

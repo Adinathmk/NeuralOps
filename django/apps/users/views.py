@@ -665,7 +665,7 @@ class GitHubOAuthCallbackView(APIView):
 class InviteEngineerView(APIView):
     """Admin invites engineer to tenant."""
 
-    permission_classes = [IsAuthenticated, IsTenantOwner]
+    permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
 
     @extend_schema(
@@ -839,7 +839,7 @@ class JoinWithEmailPasswordView(APIView):
 class ListInvitationsView(APIView):
     """List pending invitations for tenant."""
 
-    permission_classes = [IsAuthenticated, IsTenantOwner]
+    permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
 
     @extend_schema(
@@ -870,7 +870,7 @@ class ListInvitationsView(APIView):
 class CancelInvitationView(APIView):
     """Cancel pending invitation."""
 
-    permission_classes = [IsAuthenticated, IsTenantOwner]
+    permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
 
     @extend_schema(
@@ -892,7 +892,7 @@ class CancelInvitationView(APIView):
 class ResendInvitationView(APIView):
     """Resend invitation email."""
 
-    permission_classes = [IsAuthenticated, IsTenantOwner]
+    permission_classes = [IsAuthenticated, IsTenantAdmin]
     authentication_classes = [JWTAuthentication]
 
     @extend_schema(

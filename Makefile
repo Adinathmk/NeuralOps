@@ -165,7 +165,7 @@ ps:
 
 test:
 	@echo "==> Running Django test suite..."
-	$(DC) run --rm django pytest -v
+	$(DC) run --rm -e SKIP_KAFKA_WAIT=true django pytest -v
 	@echo "==> Running FastAPI test suite..."
 	$(DC) run --rm fastapi pytest tests/ -v --tb=short
 
@@ -201,7 +201,7 @@ django-superuser:
 	$(DC) exec django python manage.py createsuperuser
 
 django-test:
-	$(DC) run --rm django pytest -v
+	$(DC) run --rm -e SKIP_KAFKA_WAIT=true django pytest -v
 
 django-logs:
 	$(DC) logs -f django
