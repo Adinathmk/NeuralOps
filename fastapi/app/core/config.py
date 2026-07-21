@@ -239,4 +239,3 @@ def export_langsmith_env() -> None:
         os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
     os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
 
-# CI pipeline test commit - safe to ignore
