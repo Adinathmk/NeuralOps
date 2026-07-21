@@ -14,7 +14,7 @@ class S3Service:
         kwargs = {
             "aws_access_key_id": getattr(settings, "AWS_ACCESS_KEY_ID", None),
             "aws_secret_access_key": getattr(settings, "AWS_SECRET_ACCESS_KEY", None),
-            "region_name": getattr(settings, "AWS_S3_REGION_NAME", "us-east-1"),
+            "region_name": getattr(settings, "AWS_REGION_NAME", "us-east-1"),
         }
         
         if endpoint:
@@ -40,7 +40,7 @@ class S3Service:
         kwargs = {
             "aws_access_key_id": getattr(settings, "AWS_ACCESS_KEY_ID", None),
             "aws_secret_access_key": getattr(settings, "AWS_SECRET_ACCESS_KEY", None),
-            "region_name": getattr(settings, "AWS_S3_REGION_NAME", "us-east-1"),
+            "region_name": getattr(settings, "AWS_REGION_NAME", "us-east-1"),
         }
         
         # Only set endpoint_url and path-style addressing if an endpoint is explicitly provided
