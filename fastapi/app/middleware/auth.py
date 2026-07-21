@@ -75,6 +75,16 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
 
             # ── Skip unauthenticated paths ────────────────────────────────────────
             if path in UNAUTHENTICATED_PATHS or path.startswith("/health"):
+                if path == "/api/v1/ingest/logs":
+                    api_key = request.headers.get("x-api-key")
+                    if api_key:
+                        from app.database.redis import get_redis
+                        redis = get_redis()
+                        cached_tenant_id = await redis.get(f"apikey_to_tenant:{api_key}")
+                        if cached_tenant_id:
+                            tenant_id = cached_tenant_id if isinstance(cached_tenant_id, str) else cached_tenant_id.decode("utf-8")
+                            request.state.tenant_id = tenant_id
+                            tenant_id_ctx.set(tenant_id)
                 return await call_next(request)
 
             # ── Strategy 1: Trust gateway-injected headers (production path) ──────
