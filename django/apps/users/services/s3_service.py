@@ -19,7 +19,11 @@ class S3Service:
         
         if endpoint:
             kwargs["endpoint_url"] = endpoint
-            kwargs["config"] = Config(s3={'addressing_style': 'path'})
+            kwargs["config"] = Config(signature_version='s3v4', s3={'addressing_style': 'path'})
+            
+        else:
+            
+            kwargs["config"] = Config(signature_version='s3v4')
             
         return boto3.client("s3", **kwargs)
 
@@ -42,7 +46,11 @@ class S3Service:
         # Only set endpoint_url and path-style addressing if an endpoint is explicitly provided
         if public_endpoint:
             kwargs["endpoint_url"] = public_endpoint
-            kwargs["config"] = Config(s3={'addressing_style': 'path'})
+            kwargs["config"] = Config(signature_version='s3v4', s3={'addressing_style': 'path'})
+
+        else:
+
+            kwargs["config"] = Config(signature_version='s3v4')
 
         return boto3.client("s3", **kwargs)
 
