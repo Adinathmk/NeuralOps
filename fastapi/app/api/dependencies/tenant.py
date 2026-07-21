@@ -409,6 +409,14 @@ async def get_tenant_from_api_key(
         plan_tier=snapshot.plan_tier,
     )
 
+    # Write tenant_id back into request.state so that:
+    #   1. TenantRLSMiddleware sets the Postgres RLS session variable correctly.
+    #   2. The structured logging context middleware logs the real tenant_id
+    #      instead of "-" on every ingest request.
+    # JWT-authenticated routes do this in JWTAuthMiddleware; API-key routes
+    # must do it here because the dependency runs after middleware.
+    request.state.tenant_id = tenant_id
+
     return snapshot
 
 APIKeyTenant = Annotated[TenantSnapshot, Depends(get_tenant_from_api_key)]
