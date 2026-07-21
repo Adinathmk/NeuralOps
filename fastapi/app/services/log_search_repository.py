@@ -156,16 +156,18 @@ class LogSearchRepository:
                     # We only need aggregations, not the hits themselves
                     "size": 0,
                     "aggs": {
+                        # All aggregation fields must use .keyword sub-field.
+                        # text fields have fielddata disabled — terms aggs require keyword.
                         "service_names": {
                             "terms": {
-                                "field": "service_name",
+                                "field": "service_name.keyword",
                                 "size": 100,  # Max 100 distinct service names
                             }
                         },
-                        "severities": {"terms": {"field": "severity", "size": 10}},
-                        "error_types": {"terms": {"field": "error_type", "size": 50}},
-                        "environments": {"terms": {"field": "environment", "size": 10}},
-                        "statuses": {"terms": {"field": "status", "size": 5}},
+                        "severities": {"terms": {"field": "severity.keyword", "size": 10}},
+                        "error_types": {"terms": {"field": "error_type.keyword", "size": 50}},
+                        "environments": {"terms": {"field": "environment.keyword", "size": 10}},
+                        "statuses": {"terms": {"field": "status.keyword", "size": 5}},
                     },
                 },
                 request_timeout=10,
@@ -318,7 +320,7 @@ class LogSearchRepository:
         """
         return [
             {"timestamp": {"order": "desc"}},
-            {"log_id": {"order": "asc"}},  # tiebreaker
+            {"log_id.keyword": {"order": "asc"}},  # tiebreaker — must use .keyword (log_id is text type)
         ]
 
     def _source_fields(self) -> list[str]:
