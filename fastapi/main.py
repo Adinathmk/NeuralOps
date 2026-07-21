@@ -210,14 +210,21 @@ app.add_middleware(
 # Decompress incoming SDK payloads (which are gzip compressed if >1024 bytes)
 app.add_middleware(GZipRequestMiddleware)
 
-# 2. JWT authentication — reads Authorization header or gateway-injected
-#    headers; attaches tenant_id, user_id, user_role to request.state.
-app.add_middleware(JWTAuthMiddleware)
+# NOTE: Starlette middleware added LAST runs FIRST (outermost wraps innermost).
+# JWTAuthMiddleware must dispatch before TenantRLSMiddleware so that
+# request.state.tenant_id exists when TenantRLSMiddleware reads it.
+# Registration order below is therefore: TenantRLS first (added), JWTAuth last (added).
 
-# 3. Tenant RLS — reads tenant_id from request.state and stores it so
+# 2. Tenant RLS — reads tenant_id from request.state and stores it so
 #    get_db() can emit SET LOCAL app.tenant_id = '...' before the first
-#    ORM query.
+#    ORM query. Registered before JWTAuth so it ends up as the INNER layer
+#    and therefore runs AFTER JWTAuth sets tenant_id.
 app.add_middleware(TenantRLSMiddleware)
+
+# 3. JWT authentication — reads Authorization header or gateway-injected
+#    headers; attaches tenant_id, user_id, user_role to request.state.
+#    Registered last so it is the OUTER layer and dispatches first.
+app.add_middleware(JWTAuthMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health_router)

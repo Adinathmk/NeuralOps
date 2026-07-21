@@ -21,9 +21,11 @@ from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+from starlette.requests import Request
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.middleware.tenant_rls import apply_tenant_rls_to_session
 
 logger = get_logger(__name__)
 
@@ -55,7 +57,7 @@ AsyncSessionLocal = async_sessionmaker(
 # ── FastAPI dependency ────────────────────────────────────────────────────────
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     """
     FastAPI dependency that yields an async database session.
 
@@ -70,8 +72,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     so `app.tenant_id` is already set on the connection by the time any
     ORM query executes.
     """
+    rls_tenant_id = getattr(request.state, "rls_tenant_id", "")
     async with AsyncSessionLocal() as session:
         try:
+            await apply_tenant_rls_to_session(session, rls_tenant_id)
             yield session
             await session.commit()
         except Exception:
