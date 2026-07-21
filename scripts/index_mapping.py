@@ -40,45 +40,53 @@ LOG_EVENT_INDEX_MAPPING = {
             # --- Identity fields ---
             "log_id": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # doc_values: true (default) — enables aggregations and sorting.
                 # index: true (default) — enables filtering.
             },
             "tenant_id": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # This field is on EVERY query. Elasticsearch will push this
                 # filter down to shard level — very fast.
             },
             "incident_id": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # Used for: "show all log events for this incident"
             },
 
             # --- Filter fields (what the search page exposes) ---
             "service_name": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # Exact match: service_name = "payment-api"
                 # keyword fields are case-sensitive — normalise to lowercase
                 # at write time in the ingest service, not here.
             },
             "environment": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # Values: "production", "staging", "development"
                 # Low cardinality — perfect keyword field.
             },
             "severity": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # Values: "ERROR", "CRITICAL"
                 # Since you only ingest errors, this will mostly be ERROR/CRITICAL.
                 # Still useful for filtering CRITICAL-only incidents.
             },
             "error_type": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # e.g. "NullPointerException", "TimeoutError", "KeyError"
                 # Exact match. Do NOT use text type — you don't want
                 # "TimeoutError" to match "timeout" fuzzy searches.
             },
             "file_path": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # e.g. "src/payment/service.py"
                 # Full path, exact match.
             },
@@ -102,6 +110,7 @@ LOG_EVENT_INDEX_MAPPING = {
             # --- Incident state ---
             "status": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # Values: "open", "resolved", "investigating"
                 # Lets engineers filter: "show only open incidents"
                 # Updated via update-by-query when incident status changes in DB-2
@@ -110,6 +119,7 @@ LOG_EVENT_INDEX_MAPPING = {
             # --- S3 pointer (never searched, just retrieved) ---
             "s3_key": {
                 "type": "keyword",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
                 # e.g. "logs/tenant_x/context/incident_y.json.gz"
                 # Returned in search results so the frontend knows where
                 # to fetch full log content from S3 via pre-signed URL.
