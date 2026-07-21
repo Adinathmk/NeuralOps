@@ -239,7 +239,10 @@ class LogEventIndexer:
         search_index = get_write_alias(tenant_id=tenant_id, plan_tier=plan_tier)
         
         import asyncio
-        max_retries = 6
+        # Retry window must exceed the ES index refresh_interval (5s).
+        # 12 attempts × 1s sleep = up to 12s, guaranteeing at least one
+        # Lucene refresh cycle has completed before we give up.
+        max_retries = 12
         for attempt in range(max_retries):
             resp = await self.es.update_by_query(
                 index=search_index,
@@ -271,9 +274,27 @@ class LogEventIndexer:
                 refresh=True,
             )
             if resp.get("updated", 0) > 0:
+                logger.debug(
+                    "es_link_log_to_incident_success",
+                    extra={
+                        "attempt": attempt + 1,
+                        "raw_log_id": raw_log_id,
+                        "grouped_incident_id": grouped_incident_id,
+                    },
+                )
                 break
             if attempt < max_retries - 1:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1.0)
+        else:
+            logger.warning(
+                "es_link_log_to_incident_no_docs_updated",
+                extra={
+                    "raw_log_id": raw_log_id,
+                    "grouped_incident_id": grouped_incident_id,
+                    "tenant_id": tenant_id,
+                    "attempts": max_retries,
+                },
+            )
 
     async def update_parsed_fields(
         self,
@@ -292,7 +313,10 @@ class LogEventIndexer:
 
         import asyncio
 
-        max_retries = 5
+        # Retry window must exceed the ES index refresh_interval (5s).
+        # 12 attempts × 0.5s sleep = up to 6s total, ensuring the freshly
+        # indexed document becomes searchable before we give up.
+        max_retries = 12
         for attempt in range(max_retries):
             resp = await self.es.update_by_query(
                 index=search_index,
@@ -335,6 +359,15 @@ class LogEventIndexer:
                 break
             if attempt < max_retries - 1:
                 await asyncio.sleep(0.5)
+        else:
+            logger.warning(
+                "es_update_parsed_fields_no_docs_updated",
+                extra={
+                    "incident_id": incident_id,
+                    "tenant_id": tenant_id,
+                    "attempts": max_retries,
+                },
+            )
 
     # ── DOCUMENT BUILDER ───────────────────────────────────────────────────
 

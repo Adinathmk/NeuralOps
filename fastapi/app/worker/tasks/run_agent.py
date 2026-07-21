@@ -409,8 +409,10 @@ async def _execute_run_agent(
                             tenant_id=tenant_id_str,
                             plan_tier=plan_tier,
                             grouped_incident_id=str(persistence_result["incident_id"]),
-                            severity="unknown" if is_draft else (agent_result.get("severity") or parsed_event.get("severity", "unknown")),
-                            status="draft" if is_draft else "open",
+                            severity="unknown" if is_draft else (agent_result.get("severity") or parsed_event.severity),
+                            # persist_new_incident always promotes status to "open"
+                            # (it resets is_draft=False internally), so ES must match.
+                            status="open",
                         )
                     finally:
                         await es_client_new.close()
