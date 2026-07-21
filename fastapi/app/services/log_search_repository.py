@@ -148,7 +148,7 @@ class LogSearchRepository:
                     "query": {
                         "bool": {
                             "must": [
-                                {"term": {"tenant_id": tenant_id}},
+                                {"term": {"tenant_id.keyword": tenant_id}},
                                 {"range": {"timestamp": {"gte": f"now-{time_window}"}}},
                             ]
                         }
@@ -208,7 +208,7 @@ class LogSearchRepository:
                     "query": {
                         "bool": {
                             "must": [
-                                {"term": {"tenant_id": tenant_id}},
+                                {"term": {"tenant_id.keyword": tenant_id}},
                                 {"range": {"timestamp": {"gte": f"now-{time_window}"}}},
                             ]
                         }
@@ -236,7 +236,7 @@ class LogSearchRepository:
         - Slightly lower query cost than `must` for pure filtering
         """
         # tenant_id is ALWAYS in filter. This runs before any other clause.
-        filter_clauses = [{"term": {"tenant_id": filters.tenant_id}}]
+        filter_clauses = [{"term": {"tenant_id.keyword": filters.tenant_id}}]
 
         # Optional exact-match filters — only added if the value is set
         exact_match_fields = {
@@ -249,7 +249,7 @@ class LogSearchRepository:
         }
         for field_name, value in exact_match_fields.items():
             if value:
-                filter_clauses.append({"term": {field_name: value.strip()}})
+                filter_clauses.append({"term": {f"{field_name}.keyword": value.strip()}})
 
         if getattr(filters, 'search_query', None):
             import re
@@ -269,8 +269,8 @@ class LogSearchRepository:
             filter_clauses.append({
                 "bool": {
                     "should": [
-                        {"wildcard": {"file_path": {"value": sq_file, "case_insensitive": True}}},
-                        {"wildcard": {"error_type": {"value": sq_error, "case_insensitive": True}}}
+                        {"wildcard": {"file_path.keyword": {"value": sq_file, "case_insensitive": True}}},
+                        {"wildcard": {"error_type.keyword": {"value": sq_error, "case_insensitive": True}}}
                     ],
                     "minimum_should_match": 1
                 }
